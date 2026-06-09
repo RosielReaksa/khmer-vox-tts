@@ -23,6 +23,12 @@ type JobsResponse = {
   jobs: BatchJobRecord[];
 };
 
+type RetryFailedLinesResponse = JobDetail & {
+  ok?: boolean;
+  retriedItems?: number;
+  error?: string;
+};
+
 type SavedVoiceSummary = {
   id: string;
   name: string;
@@ -101,6 +107,7 @@ export function BatchJobsPanel() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const detailRequestRef = useRef(0);
 
@@ -291,6 +298,23 @@ export function BatchJobsPanel() {
       setError(submitError instanceof Error ? submitError.message : "Batch generation failed.");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function retryFailedLines(jobId: string) {
+    setRetryingJobId(jobId);
+    setDetailError(null);
+    try {
+      const response = await fetch(`/api/batch/jobs/${jobId}/retry`, { method: "POST" });
+      const body = (await response.json()) as RetryFailedLinesResponse;
+      if (!response.ok) throw new Error(body.error ?? "Could not retry failed lines.");
+      setDetail({ job: body.job, items: body.items });
+      setSelectedJobId(body.job.id);
+      await loadJobs();
+    } catch (retryError) {
+      setDetailError(retryError instanceof Error ? retryError.message : "Could not retry failed lines.");
+    } finally {
+      setRetryingJobId(null);
     }
   }
 
@@ -789,6 +813,29 @@ export function BatchJobsPanel() {
                 </p>
               ) : null}
               {detailError ? <InlineError message={detailError} /> : null}
+              {selectedJob.failedItems > 0 ? (
+                <div className="grid gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void retryFailedLines(selectedJob.id)}
+                    disabled={!canRetryFailedLines(selectedJob) || retryingJobId === selectedJob.id}
+                    className={`w-full border-2 border-primary py-3 text-center font-headline font-bold uppercase text-xs transition-all ${
+                      canRetryFailedLines(selectedJob) && retryingJobId !== selectedJob.id
+                        ? "bg-[#ffcc00] text-primary shadow-[4px_4px_0px_0px_#1a1a1a] hover:bg-primary hover:text-surface cursor-pointer active:translate-x-0.5 active:translate-y-0.5"
+                        : "bg-[#eee9e0] text-on-surface-variant cursor-not-allowed"
+                    }`}
+                  >
+                    {retryingJobId === selectedJob.id
+                      ? "Retrying failed lines..."
+                      : `Retry ${selectedJob.failedItems.toLocaleString()} failed line${selectedJob.failedItems === 1 ? "" : "s"}`}
+                  </button>
+                  {retryDisabledReason(selectedJob) ? (
+                    <p className="border-2 border-primary bg-[#faf7f2] px-3 py-2 text-xs font-body font-semibold leading-5 text-on-surface-variant">
+                      {retryDisabledReason(selectedJob)}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
               {canDownloadBatchJob(selectedJob) ? (
                 <a
                   href={`/api/batch/jobs/${selectedJob.id}/download`}
@@ -829,7 +876,12 @@ export function BatchJobsPanel() {
       {selectedJob ? (
         <div className="col-span-12 mt-6">
           {selectedDetailReady && detail ? (
-            <JobItemsTable items={detail.items} />
+            <JobItemsTable
+              job={detail.job}
+              items={detail.items}
+              retrying={retryingJobId === detail.job.id}
+              onRetryFailedLines={() => void retryFailedLines(detail.job.id)}
+            />
           ) : (
             <JobItemsPlaceholder loading={isDetailLoading} error={detailError} />
           )}
@@ -992,12 +1044,33 @@ function JobItemsPlaceholder({ loading, error }: { loading: boolean; error: stri
   );
 }
 
-function JobItemsTable({ items }: { items: BatchJobItemRecord[] }) {
+function JobItemsTable({
+  job,
+  items,
+  retrying,
+  onRetryFailedLines,
+}: {
+  job: BatchJobRecord;
+  items: BatchJobItemRecord[];
+  retrying: boolean;
+  onRetryFailedLines: () => void;
+}) {
+  const failedItems = items.filter((item) => item.status === "failed");
+
   return (
     <section className="flex flex-col gap-4 mt-6">
       <div className="border-b-4 border-primary pb-3">
         <h2 className="font-headline text-3xl font-black uppercase tracking-tighter">Job Items</h2>
       </div>
+
+      {failedItems.length > 0 ? (
+        <FailedLinesPanel
+          job={job}
+          failedItems={failedItems}
+          retrying={retrying}
+          onRetryFailedLines={onRetryFailedLines}
+        />
+      ) : null}
 
       {/* Desktop Column Guide */}
       <div className="hidden lg:grid grid-cols-12 gap-4 px-6 py-3 font-label font-black uppercase text-sm border-b-2 border-primary text-on-surface-variant">
@@ -1077,25 +1150,90 @@ function JobItemsTable({ items }: { items: BatchJobItemRecord[] }) {
                 {isSuccess ? (
                   <a
                     href={`/api/batch/jobs/${item.jobId}/items/${item.id}/download`}
-                    className="inline-flex min-w-20 items-center justify-center border-2 border-primary bg-primary px-3 py-2 font-headline text-[10px] font-bold uppercase text-surface shadow-[2px_2px_0px_0px_#1a1a1a] hover:bg-tertiary transition-colors"
+                    className="inline-flex min-w-28 items-center justify-center border-2 border-primary bg-primary px-3 py-2 font-headline text-[10px] font-bold uppercase text-surface shadow-[2px_2px_0px_0px_#1a1a1a] hover:bg-tertiary transition-colors"
+                    title={`Download line ${item.itemIndex + 1} MP3`}
                   >
-                    MP3
+                    Download MP3
                   </a>
+                ) : isFailed ? (
+                  <span className="max-w-full text-left leading-5" title={item.errorMessage ?? "Error"}>
+                    <span className="block font-headline text-[10px] font-black uppercase">Line failed</span>
+                    <span className="block break-words">{shortErrorMessage(item.errorMessage)}</span>
+                  </span>
                 ) : (
-                  <span className="max-w-full break-words text-left leading-5" title={item.errorMessage ?? "Error"}>
-                    {shortErrorMessage(item.errorMessage)}
+                  <span className="max-w-full break-words text-left leading-5">
+                    {itemResultLabel(item)}
                   </span>
                 )}
               </div>
               {isFailed && item.errorMessage ? (
-                <div className="border-t-2 border-error bg-[#fff7f6] px-4 py-3 font-body text-sm font-semibold leading-6 text-error lg:col-span-12 lg:px-6">
-                  <span className="font-headline text-xs font-black uppercase tracking-wider">Error: </span>
-                  <span className="break-words">{item.errorMessage}</span>
+                <div className="border-t-2 border-error bg-[#fff7f6] px-4 py-4 font-body text-sm font-semibold leading-6 text-error lg:col-span-12 lg:px-6">
+                  <p className="font-headline text-xs font-black uppercase tracking-wider">
+                    Full error for line #{item.itemIndex + 1}
+                  </p>
+                  <p className="mt-2 whitespace-pre-wrap break-words">{item.errorMessage}</p>
                 </div>
               ) : null}
             </div>
           );
         })}
+      </div>
+    </section>
+  );
+}
+
+function FailedLinesPanel({
+  job,
+  failedItems,
+  retrying,
+  onRetryFailedLines,
+}: {
+  job: BatchJobRecord;
+  failedItems: BatchJobItemRecord[];
+  retrying: boolean;
+  onRetryFailedLines: () => void;
+}) {
+  const disabledReason = retryDisabledReason(job);
+  return (
+    <section className="border-4 border-error bg-[#fff7f6] p-4 shadow-[4px_4px_0px_0px_#cc0000]">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b-2 border-error pb-3">
+        <div>
+          <p className="font-headline text-xl font-black uppercase tracking-tight text-error">Failed line errors</p>
+          <p className="mt-1 text-sm font-body font-semibold leading-6 text-error">
+            {failedItems.length.toLocaleString()} line{failedItems.length === 1 ? "" : "s"} failed. Full error messages are shown here and on each row.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRetryFailedLines}
+          disabled={Boolean(disabledReason) || retrying}
+          className={`border-2 border-primary px-4 py-3 font-headline text-xs font-bold uppercase transition-all ${
+            disabledReason || retrying
+              ? "bg-[#eee9e0] text-on-surface-variant cursor-not-allowed"
+              : "bg-[#ffcc00] text-primary shadow-[3px_3px_0px_0px_#1a1a1a] hover:bg-primary hover:text-surface cursor-pointer active:translate-x-0.5 active:translate-y-0.5"
+          }`}
+        >
+          {retrying ? "Retrying..." : "Retry failed lines"}
+        </button>
+      </div>
+      {disabledReason ? (
+        <p className="mt-3 border-2 border-primary bg-white px-3 py-2 text-xs font-body font-bold leading-5 text-on-surface-variant">
+          {disabledReason}
+        </p>
+      ) : null}
+      <div className="mt-4 grid max-h-80 gap-3 overflow-y-auto pr-1">
+        {failedItems.map((item) => (
+          <div key={item.id} className="border-2 border-error bg-white p-3">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-headline font-black uppercase text-error">
+              <span>#{item.itemIndex + 1}</span>
+              {item.externalId ? <span>External: {item.externalId}</span> : null}
+              {item.speaker ? <span>Speaker: {item.speaker}</span> : null}
+            </div>
+            <p className="mt-2 whitespace-pre-wrap break-words text-sm font-body font-semibold leading-6 text-error">
+              {item.errorMessage?.trim() || "No error message was returned by the worker."}
+            </p>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -1255,6 +1393,31 @@ function shortErrorMessage(message: string | null): string {
   const trimmed = message.trim();
   if (trimmed.length <= 90) return trimmed;
   return `${trimmed.slice(0, 87)}...`;
+}
+
+function itemResultLabel(item: BatchJobItemRecord): string {
+  if (item.status === "queued") return "Waiting in queue";
+  if (item.status === "running") return "Generating...";
+  return "-";
+}
+
+function isRetryableBatchStatus(status: BatchJobRecord["status"]): boolean {
+  return status === "failed" || status === "partial" || status === "needs_review";
+}
+
+function retryDisabledReason(job: BatchJobRecord): string | null {
+  if (job.failedItems <= 0) return null;
+  if (!isRetryableBatchStatus(job.status)) {
+    return "Retry is available after the current batch job stops.";
+  }
+  if (job.mode === "clone" && !job.cloneSampleBase64) {
+    return "Clone retry needs the original reference audio. Create a new clone batch with the same saved voice or uploaded sample.";
+  }
+  return null;
+}
+
+function canRetryFailedLines(job: BatchJobRecord): boolean {
+  return job.failedItems > 0 && retryDisabledReason(job) === null;
 }
 
 function canDownloadBatchJob(job: BatchJobRecord): boolean {
