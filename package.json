@@ -1,0 +1,49 @@
+{
+  "name": "khmer-vox-tts",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build && node scripts/sanitize-standalone.mjs",
+    "start": "next start",
+    "lint": "eslint",
+    "db:setup": "node scripts/db.mjs setup",
+    "db:check": "node scripts/db.mjs check",
+    "db:migrate-json": "node scripts/db.mjs migrate-json",
+    "deploy:check": "npm run lint && npm run build && npm run db:check",
+    "worker:jobs": "node scripts/job-worker.mjs --loop",
+    "smoke:prelaunch": "node scripts/prelaunch-smoke.mjs",
+    "smoke:payment": "node scripts/payment-smoke.mjs",
+    "smoke:payway-webhook": "node scripts/payway-webhook-smoke.mjs",
+    "smoke:telegram-payment": "node scripts/telegram-payment-smoke.mjs",
+    "smoke:telegram-payment-action": "node scripts/telegram-payment-action-smoke.mjs",
+    "telegram:payment-poll": "node scripts/telegram-payment-poll.mjs",
+    "smoke:final": "node scripts/final-local-flow.mjs"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.100.14",
+    "@upstash/redis": "^1.38.0",
+    "bakong-khqr": "^1.0.20",
+    "bcryptjs": "^3.0.3",
+    "ffmpeg-static": "^5.3.0",
+    "jose": "^6.2.3",
+    "next": "16.2.6",
+    "pg": "^8.21.0",
+    "qrcode": "^1.5.4",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/pg": "^8.20.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

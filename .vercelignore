@@ -1,0 +1,17 @@
+.antigravitycli
+.dev-logs
+.next
+.vercel
+node_modules
+data
+artifacts
+tmp_clone_verify
+*.log
+*.err.log
+*.out.log
+dev-server.log
+start-test.log
+deploy
+docker-compose.production.example.yml
+Dockerfile
+Procfile

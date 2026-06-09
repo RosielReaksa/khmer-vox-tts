@@ -1,0 +1,75 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# build / next
+.next/
+out/
+
+# production
+build/
+
+# env files
+.env
+.env.local
+.env.*.local
+.env.backup
+.env.development
+.env.production
+.env.test
+
+# data store (local dev)
+data/
+data/store.json
+data/telegram-payment-offset.json
+deploy/production.env
+deploy/k3s/voxtts.yaml
+deploy/k3s-deployment.yml
+
+# local generated artifacts
+artifacts/
+cleanup_reports/
+scratch/
+tmp_clone_verify/
+.antigravitycli/
+STITCH_OUTPUT.html
+download.txt
+photo_*.jpg
+
+# debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.dev-logs/
+*.log
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# prisma generated
+app/generated/
+
+# python
+__pycache__/
+*.py[cod]
+
+.vercel
+
+# Secrets and sensitive configs
+modal/NEW_VOXCPM_API_KEY.txt
+data/tts-upstream-pool.json
+deploy/k3s/voxtts-populated.yaml
+**/.modal.toml
