@@ -52,7 +52,7 @@ export async function POST(request: Request) {
   if (!apiAccess.hasPaidApiAccess) {
     return NextResponse.json(
       {
-        error: "API keys require a paid token pack. Buy Starter or Creator first.",
+        error: "API keys require a paid token pack. Buy Creator or a token pack first.",
         code: "PAID_PLAN_REQUIRED",
       },
       { status: 402 },

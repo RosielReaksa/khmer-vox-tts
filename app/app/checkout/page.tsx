@@ -4,10 +4,8 @@ import { Suspense } from "react";
 import { CheckoutClient } from "@/app/app/checkout/checkout-client";
 import { CheckoutUserProvider } from "@/app/app/checkout/checkout-user-provider";
 import { VoxLoader } from "@/app/components/vox-loader";
-import { isBakongVerificationConfigured } from "@/lib/bakong";
 import { getCurrentUser } from "@/lib/current-user";
-import { isPaywayQrEnabled } from "@/lib/payway";
-import { isStaticPaywayQrEnabled, staticPaywayQrAccountLabel, staticPaywayQrImageUrl } from "@/lib/static-payway";
+import { isKhqrccConfigured, khqrccAccountLabel } from "@/lib/khqrcc";
 
 export default function CheckoutPage() {
   return (
@@ -23,22 +21,14 @@ async function CheckoutData() {
     redirect("/app/signin");
   }
 
-  const checkoutMode: "local_khqr" | "payway_qr" | "static_payway_qr" = isStaticPaywayQrEnabled()
-    ? "static_payway_qr"
-    : isPaywayQrEnabled()
-      ? "payway_qr"
-      : "local_khqr";
+  const checkoutMode = "khqrcc_qr" as const;
 
   const paymentInfo = {
-    khqrName: process.env.KHQR_DISPLAY_NAME?.trim() || "Khmer Vox TTS",
-    khqrAccount: isStaticPaywayQrEnabled()
-      ? staticPaywayQrAccountLabel()
-      : process.env.KHQR_ACCOUNT?.trim() || "Set KHQR_ACCOUNT in .env",
+    khqrName: "Automatic ABA QR",
+    khqrAccount: khqrccAccountLabel(),
     telegramHandle: process.env.TELEGRAM_ADMIN_HANDLE?.trim() || "https://t.me/OfficalVoxTTS",
-    staticQrImageUrl: staticPaywayQrImageUrl(),
-    autoVerificationEnabled: isStaticPaywayQrEnabled()
-      ? false
-      : isPaywayQrEnabled() || isBakongVerificationConfigured(),
+    staticQrImageUrl: "",
+    autoVerificationEnabled: isKhqrccConfigured(),
     checkoutMode,
   };
 

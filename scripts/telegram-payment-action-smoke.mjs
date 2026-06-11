@@ -143,8 +143,8 @@ async function seedPendingOrder(args) {
   const order = {
     id: `smoke-pay-${randomUUID()}`,
     userId: customer.id,
-    planId: "starter",
-    planName: "Starter",
+    planId: "creator",
+    planName: "Creator",
     quantity: 1,
     unitPriceCents: 500,
     totalPriceCents: 500,

@@ -1,4 +1,4 @@
-export type PlanKey = "free" | "starter" | "creator" | "business";
+export type PlanKey = "free" | "creator" | "pro" | "business";
 
 export type PlanDetail = {
   bestFor: string;
@@ -22,21 +22,6 @@ export const PLAN_DETAILS: Record<PlanKey, PlanDetail> = {
       "Not for production/customer traffic",
     ],
   },
-  starter: {
-    bestFor: "Small API tests, bots, and first integration checks.",
-    canUse: [
-      "1,000 tokens per pack",
-      "Create paid API keys",
-      "Speech and clone API calls",
-      "Small batch jobs at standard limits",
-    ],
-    cannotUse: [
-      "No Business clone rate",
-      "No custom concurrency or queue limits",
-      "Not for high-volume dubbing systems",
-      "Standard clone rate is 2 tokens/sec",
-    ],
-  },
   creator: {
     bestFor: "Regular creators, automations, and larger test batches.",
     canUse: [
@@ -44,6 +29,21 @@ export const PLAN_DETAILS: Record<PlanKey, PlanDetail> = {
       "Create paid API keys",
       "Speech, clone, and batch API",
       "More regular dashboard/API usage",
+    ],
+    cannotUse: [
+      "No Business clone rate",
+      "No custom high-volume queue limits",
+      "No approved business launch review",
+      "Standard clone rate is 2 tokens/sec",
+    ],
+  },
+  pro: {
+    bestFor: "Growing creators, teams, and heavier batch generation workloads.",
+    canUse: [
+      "30,000 tokens per pack",
+      "Create paid API keys",
+      "Speech, clone, and batch API",
+      "More prepaid generation time per purchase",
     ],
     cannotUse: [
       "No Business clone rate",
@@ -72,85 +72,85 @@ export const PLAN_DETAILS: Record<PlanKey, PlanDetail> = {
 export const PLAN_COMPARISON_ROWS: Array<{
   feature: string;
   free: string;
-  starter: string;
   creator: string;
+  pro: string;
   business: string;
 }> = [
   {
     feature: "Tokens",
     free: "100 one-time trial",
-    starter: "1,000 per pack",
     creator: "10,000 per pack",
+    pro: "30,000 per pack",
     business: "Custom prepaid volume",
   },
   {
     feature: "Dashboard generation",
     free: "Yes",
-    starter: "Yes",
     creator: "Yes",
+    pro: "Yes",
     business: "Yes",
   },
   {
     feature: "API keys",
     free: "No",
-    starter: "Yes",
     creator: "Yes",
+    pro: "Yes",
     business: "Yes, approved",
   },
   {
     feature: "Speech API",
     free: "No",
-    starter: "Yes",
     creator: "Yes",
+    pro: "Yes",
     business: "Yes",
   },
   {
     feature: "Clone API",
     free: "No",
-    starter: "Standard",
     creator: "Standard",
+    pro: "Standard",
     business: "Discounted",
   },
   {
     feature: "Batch jobs",
     free: "No",
-    starter: "Small tests",
     creator: "Regular workloads",
+    pro: "Larger workloads",
     business: "High-volume",
   },
   {
     feature: "Webhook callbacks",
     free: "No",
-    starter: "Testing",
     creator: "Testing",
+    pro: "Testing",
     business: "Production use",
   },
   {
     feature: "Speech token rate",
     free: "Standard speech: 1.5 tokens/sec",
-    starter: "Standard speech: 1.5 tokens/sec",
     creator: "Standard speech: 1.5 tokens/sec",
+    pro: "Standard speech: 1.5 tokens/sec",
     business: "Standard speech: 1.5 tokens/sec",
   },
   {
     feature: "Clone token rate",
     free: "Dashboard trial only, no API",
-    starter: "Standard clone: 2 tokens/sec",
     creator: "Standard clone: 2 tokens/sec",
+    pro: "Standard clone: 2 tokens/sec",
     business: "Business clone only: 1.5 tokens/sec, or 1 with high-volume prepaid",
   },
   {
     feature: "Concurrency and queue",
     free: "Trial only",
-    starter: "Standard limits",
     creator: "Standard limits",
+    pro: "Standard limits",
     business: "Admin-approved limits",
   },
   {
     feature: "Best for",
     free: PLAN_DETAILS.free.bestFor,
-    starter: PLAN_DETAILS.starter.bestFor,
     creator: PLAN_DETAILS.creator.bestFor,
+    pro: PLAN_DETAILS.pro.bestFor,
     business: PLAN_DETAILS.business.bestFor,
   },
 ];

@@ -18,14 +18,14 @@ const productFlow = [
 ];
 
 const paymentChecklist: Array<[string, string]> = [
-  ["Plans visible", "Free, Starter, Creator, and Business plans are shown with can-use and not-included details."],
+  ["Plans visible", "Free, Creator, Pro, and Business plans are shown with can-use and not-included details."],
   ["Free limits", "Free users can test the dashboard with trial tokens but cannot create or use public API keys."],
   ["Business limits", "Business is contact-first, admin-approved, and used for high-volume clone/batch/webhook API access."],
-  ["Manual PayWay QR", "Checkout uses ABA PayWay static merchant QR for review mode."],
-  ["Receipt upload", "Users can upload receipt proof from computer or phone QR link."],
-  ["Admin approval", "Admin can approve or reject after matching bank notice and receipt."],
+  ["KHQRcc ABA Pay", "Checkout creates exact-amount KHQRcc ABA Pay QR orders."],
+  ["No receipt upload", "New orders are verified by KHQRcc webhook or server-side transaction check."],
+  ["Automatic approval", "The app credits the account only after amount, status, and duplicate checks pass."],
   ["Double credit guard", "Approved orders cannot be credited twice."],
-  ["Webhook ready", "PayWay callback endpoint exists for production credentials."],
+  ["Webhook ready", "KHQRcc callback endpoint is /api/webhooks/khqrcc."],
 ];
 
 const apiChecklist: Array<[string, string]> = [
@@ -52,7 +52,7 @@ export default function ReviewPage() {
           </h1>
           <p className="mt-4 font-body text-sm leading-relaxed text-on-surface-variant max-w-2xl border-l-4 border-outline pl-4">
             This page summarizes the service, customer flow, payment handling, API usage,
-            and production PayWay plan for bank or payment gateway review.
+            and KHQRcc ABA Pay handling for bank or payment gateway review.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Link
@@ -101,20 +101,20 @@ export default function ReviewPage() {
         </section>
 
         <section className="border-4 border-outline bg-white p-6 lg:p-8 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]">
-          <h2 className="text-2xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-2 mb-4">Current production credential request</h2>
+          <h2 className="text-2xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-2 mb-4">Current production payment mode</h2>
           <div className="grid gap-4 leading-relaxed text-sm lg:grid-cols-2">
             <div className="border-2 border-outline bg-[#eee9e0] p-4 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
               <h3 className="font-headline font-black uppercase text-xs text-primary border-b border-outline pb-1 mb-2">Current mode</h3>
               <p className="text-xs font-body text-on-surface-variant leading-relaxed">
-                Manual ABA PayWay QR checkout with admin receipt approval. This protects
-                billing while PayWay production API access is pending.
+                KHQRcc ABA Pay QR checkout creates exact-amount orders and supports signed
+                callback verification.
               </p>
             </div>
             <div className="border-2 border-outline bg-[#eee9e0] p-4 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-              <h3 className="font-headline font-black uppercase text-xs text-primary border-b border-outline pb-1 mb-2">Requested mode</h3>
+              <h3 className="font-headline font-black uppercase text-xs text-primary border-b border-outline pb-1 mb-2">Verification mode</h3>
               <p className="text-xs font-body text-on-surface-variant leading-relaxed">
-                Dynamic PayWay QR generation with signed callback/webhook confirmation,
-                automatic token credit, and duplicate transaction protection.
+                Signed KHQRcc callback plus server-side transaction check, automatic credit,
+                and duplicate transaction protection.
               </p>
             </div>
           </div>
@@ -124,7 +124,7 @@ export default function ReviewPage() {
           <h2 className="text-2xl font-headline font-black uppercase text-[#ffcc00] border-b-2 border-outline pb-2 mb-4">Reviewer quick links</h2>
           <div className="grid gap-4 md:grid-cols-3">
             <QuickLink href="/" title="Public home" body="Service overview, pricing, and product summary." />
-            <QuickLink href="/payments" title="Payment flow" body="Manual checkout and production PayWay plan." />
+            <QuickLink href="/payments" title="Payment flow" body="KHQRcc checkout and verification flow." />
             <QuickLink href="/docs" title="API docs" body="Speech, clone, batch, token, and webhook endpoints." />
           </div>
         </section>

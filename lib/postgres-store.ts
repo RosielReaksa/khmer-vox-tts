@@ -282,7 +282,7 @@ create index if not exists batch_job_webhook_attempts_status_created_idx
 create table if not exists payment_orders (
   id text primary key,
   user_id text not null references users(id) on delete cascade,
-  plan_id text not null check (plan_id in ('starter', 'creator', 'pack_5', 'pack_10', 'pack_15', 'pack_20')),
+  plan_id text not null check (plan_id in ('starter', 'creator', 'pro', 'pack_5', 'pack_10', 'pack_15', 'pack_20')),
   plan_name text not null,
   quantity integer not null check (quantity > 0),
   unit_price_cents integer not null check (unit_price_cents >= 0),
@@ -341,7 +341,7 @@ begin
   ) then
     alter table payment_orders drop constraint payment_orders_plan_id_check;
     alter table payment_orders add constraint payment_orders_plan_id_check
-      check (plan_id in ('starter', 'creator', 'pack_5', 'pack_10', 'pack_15', 'pack_20'));
+      check (plan_id in ('starter', 'creator', 'pro', 'pack_5', 'pack_10', 'pack_15', 'pack_20'));
   elsif not exists (
     select 1
     from pg_constraint c
@@ -352,13 +352,13 @@ begin
       and c.conname = 'payment_orders_plan_id_check'
   ) then
     alter table payment_orders add constraint payment_orders_plan_id_check
-      check (plan_id in ('starter', 'creator', 'pack_5', 'pack_10', 'pack_15', 'pack_20'));
+      check (plan_id in ('starter', 'creator', 'pro', 'pack_5', 'pack_10', 'pack_15', 'pack_20'));
   end if;
 end $$;
 
 create table if not exists payment_webhook_events (
   id text primary key,
-  provider text not null check (provider in ('payway')),
+  provider text not null check (provider in ('payway', 'khqrcc')),
   order_id text,
   payment_order_id text references payment_orders(id) on delete set null,
   event_status text not null check (event_status in ('credited', 'not_credited', 'invalid', 'error')),
@@ -385,6 +385,34 @@ create index if not exists payment_webhook_events_payment_order_idx
   on payment_webhook_events(payment_order_id, created_at desc);
 create index if not exists payment_webhook_events_status_idx
   on payment_webhook_events(event_status, created_at desc);
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    join pg_namespace n on n.oid = t.relnamespace
+    where n.nspname = 'public'
+      and t.relname = 'payment_webhook_events'
+      and c.conname = 'payment_webhook_events_provider_check'
+  ) then
+    alter table payment_webhook_events drop constraint payment_webhook_events_provider_check;
+    alter table payment_webhook_events add constraint payment_webhook_events_provider_check
+      check (provider in ('payway', 'khqrcc'));
+  elsif not exists (
+    select 1
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    join pg_namespace n on n.oid = t.relnamespace
+    where n.nspname = 'public'
+      and t.relname = 'payment_webhook_events'
+      and c.conname = 'payment_webhook_events_provider_check'
+  ) then
+    alter table payment_webhook_events add constraint payment_webhook_events_provider_check
+      check (provider in ('payway', 'khqrcc'));
+  end if;
+end $$;
 
 create table if not exists telegram_payment_events (
   id text primary key,
@@ -2690,8 +2718,11 @@ export async function refreshBatchJobRollup(jobId: string): Promise<BatchJobReco
       QueryResultRow & {
         completed_items: number | string;
         failed_items: number | string;
+        queued_items: number | string;
+        running_items: number | string;
         retryable_failed_items: number | string;
         next_retry_at: Date | string | null;
+        queued_next_retry_at: Date | string | null;
         credits_charged: number | string;
         output_seconds: number | string;
       }
@@ -2700,8 +2731,11 @@ export async function refreshBatchJobRollup(jobId: string): Promise<BatchJobReco
       select
         count(*) filter (where status = 'success')::int as completed_items,
         count(*) filter (where status = 'failed')::int as failed_items,
+        count(*) filter (where status = 'queued')::int as queued_items,
+        count(*) filter (where status = 'running')::int as running_items,
         count(*) filter (where status = 'failed' and attempt_count < $2)::int as retryable_failed_items,
         min(next_retry_at) filter (where status = 'failed' and attempt_count < $2) as next_retry_at,
+        min(next_retry_at) filter (where status = 'queued' and next_retry_at is not null) as queued_next_retry_at,
         coalesce(sum(credits_charged), 0)::int as credits_charged,
         coalesce(sum(output_seconds), 0)::int as output_seconds
       from batch_job_items
@@ -2712,6 +2746,8 @@ export async function refreshBatchJobRollup(jobId: string): Promise<BatchJobReco
     const stats = statsRows.rows[0];
     const completedItems = toNumber(stats?.completed_items);
     const failedItems = toNumber(stats?.failed_items);
+    const queuedItems = toNumber(stats?.queued_items);
+    const runningItems = toNumber(stats?.running_items);
     const retryableFailedItems = toNumber(stats?.retryable_failed_items);
     const terminalItems = completedItems + failedItems;
     const totalItems = toNumber(jobRow.total_items);
@@ -2733,7 +2769,7 @@ export async function refreshBatchJobRollup(jobId: string): Promise<BatchJobReco
         nextRetryAt = nullableIso(stats?.next_retry_at) ?? now;
         errorMessage = `Waiting to retry ${retryableFailedItems.toLocaleString()} failed item(s).`;
       } else {
-        finalStatus = "needs_review";
+        finalStatus = completedItems > 0 ? "partial" : "needs_review";
         completedAt = nullableIso(jobRow.completed_at) ?? now;
         nextRetryAt = null;
         deadLetterReason = deadLetterReason ?? (completedItems > 0
@@ -2741,6 +2777,17 @@ export async function refreshBatchJobRollup(jobId: string): Promise<BatchJobReco
           : "All batch items exhausted their retry limit.");
         errorMessage = errorMessage ?? deadLetterReason;
       }
+    } else if (queuedItems > 0 && runningItems === 0) {
+      finalStatus = "queued";
+      completedAt = null;
+      nextRetryAt = nullableIso(stats?.queued_next_retry_at) ?? nullableIso(stats?.next_retry_at) ?? nextRetryAt ?? now;
+      errorMessage = failedItems > 0
+        ? `Waiting to retry ${queuedItems.toLocaleString()} queued item(s).`
+        : errorMessage;
+    } else if (runningItems > 0) {
+      finalStatus = "running";
+      completedAt = null;
+      nextRetryAt = null;
     }
 
     const updatedRows = await client.query<BatchJobRow>(
@@ -3498,6 +3545,18 @@ function paymentAmountMatches(order: PaymentOrderRecord, amount: number, currenc
   return Math.abs(order.khqrAmount - amount) <= tolerance;
 }
 
+function paymentProviderNote(provider: PaymentProvider): string {
+  if (provider === "telegram_payway") return "Telegram payment";
+  if (provider === "khqrcc") return "KHQRcc payment";
+  return "PayWay payment";
+}
+
+function paymentProviderApprovalNote(provider: PaymentProvider): string {
+  if (provider === "telegram_payway") return "Auto approved by Telegram payment monitor.";
+  if (provider === "khqrcc") return "Auto approved by KHQRcc verification.";
+  return "Auto approved by PayWay webhook.";
+}
+
 export async function confirmPaymentOrderPaid(input: {
   orderId: string;
   provider: PaymentProvider;
@@ -3571,7 +3630,7 @@ export async function confirmPaymentOrderPaid(input: {
         txId,
         order.userId,
         order.tokens,
-        `Auto approved ${input.provider === "telegram_payway" ? "Telegram payment" : "PayWay payment"} order ${order.id}`,
+        `Auto approved ${paymentProviderNote(input.provider)} order ${order.id}`,
         now,
       ],
     );
@@ -3609,10 +3668,7 @@ export async function confirmPaymentOrderPaid(input: {
         input.providerCurrency,
         input.providerPayload,
         input.paidAt ?? now,
-        input.adminNote ??
-          (input.provider === "telegram_payway"
-            ? "Auto approved by Telegram payment monitor."
-            : "Auto approved by PayWay webhook."),
+        input.adminNote ?? paymentProviderApprovalNote(input.provider),
         txId,
         now,
         input.approvedByUserId ?? null,

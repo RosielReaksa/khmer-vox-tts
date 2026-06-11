@@ -53,7 +53,7 @@ type BillingDashboardData = {
     telegramHandle: string;
     staticQrImageUrl: string;
     autoVerificationEnabled: boolean;
-    checkoutMode: "local_khqr" | "payway_qr" | "static_payway_qr";
+    checkoutMode: "local_khqr" | "payway_qr" | "static_payway_qr" | "khqrcc_qr";
     initialAdminActive: boolean;
   };
 };
@@ -185,14 +185,14 @@ function BillingPanel() {
     ? "Custom business plan access active"
     : (latestPaidOrder
         ? `${latestPaidOrder.planName} x ${latestPaidOrder.quantity} paid pack`
-        : "Free starter credits");
+        : "Free trial credits");
   const paymentInfo = data?.paymentInfo ?? {
-    khqrName: "Khmer Vox TTS",
-    khqrAccount: "Set KHQR_ACCOUNT in .env",
+    khqrName: "KHQRcc ABA Pay",
+    khqrAccount: "KHQRcc ABA Pay",
     telegramHandle: "https://t.me/OfficalVoxTTS",
-    staticQrImageUrl: "/payway-static-qr-code.png",
+    staticQrImageUrl: "",
     autoVerificationEnabled: false,
-    checkoutMode: "local_khqr" as const,
+    checkoutMode: "khqrcc_qr" as const,
     initialAdminActive: true,
   };
 
@@ -266,25 +266,21 @@ function BillingPanel() {
                 </div>
                 <div>
                   <p className="text-xs font-headline font-black uppercase text-primary">
-                    {paymentInfo.checkoutMode === "static_payway_qr" ? "ABA PayWay QR (Manual)" : "Bakong KHQR"}
+                    KHQRcc ABA Pay
                   </p>
                   <p className="text-[10px] font-body font-medium text-on-surface-variant leading-relaxed">
-                    {paymentInfo.checkoutMode === "static_payway_qr"
-                      ? "Static merchant QR, receipt approval"
-                      : "Local QR checkout from your KHQR account"}
+                    Automatic QR checkout and verification
                   </p>
                 </div>
               </div>
               <span className="border-2 border-primary bg-[#def3e5] px-2 py-0.5 text-[10px] font-headline font-black uppercase text-[#0d5f2e]">
-                {paymentInfo.autoVerificationEnabled ? "Auto check" : "Manual approval"}
+                {paymentInfo.autoVerificationEnabled ? "Auto check" : "Not configured"}
               </span>
             </div>
           </div>
           {!paymentInfo.autoVerificationEnabled ? (
             <p className="mt-4 border-2 border-outline bg-[#ffdad6] p-4 text-xs font-bold text-[#93000a] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] leading-relaxed">
-              {paymentInfo.checkoutMode === "static_payway_qr"
-                ? "Current mode: manual ABA PayWay QR. Customers enter the exact amount, upload the ABA receipt, and tokens are added after admin confirmation. PayWay API/webhook is not active yet."
-                : "This site generates KHQR codes locally and does not need the PayWay QR API. Tokens are added after admin confirmation from Telegram/payment notice."}
+              KHQRcc checkout is selected, but the server is missing KHQRCC_PROFILE_ID or KHQRCC_SECRET_KEY.
             </p>
           ) : null}
         </article>

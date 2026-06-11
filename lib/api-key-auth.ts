@@ -45,7 +45,7 @@ export async function authenticateApiKeyFromRequest(request: Request): Promise<
     return {
       ok: false,
       status: 402,
-      error: "API access requires a paid token pack. Buy Starter or Creator to use API keys.",
+      error: "API access requires a paid token pack. Buy Creator or a token pack to use API keys.",
     };
   }
 

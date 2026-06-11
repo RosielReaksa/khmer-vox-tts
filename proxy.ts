@@ -47,6 +47,11 @@ async function verifyAdminSession(
 }
 
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+const ALLOWED_MULTIPART_API_ROUTES = new Set([
+  "/api/batch-clone",
+  "/api/dashboard/voices",
+  "/api/generate-clone",
+]);
 
 function isRateLimited(ip: string, limit = 120, windowMs = 60000): boolean {
   const now = Date.now();
@@ -141,8 +146,9 @@ export async function proxy(request: NextRequest) {
     const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
     const isMultipartForm = contentType.includes("multipart/form-data");
     const isServerAction = request.headers.has("next-action");
+    const isAllowedMultipartApiRoute = ALLOWED_MULTIPART_API_ROUTES.has(pathname);
 
-    if (isMultipartForm && !isServerAction) {
+    if (isMultipartForm && !isServerAction && !isAllowedMultipartApiRoute) {
       return new NextResponse(
         JSON.stringify({ error: "Unsupported media type for this route." }),
         { status: 415, headers: { "Content-Type": "application/json" } },

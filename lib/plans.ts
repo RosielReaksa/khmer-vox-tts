@@ -1,4 +1,8 @@
 import type { PaymentPlanId } from "@/lib/types";
+import {
+  STANDARD_CLONE_CREDITS_PER_SECOND,
+  TTS_CREDITS_PER_SECOND,
+} from "@/lib/credit-rates";
 
 export type TokenPackPlan = {
   id: PaymentPlanId;
@@ -10,18 +14,18 @@ export type TokenPackPlan = {
 
 export const TOKEN_PACK_PLANS: TokenPackPlan[] = [
   {
-    id: "starter",
-    name: "Starter",
-    tokens: 1_000,
-    priceCents: 20,
-    description: "Good for short tests and quick bot integrations.",
-  },
-  {
     id: "creator",
     name: "Creator",
     tokens: 10_000,
     priceCents: 150,
     description: "Built for regular batch generation workloads.",
+  },
+  {
+    id: "pro",
+    name: "Pro",
+    tokens: 30_000,
+    priceCents: 400,
+    description: "More credits for growing creators and larger batch workloads.",
   },
   {
     id: "pack_5",
@@ -61,3 +65,26 @@ export function formatUsd(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+export function formatAudioDuration(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  const parts: string[] = [];
+
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (remainingSeconds > 0 || parts.length === 0) parts.push(`${remainingSeconds}s`);
+
+  return parts.join(" ");
+}
+
+export function getAudioDurationEstimates(tokens: number): {
+  standard: string;
+  clone: string;
+} {
+  return {
+    standard: formatAudioDuration(Math.floor(tokens / TTS_CREDITS_PER_SECOND)),
+    clone: formatAudioDuration(Math.floor(tokens / STANDARD_CLONE_CREDITS_PER_SECOND)),
+  };
+}

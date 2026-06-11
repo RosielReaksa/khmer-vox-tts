@@ -72,6 +72,72 @@ const EMPTY_STORE: DataStore = {
 
 let mutationQueue: Promise<unknown> = Promise.resolve();
 
+const STORE_LOCK_PATH = `${STORE_PATH}.lock`;
+const STORE_LOCK_STALE_MS = 30_000;
+const STORE_LOCK_MAX_WAIT_MS = 10_000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function errorCode(error: unknown): string | null {
+  if (!error || typeof error !== "object" || !("code" in error)) {
+    return null;
+  }
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
+}
+
+function isRetryableStoreReplaceError(error: unknown): boolean {
+  const code = errorCode(error);
+  return code === "EPERM" || code === "EACCES" || code === "EBUSY";
+}
+
+async function acquireStoreWriteLock(): Promise<() => Promise<void>> {
+  const startedAt = Date.now();
+  let attempt = 0;
+
+  while (Date.now() - startedAt < STORE_LOCK_MAX_WAIT_MS) {
+    let lockHandle: Awaited<ReturnType<typeof fs.open>> | null = null;
+    try {
+      lockHandle = await fs.open(/*turbopackIgnore: true*/ STORE_LOCK_PATH, "wx");
+      await lockHandle.writeFile(
+        `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`,
+        "utf8",
+      );
+
+      let released = false;
+      return async () => {
+        if (released) return;
+        released = true;
+        await lockHandle?.close().catch(() => undefined);
+        await fs.rm(/*turbopackIgnore: true*/ STORE_LOCK_PATH, { force: true }).catch(() => undefined);
+      };
+    } catch (error) {
+      await lockHandle?.close().catch(() => undefined);
+      if (errorCode(error) !== "EEXIST") {
+        throw error;
+      }
+
+      try {
+        const stat = await fs.stat(/*turbopackIgnore: true*/ STORE_LOCK_PATH);
+        if (Date.now() - stat.mtimeMs > STORE_LOCK_STALE_MS) {
+          await fs.rm(/*turbopackIgnore: true*/ STORE_LOCK_PATH, { force: true });
+        }
+      } catch (statError) {
+        if (errorCode(statError) !== "ENOENT") {
+          throw statError;
+        }
+      }
+
+      await delay(Math.min(250, 25 + attempt * 10));
+      attempt += 1;
+    }
+  }
+
+  throw new Error("Timed out waiting for local JSON store write lock.");
+}
+
 function normalizeEmail(input: string): string {
   return input.trim().toLowerCase();
 }
@@ -101,8 +167,29 @@ async function ensureStoreFile(): Promise<void> {
 
 async function readStore(): Promise<DataStore> {
   await ensureStoreFile();
-  const raw = await fs.readFile(/*turbopackIgnore: true*/ STORE_PATH, "utf8");
-  const parsed = JSON.parse(raw) as Partial<DataStore>;
+  // writeStore replaces the file atomically (temp + rename), but reads are not
+  // lock-synchronized, so a concurrent writer (or a second dev process) can make
+  // a read catch a transient/partial state -> JSON.parse throws "Unterminated
+  // string". Because writes are atomic, retrying after a short delay reads a
+  // clean file. This prevents intermittent 500s on generate/poll.
+  let raw = "";
+  let lastError: unknown = null;
+  const maxAttempts = 5;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    raw = await fs.readFile(/*turbopackIgnore: true*/ STORE_PATH, "utf8");
+    try {
+      return normalizeStore(JSON.parse(raw) as Partial<DataStore>);
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts - 1) {
+        await delay(Math.min(200, 30 + attempt * 40));
+      }
+    }
+  }
+  throw lastError ?? new Error("Failed to read local JSON store.");
+}
+
+function normalizeStore(parsed: Partial<DataStore>): DataStore {
   return {
     schemaVersion: 20,
     users: (parsed.users ?? []).map((user) => ({
@@ -294,15 +381,38 @@ async function readStore(): Promise<DataStore> {
 }
 
 async function writeStore(store: DataStore): Promise<void> {
-  await fs.writeFile(/*turbopackIgnore: true*/ STORE_PATH, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+  const tempPath = `${STORE_PATH}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(/*turbopackIgnore: true*/ tempPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+    const maxAttempts = process.platform === "win32" ? 40 : 1;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        await fs.rename(/*turbopackIgnore: true*/ tempPath, /*turbopackIgnore: true*/ STORE_PATH);
+        return;
+      } catch (error) {
+        if (!isRetryableStoreReplaceError(error) || attempt === maxAttempts - 1) {
+          throw error;
+        }
+        await delay(Math.min(500, 25 + attempt * 25));
+      }
+    }
+  } catch (error) {
+    await fs.rm(/*turbopackIgnore: true*/ tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 async function updateStore<T>(mutator: (store: DataStore) => T | Promise<T>): Promise<T> {
   const run = mutationQueue.then(async () => {
-    const store = await readStore();
-    const result = await mutator(store);
-    await writeStore(store);
-    return result;
+    const releaseLock = await acquireStoreWriteLock();
+    try {
+      const store = await readStore();
+      const result = await mutator(store);
+      await writeStore(store);
+      return result;
+    } finally {
+      await releaseLock();
+    }
   });
 
   mutationQueue = run.then(
@@ -810,6 +920,8 @@ function rollupBatchJob(store: DataStore, jobId: string): BatchJobRecord | null 
   const items = store.batchJobItems.filter((item) => item.jobId === jobId);
   const completedItems = items.filter((item) => item.status === "success").length;
   const failedItems = items.filter((item) => item.status === "failed").length;
+  const queuedItems = items.filter((item) => item.status === "queued");
+  const runningItems = items.filter((item) => item.status === "running");
   const terminalItems = completedItems + failedItems;
   const now = new Date().toISOString();
 
@@ -832,15 +944,30 @@ function rollupBatchJob(store: DataStore, jobId: string): BatchJobRecord | null 
       return job;
     }
 
-    job.status = failedItems === 0 ? "completed" : failedItems > 0 ? "needs_review" : "failed";
+    job.status = failedItems === 0 ? "completed" : completedItems > 0 ? "partial" : "needs_review";
     job.nextRetryAt = null;
     job.completedAt ??= now;
-    if (job.status === "needs_review") {
+    if (job.status === "partial" || job.status === "needs_review") {
       job.deadLetterReason ??= completedItems > 0
         ? "Some batch items exhausted their retry limit."
         : "All batch items exhausted their retry limit.";
       job.errorMessage ??= job.deadLetterReason;
     }
+  } else if (queuedItems.length > 0 && runningItems.length === 0) {
+    const retryableItems = retryableFailedItems(items);
+    job.status = "queued";
+    job.completedAt = null;
+    job.nextRetryAt = [...queuedItems, ...retryableItems]
+      .map((item) => item.nextRetryAt)
+      .filter((value): value is string => Boolean(value))
+      .sort()[0] ?? job.nextRetryAt ?? now;
+    if (failedItems > 0) {
+      job.errorMessage = `Waiting to retry ${queuedItems.length.toLocaleString()} queued item(s).`;
+    }
+  } else if (runningItems.length > 0) {
+    job.status = "running";
+    job.completedAt = null;
+    job.nextRetryAt = null;
   }
 
   return job;
@@ -1622,6 +1749,18 @@ function paymentAmountMatches(order: PaymentOrderRecord, amount: number, currenc
   return Math.abs(order.khqrAmount - amount) <= tolerance;
 }
 
+function paymentProviderNote(provider: PaymentProvider): string {
+  if (provider === "telegram_payway") return "Telegram payment";
+  if (provider === "khqrcc") return "KHQRcc payment";
+  return "PayWay payment";
+}
+
+function paymentProviderApprovalNote(provider: PaymentProvider): string {
+  if (provider === "telegram_payway") return "Auto approved by Telegram payment monitor.";
+  if (provider === "khqrcc") return "Auto approved by KHQRcc verification.";
+  return "Auto approved by PayWay webhook.";
+}
+
 export async function confirmPaymentOrderPaid(input: {
   orderId: string;
   provider: PaymentProvider;
@@ -1678,7 +1817,7 @@ export async function confirmPaymentOrderPaid(input: {
       userId: order.userId,
       amount: order.tokens,
       type: "purchase",
-      note: `Auto approved ${input.provider === "telegram_payway" ? "Telegram payment" : "PayWay payment"} order ${order.id}`,
+      note: `Auto approved ${paymentProviderNote(input.provider)} order ${order.id}`,
       createdAt: now,
     };
 
@@ -1695,10 +1834,7 @@ export async function confirmPaymentOrderPaid(input: {
     order.providerPayload = input.providerPayload;
     order.paidAt = paidAt;
     order.adminNote =
-      input.adminNote ??
-      (input.provider === "telegram_payway"
-        ? "Auto approved by Telegram payment monitor."
-        : "Auto approved by PayWay webhook.");
+      input.adminNote ?? paymentProviderApprovalNote(input.provider);
     order.tokenTransactionId = tx.id;
     order.approvedAt = now;
     order.approvedByUserId = input.approvedByUserId ?? null;

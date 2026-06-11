@@ -53,7 +53,7 @@ function cleanEnv(name) {
 function parseArgs(argv) {
   const args = {
     baseUrl: process.env.SMOKE_BASE_URL || "http://localhost:3000",
-    plan: process.env.SMOKE_PLAN_ID || "starter",
+    plan: process.env.SMOKE_PLAN_ID || "creator",
     quantity: Number(process.env.SMOKE_QUANTITY || 1),
     email: process.env.SMOKE_USER_EMAIL || "",
     password: process.env.SMOKE_USER_PASSWORD || "SmokeTest123!",

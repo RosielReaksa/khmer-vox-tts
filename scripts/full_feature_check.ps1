@@ -180,7 +180,7 @@ else {
 }
 
 # Payment order and admin approval flow
-$paymentOrderPayload = @{ planId = "starter"; quantity = 2; userNote = "qa telegram ref" } | ConvertTo-Json
+$paymentOrderPayload = @{ planId = "creator"; quantity = 1; userNote = "qa telegram ref" } | ConvertTo-Json
 $paymentOrderResp = Invoke-SafeWebRequest -Uri ($baseUrl + "/api/payments/orders") -Method "POST" -Body $paymentOrderPayload -ContentType "application/json" -WebSession $session
 $paymentOrder = $null
 if ($paymentOrderResp.status -eq 200) {
@@ -192,8 +192,8 @@ if ($paymentOrderResp.status -eq 200) {
   }
 }
 
-if ($paymentOrder -and $paymentOrder.status -eq "pending" -and $paymentOrder.tokens -eq 2000) {
-  Add-Result "Create payment order" "PASS" "Pending order for 2,000 tokens"
+if ($paymentOrder -and $paymentOrder.status -eq "pending" -and $paymentOrder.tokens -eq 10000) {
+  Add-Result "Create payment order" "PASS" "Pending order for 10,000 tokens"
 }
 else {
   Add-Result "Create payment order" "FAIL" "HTTP $($paymentOrderResp.status) $($paymentOrderResp.body)"

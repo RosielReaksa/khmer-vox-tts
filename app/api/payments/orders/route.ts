@@ -1,21 +1,17 @@
 import { NextResponse } from "next/server";
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-import { createKhqrCheckout } from "@/lib/khqr";
 import { invalidateDashboardCountCache } from "@/lib/dashboard-count-cache";
-import { createPaywayOrderId, createPaywayQrCheckout, isPaywayQrEnabled } from "@/lib/payway";
+import { createKhqrccOrderId, createKhqrccQrCheckout } from "@/lib/khqrcc";
 import { PAYMENT_PROOF_MAX_DATA_URL_LENGTH } from "@/lib/payment-proof-constants";
 import { findTokenPackPlan } from "@/lib/plans";
 import { isJsonRequestError, jsonRequestErrorBody, readJsonRequest } from "@/lib/request-json";
 import { readSessionFromCookie } from "@/lib/session";
-import { createStaticPaywayQrCheckout, isStaticPaywayQrEnabled } from "@/lib/static-payway";
 import { createPaymentOrder, findUserById, listUserPaymentOrders } from "@/lib/store";
-import { notifyPaymentProofToTelegram } from "@/lib/telegram";
 
 const createOrderSchema = z.object({
-  planId: z.enum(["starter", "creator", "pack_5", "pack_10", "pack_15", "pack_20"]),
-  quantity: z.number().int().min(1).max(20),
+  planId: z.string().min(1).max(40),
+  quantity: z.literal(1),
   userNote: z.string().max(500).optional(),
   paymentReference: z.string().max(200).optional(),
   proofImageDataUrl: z
@@ -53,103 +49,64 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid payment order." }, { status: 400 });
     }
 
-    const plan = findTokenPackPlan(parsed.data.planId);
+    const planId = parsed.data.planId.trim();
+    if (planId === "starter") {
+      return NextResponse.json(
+        { error: "Starter subscription is no longer available. Choose Creator or a token pack." },
+        { status: 400 },
+      );
+    }
+
+    const plan = findTokenPackPlan(planId);
     if (!plan) {
       return NextResponse.json({ error: "Unknown plan." }, { status: 400 });
     }
 
-    const usePayway = isPaywayQrEnabled();
-    const useStaticPayway = isStaticPaywayQrEnabled();
-    const orderId = usePayway || useStaticPayway ? createPaywayOrderId() : randomUUID();
-    const totalPriceCents = plan.priceCents * parsed.data.quantity;
-    const checkout = usePayway
-      ? await createPaywayQrCheckout({
-          orderId,
-          totalPriceCents,
-          planName: plan.name,
-          quantity: parsed.data.quantity,
-          userEmail: session.email,
-        })
-      : useStaticPayway
-        ? createStaticPaywayQrCheckout({
-            orderId,
-            totalPriceCents,
-          })
-      : await createKhqrCheckout({
-          orderId,
-          totalPriceCents,
-        });
+    const orderId = createKhqrccOrderId();
+    const totalPriceCents = plan.priceCents;
+    const checkout = await createKhqrccQrCheckout({
+      orderId,
+      totalPriceCents,
+      planName: plan.name,
+      quantity: 1,
+      userEmail: session.email,
+    });
 
     const order = await createPaymentOrder({
       id: orderId,
       userId: session.userId,
       planId: plan.id,
       planName: plan.name,
-      quantity: parsed.data.quantity,
+      quantity: 1,
       unitPriceCents: plan.priceCents,
       tokensPerPack: plan.tokens,
       userNote: parsed.data.userNote?.trim() || null,
       paymentReference: checkout.md5,
-      proofImageDataUrl: parsed.data.proofImageDataUrl || null,
+      proofImageDataUrl: null,
       khqrPayload: checkout.payload,
       khqrMd5: checkout.md5,
       khqrImageDataUrl: checkout.imageDataUrl,
       khqrCurrency: checkout.currency,
       khqrAmount: checkout.amount,
       khqrExpiresAt: checkout.expiresAt,
-      paymentProvider: usePayway ? "payway" : useStaticPayway ? "static_payway" : null,
+      paymentProvider: "khqrcc",
     });
 
-    let telegram: { sent: boolean; reason?: "not_configured" | "failed" | "skipped_no_proof" } = {
-      sent: false,
-      reason: "skipped_no_proof",
-    };
-    if (order.proofImageDataUrl) {
-      const result = await notifyPaymentProofToTelegram({
-        order,
-        userEmail: session.email,
-      });
-      telegram = result;
-    }
     await invalidateDashboardCountCache(session.userId, ["billing"]);
 
-    return NextResponse.json({ ok: true, order, checkout, telegram });
+    return NextResponse.json({ ok: true, order, checkout });
   } catch (error) {
     if (isJsonRequestError(error)) {
       return NextResponse.json(jsonRequestErrorBody(error), { status: error.status });
     }
-    if (error instanceof Error && error.message === "KHQR_ACCOUNT_NOT_CONFIGURED") {
+    if (error instanceof Error && error.message === "KHQRCC_NOT_CONFIGURED") {
       return NextResponse.json(
-        { error: "KHQR is not configured. Set KHQR_BAKONG_ACCOUNT_ID or KHQR_ACCOUNT in .env." },
+        { error: "KHQRcc is not configured. Set KHQRCC_PROFILE_ID and KHQRCC_SECRET_KEY in the server environment." },
         { status: 400 },
       );
     }
-    if (error instanceof Error && error.message === "PAYWAY_QR_NOT_CONFIGURED") {
-      return NextResponse.json(
-        { error: "PayWay QR is enabled but PAYWAY_MERCHANT_ID or PAYWAY_API_KEY is missing." },
-        { status: 400 },
-      );
-    }
-    if (error instanceof Error && error.message === "STATIC_PAYWAY_QR_IMAGE_NOT_FOUND") {
-      return NextResponse.json(
-        {
-          error:
-            "Static PayWay QR mode is enabled, but the QR image file is missing. Save your working QR image to public/payway-static-qr-code.png or set STATIC_PAYWAY_QR_IMAGE_URL.",
-        },
-        { status: 400 },
-      );
-    }
-    if (error instanceof Error && error.message.startsWith("PAYWAY_QR_FAILED")) {
-      return NextResponse.json({ error: error.message.replace(/^PAYWAY_QR_FAILED:\s*/, "") }, { status: 400 });
-    }
-    if (error instanceof Error && error.message.toLowerCase().includes("bakong account id")) {
-      return NextResponse.json(
-        { error: `${error.message}. Use your Bakong ID format, usually something like name@abaa.` },
-        { status: 400 },
-      );
-    }
-    if (error instanceof Error && error.message.toLowerCase().includes("khqr")) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+    if (error instanceof Error && error.message.startsWith("KHQRCC_QR_FAILED")) {
+      return NextResponse.json({ error: error.message.replace(/^KHQRCC_QR_FAILED:\s*/, "") }, { status: 400 });
     }
     return NextResponse.json({ error: "Could not create payment order." }, { status: 500 });
   }

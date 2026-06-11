@@ -13,7 +13,7 @@ import {
   updateGenerationRecord,
 } from "@/lib/store";
 import { invalidateDashboardCountCache } from "@/lib/dashboard-count-cache";
-import { normalizeText } from "@/lib/text-normalizer";
+import { prepareTextForSpeech } from "@/lib/speech-text-sanitizer";
 import { type CloneSample, synthesizeWithUpstream, TtsProviderError } from "@/lib/tts-provider";
 import type { GenerationMode, GenerationSource } from "@/lib/types";
 import { MAX_TEXT_CHARS } from "@/lib/usage-policy";
@@ -60,7 +60,7 @@ export function calculateGenerationUsage(
   estimatedSeconds: number;
   creditsRequested: number;
 } {
-  const charCount = countChars(input);
+  const charCount = countChars(prepareTextForSpeech(input));
   const estimatedSeconds = estimateDurationSeconds(charCount, mode);
   return {
     charCount,
@@ -120,7 +120,7 @@ export async function runGenerationForUser(params: {
   model: string;
   upstreamRequestId: string | null;
 }> {
-  const text = normalizeText(params.text).trim();
+  const text = prepareTextForSpeech(params.text);
   let voice = params.voice.trim();
   let cloneSample = params.cloneSample;
   let synthesisMode = params.mode;

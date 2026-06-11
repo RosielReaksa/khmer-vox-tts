@@ -178,6 +178,10 @@ function unavailableResult(policy: UsagePolicy): UsageLimitResult {
   };
 }
 
+function canUseMemoryFallback(): boolean {
+  return process.env.NODE_ENV !== "production";
+}
+
 function acquireMemoryUsageLimit(key: string, policy: UsagePolicy): UsageLimitResult {
   const now = Date.now();
   memoryCleanup(now);
@@ -383,8 +387,16 @@ async function acquirePostgresUsageLimit(key: string, policy: UsagePolicy): Prom
         continue;
       }
       console.error("[rate-limit] Failed to acquire Postgres rate limit", error);
+      if (canUseMemoryFallback()) {
+        console.warn(`[rate-limit] Falling back to in-memory limiter for ${key} in local development.`);
+        return acquireMemoryUsageLimit(key, policy);
+      }
       return unavailableResult(policy);
     }
+  }
+  if (canUseMemoryFallback()) {
+    console.warn(`[rate-limit] Falling back to in-memory limiter for ${key} in local development.`);
+    return acquireMemoryUsageLimit(key, policy);
   }
   return unavailableResult(policy);
 }

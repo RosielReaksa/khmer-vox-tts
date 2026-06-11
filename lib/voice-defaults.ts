@@ -1,7 +1,7 @@
 export const DEFAULT_TTS_VOICE_PROMPT = "female";
 
 export const DEFAULT_CLONE_VOICE_INSTRUCTION =
-  "same speaker as the reference audio, natural Khmer speech";
+  "same speaker as the reference audio, natural clear speech";
 
 export const DASHBOARD_TTS_VOICE_PRESETS = [
   "female",

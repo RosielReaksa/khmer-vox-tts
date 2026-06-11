@@ -2,17 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 
 import { clearDashboardCache } from "@/app/app/dashboard/dashboard-data-cache";
 import { useDashboardUser } from "@/app/app/dashboard/dashboard-user-context";
 import { preparePaymentProofImage } from "@/lib/client-payment-proof-image";
 import { paymentMethodLabel } from "@/lib/payment-method-label";
 import { PLAN_COMPARISON_ROWS, PLAN_DETAILS, type PlanKey } from "@/lib/plan-details";
-import { formatUsd, type TokenPackPlan } from "@/lib/plans";
+import { formatUsd, getAudioDurationEstimates, type TokenPackPlan } from "@/lib/plans";
 import type { PaymentOrderRecord, PaymentSupportTicketRecord } from "@/lib/types";
 import { Portal } from "@/app/components/portal";
 
+
+type CheckoutMode = "local_khqr" | "payway_qr" | "static_payway_qr" | "khqrcc_qr";
 
 type BillingClientProps = {
   plans: TokenPackPlan[];
@@ -24,7 +26,7 @@ type BillingClientProps = {
     telegramHandle: string;
     staticQrImageUrl: string;
     autoVerificationEnabled: boolean;
-    checkoutMode: "local_khqr" | "payway_qr" | "static_payway_qr";
+    checkoutMode: CheckoutMode;
     initialAdminActive: boolean;
   };
   currentBalance: number;
@@ -59,39 +61,20 @@ export function BillingClient({
   const currentPlanKey =
     currentPlanName === "Business API"
       ? "business"
-      : currentPlanName.startsWith("Starter")
-        ? "starter"
-        : currentPlanName.startsWith("Creator")
-          ? "creator"
-          : "free";
+      : currentPlanName.startsWith("Creator")
+        ? "creator"
+        : currentPlanName.startsWith("Pro")
+          ? "pro"
+          : currentPlanName === "Free"
+            ? "free"
+            : null;
   const { setTokenBalance } = useDashboardUser();
   const supportContact = telegramContact(paymentInfo.telegramHandle);
   const [orders, setOrders] = useState(initialOrders);
-  const [adminActive, setAdminActive] = useState(paymentInfo.initialAdminActive);
-
-  useEffect(() => {
-    async function fetchStatus() {
-      try {
-        const res = await fetch("/api/dashboard/admin-status");
-        if (res.ok) {
-          const data = (await res.json()) as { active: boolean };
-          setAdminActive(data.active);
-        }
-      } catch (err) {
-        console.error("[billing] Failed to fetch admin status:", err);
-      }
-    }
-    fetchStatus();
-
-    const interval = setInterval(fetchStatus, 15000);
-    return () => clearInterval(interval);
-  }, []);
+  const [liveBalance, setLiveBalance] = useState(currentBalance);
   const [supportTickets, setSupportTickets] = useState(initialSupportTickets);
   const [activeOrder, setActiveOrder] = useState<PaymentOrderRecord | null>(
     initialOrders.find((order) => order.status === "pending" && order.khqrImageDataUrl) ?? null,
-  );
-  const [quantities, setQuantities] = useState<Record<string, number>>(
-    Object.fromEntries(plans.map((plan) => [plan.id, 1])),
   );
   const [message, setMessage] = useState("");
   const [loadingPlan, setLoadingPlan] = useState("");
@@ -110,6 +93,7 @@ export function BillingClient({
   const [cancelConfirmOrder, setCancelConfirmOrder] = useState<PaymentOrderRecord | null>(null);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [showAddMoreModal, setShowAddMoreModal] = useState(false);
+  const displayedBalance = Math.max(liveBalance, currentBalance);
 
   const [prevInitialOrders, setPrevInitialOrders] = useState(initialOrders);
   if (initialOrders !== prevInitialOrders) {
@@ -136,7 +120,7 @@ export function BillingClient({
     }
   }
 
-  async function refreshOrders() {
+  const refreshOrders = useCallback(async () => {
     try {
       if (activeOrder?.status === "pending" && paymentInfo.autoVerificationEnabled) {
         const verificationResponse = await fetch(`/api/payments/orders/${activeOrder.id}/verify`, {
@@ -149,13 +133,13 @@ export function BillingClient({
         if (verification.message) {
           setMessage(verification.message);
         } else if (verification.status === "approved") {
-          setMessage("Payment confirmed. Tokens added.");
+          setMessage("Payment confirmed. Credits added.");
         }
       } else if (activeOrder?.status === "pending") {
         setMessage(
           paymentInfo.checkoutMode === "static_payway_qr"
-            ? "Static PayWay QR cannot be checked by API. Tokens are added after admin confirms the ABA/Telegram payment notice."
-            : "Payment is waiting for admin confirmation. Tokens will be added after the bank/Telegram notice is matched with this order.",
+            ? "Static PayWay QR cannot be checked by API. Credits are added after admin confirms the ABA/Telegram payment notice."
+            : "Payment is waiting for confirmation. Credits will be added after the payment notice is matched with this order.",
         );
       }
 
@@ -170,6 +154,7 @@ export function BillingClient({
       setOrders(data.orders);
       setSupportTickets(data.supportTickets ?? []);
       if (typeof data.currentBalance === "number") {
+        setLiveBalance(data.currentBalance);
         setTokenBalance(data.currentBalance);
       }
       clearDashboardCache("dashboard:billing");
@@ -180,16 +165,24 @@ export function BillingClient({
         const updatedActiveOrder = data.orders.find((order) => order.id === activeOrder.id) ?? null;
         setActiveOrder(updatedActiveOrder);
         if (updatedActiveOrder?.status === "approved") {
-          setMessage("Payment approved. Your token balance has been refreshed.");
+          setMessage("Payment approved. Your credit balance has been refreshed.");
         }
       }
     } catch (error) {
       setMessage("Could not refresh payment status. Please try again.");
       console.error("[billing] refreshOrders failed:", error);
     }
-  }
+  }, [activeOrder, paymentInfo.autoVerificationEnabled, paymentInfo.checkoutMode, selectedOrder, setTokenBalance]);
 
-  async function createOrder(planId: string) {
+  useEffect(() => {
+    if (!activeOrder || activeOrder.status !== "pending" || !paymentInfo.autoVerificationEnabled) return;
+    const interval = window.setInterval(() => {
+      void refreshOrders();
+    }, 5000);
+    return () => window.clearInterval(interval);
+  }, [activeOrder, paymentInfo.autoVerificationEnabled, refreshOrders]);
+
+  async function createOrder(planId: string, options: { openCheckout?: boolean } = {}) {
     setLoadingPlan(planId);
     setMessage("");
 
@@ -199,7 +192,7 @@ export function BillingClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           planId,
-          quantity: quantities[planId] ?? 1,
+          quantity: 1,
         }),
       });
       const data = (await response.json()) as {
@@ -216,8 +209,12 @@ export function BillingClient({
       setOrders((prev) => [data.order!, ...prev]);
       clearDashboardCache("dashboard:billing");
       setActiveOrder(data.order);
-      setSelectedOrder(data.order);
       setShowAddMoreModal(false);
+      if (options.openCheckout) {
+        router.push(`/app/checkout?orderId=${data.order.id}`);
+        return;
+      }
+      setSelectedOrder(data.order);
     } catch {
       setMessage("Network error while creating payment order.");
     } finally {
@@ -409,9 +406,7 @@ export function BillingClient({
         </div>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 mt-2">
           <p className="text-sm text-[#4a4a4a] font-body min-w-0 flex-1">
-            {paymentInfo.checkoutMode === "static_payway_qr"
-              ? "Choose the pack and quantity, then pay with the manual PayWay QR and upload your ABA receipt."
-              : "Choose the pack and quantity, then generate a KHQR code with the exact total."}
+            Choose one plan per payment. You can buy the same plan again or switch to another plan later.
           </p>
           <button
             type="button"
@@ -422,38 +417,8 @@ export function BillingClient({
           </button>
         </div>
 
-        {/* Admin Status Banner */}
-        <div className={`mb-6 border-3 border-primary p-4 flex flex-wrap items-center justify-between gap-4 shadow-[3px_3px_0px_0px_#1a1a1a] transition-colors ${
-          adminActive 
-            ? "bg-[#def3e5] text-emerald-950" 
-            : "bg-[#fffbeb] text-amber-950"
-        }`}>
-          <div className="flex items-center gap-3">
-            <div className="relative flex h-3 w-3 shrink-0">
-              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                adminActive ? "bg-emerald-500" : "bg-amber-500"
-              }`}></span>
-              <span className={`relative inline-flex rounded-full h-3 w-3 ${
-                adminActive ? "bg-emerald-500" : "bg-amber-500"
-              }`}></span>
-            </div>
-            <div>
-              <p className="font-headline font-bold uppercase text-sm">
-                {adminActive ? "Verification Admin Online" : "Verification Admin Offline"}
-              </p>
-              <p className="text-xs font-body mt-0.5 opacity-90">
-                {adminActive 
-                  ? "Manual and receipt-based payments are approved and credited in real-time (2-5 mins)."
-                  : "Manual payments are queued. Approval may be delayed until an admin is online."}
-              </p>
-            </div>
-          </div>
-          <span className={`text-xs font-headline font-black uppercase border-2 border-primary px-3 py-1 bg-white shadow-[1px_1px_0px_0px_#1a1a1a] text-primary`}>
-            {adminActive ? "Fast Approval" : "Delayed Approval"}
-          </span>
-        </div>
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-          <BillingStatusCard label="Token balance" value={currentBalance.toLocaleString()} note="Available now" />
+          <BillingStatusCard label="Token balance" value={displayedBalance.toLocaleString()} note="Available now" />
           <BillingStatusCard label="Pending orders" value={pendingOrders.length.toLocaleString()} note={`${pendingOrders.reduce((sum, order) => sum + order.tokens, 0).toLocaleString()} tokens waiting`} />
           <BillingStatusCard label="Approved orders" value={approvedOrders.length.toLocaleString()} note={`${approvedOrders.reduce((sum, order) => sum + order.tokens, 0).toLocaleString()} tokens credited`} />
           <BillingStatusCard
@@ -465,7 +430,7 @@ export function BillingClient({
         <div className="mt-6 flex flex-col lg:grid lg:grid-cols-[1fr_1.25fr] gap-4 border-3 border-primary bg-[#faf7f2] p-4 shadow-[3px_3px_0px_0px_#1a1a1a]">
           <div className="grid gap-2 text-sm font-body">
             <p className="font-headline font-bold uppercase text-sm text-primary">
-              {paymentInfo.checkoutMode === "static_payway_qr" ? "Manual PayWay QR checkout" : "KHQR checkout"}
+              Automatic checkout
             </p>
             <p className="flex justify-between gap-3 border-b border-primary/10 pb-1">
               <span className="text-[#4a4a4a]">Name</span>
@@ -489,19 +454,9 @@ export function BillingClient({
           </div>
 
           <div className="border-2 border-primary bg-[#ffcc00]/10 p-4 text-xs font-semibold leading-relaxed text-[#1a1a1a] font-body shadow-[1px_1px_0px_0px_#1a1a1a]">
-              {paymentInfo.checkoutMode === "static_payway_qr"
-                ? (
-                  <>
-                    Pay to <span className="font-bold">{paymentInfo.khqrName}</span> with ABA PayWay QR. After payment, click <span className="font-bold">I Paid</span> and upload your ABA receipt. Need help?{" "}
-                    <a href={supportContact.url} target="_blank" rel="noreferrer" className="font-bold underline text-[#0055ff]">
-                      Contact {supportContact.label}
-                    </a>
-                    .
-                  </>
-                )
-                : paymentInfo.autoVerificationEnabled
-                ? "The QR code amount is generated from the selected pack and quantity. Users do not need to type a payment reference manually."
-                : "Manual confirmation is active. Pay the exact QR amount, then wait for admin approval after the Telegram or bank notice is checked."}
+            {paymentInfo.autoVerificationEnabled
+              ? "The checkout generates the exact ABA QR amount. After payment, automatic verification credits the account."
+              : "Automatic checkout is selected, but the server payment credentials are missing."}
           </div>
         </div>
 
@@ -525,7 +480,6 @@ export function BillingClient({
             isCurrent={currentPlanKey === "free"}
           />
           {plans.filter((plan) => !plan.id.startsWith("pack_")).map((plan) => {
-            const quantity = quantities[plan.id] ?? 1;
             const isCurrent = currentPlanKey === plan.id;
             return (
               <PlanCard
@@ -537,21 +491,17 @@ export function BillingClient({
                 planKey={plan.id as PlanKey}
                 action={
                   isCurrent
-                    ? "Current Plan"
+                    ? "Buy Again"
                     : loadingPlan === plan.id
-                      ? "Generating..."
-                      : paymentInfo.checkoutMode === "static_payway_qr"
-                        ? "Pay with PayWay"
-                        : "Pay with KHQR"
+                      ? "Preparing..."
+                      : currentPlanKey === "free"
+                        ? "Select Plan"
+                        : "Switch Plan"
                 }
-                quantity={quantity}
-                totalPrice={formatUsd(plan.priceCents * quantity)}
-                totalTokens={plan.tokens * quantity}
-                onQuantityChange={(value) =>
-                  setQuantities((prev) => ({ ...prev, [plan.id]: value }))
-                }
-                onAction={() => createOrder(plan.id)}
-                disabled={isCurrent || loadingPlan !== ""}
+                totalPrice={formatUsd(plan.priceCents)}
+                totalTokens={plan.tokens}
+                onAction={() => createOrder(plan.id, { openCheckout: true })}
+                disabled={loadingPlan !== ""}
                 isCurrent={isCurrent}
               />
             );
@@ -760,7 +710,7 @@ export function BillingClient({
           autoVerificationEnabled={paymentInfo.autoVerificationEnabled}
           onClose={() => setSelectedOrder(null)}
           onCopy={(value, label) => void copyText(value, label)}
-          onRefresh={() => void refreshOrders()}
+          onRefresh={refreshOrders}
           onReportIssue={(order) => {
             setSelectedOrder(null);
             setSupportOrder(order);
@@ -807,7 +757,7 @@ function CheckoutPanel({
 }: {
   order: PaymentOrderRecord;
   autoVerificationEnabled: boolean;
-  checkoutMode: "local_khqr" | "payway_qr" | "static_payway_qr";
+  checkoutMode: CheckoutMode;
   staticQrImageUrl: string;
   merchantName: string;
   onRefresh: () => Promise<void>;
@@ -843,9 +793,23 @@ function CheckoutPanel({
   const tax = total - subtotal;
 
   const isStaticPayway = checkoutMode === "static_payway_qr";
+  const isKhqrcc = checkoutMode === "khqrcc_qr";
+  const manualProofRequired = !isKhqrcc;
   const qrImageSrc = isStaticPayway ? staticQrImageUrl : order.khqrImageDataUrl ?? "";
+  const [checkingPayment, setCheckingPayment] = useState(false);
 
-  const hasSubmittedProof = order.proofImageDataUrl !== null || success || order.status !== "pending";
+  const hasSubmittedProof = manualProofRequired
+    ? order.proofImageDataUrl !== null || success || order.status !== "pending"
+    : order.status !== "pending";
+
+  async function handleRefreshPayment() {
+    setCheckingPayment(true);
+    try {
+      await onRefresh();
+    } finally {
+      setCheckingPayment(false);
+    }
+  }
 
   async function processImageFile(file: File) {
     setError(null);
@@ -1134,7 +1098,30 @@ function CheckoutPanel({
           </div>
 
           {/* Verification Form */}
-          {!hasSubmittedProof ? (
+          {!manualProofRequired && order.status === "pending" ? (
+            <div className="bg-white border-4 border-primary p-6 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
+              <h3 className="font-sans font-black text-lg uppercase mb-4 border-b-2 border-primary pb-2">
+                Automatic Verification
+              </h3>
+              <p className="text-sm font-semibold text-primary/80 leading-6">
+                Pay with the ABA QR code. The account is credited automatically after payment confirmation.
+              </p>
+              <div className="mt-4 border-4 border-primary bg-[#faf7f2] p-4 text-xs font-mono space-y-2 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
+                <div className="flex justify-between border-b border-primary/20 pb-1">
+                  <span className="text-primary/60 font-sans font-bold">Order ID:</span>
+                  <span className="font-bold truncate max-w-[280px]">{order.id}</span>
+                </div>
+                <div className="flex justify-between border-b border-primary/20 pb-1">
+                  <span className="text-primary/60 font-sans font-bold">Method:</span>
+                  <span className="font-bold">ABA QR payment</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-primary/60 font-sans font-bold">Status:</span>
+                  <span className="font-bold text-amber-700 uppercase">Waiting for payment</span>
+                </div>
+              </div>
+            </div>
+          ) : !hasSubmittedProof ? (
             <div className="bg-white border-4 border-primary p-6 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
               <h3 className="font-sans font-black text-lg uppercase mb-4 border-b-2 border-primary pb-2">
                 Verify Payment
@@ -1207,10 +1194,12 @@ function CheckoutPanel({
             <div className="bg-white border-4 border-primary p-6 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
               <h3 className="font-sans font-black text-lg uppercase mb-4 border-b-2 border-primary pb-2 text-emerald-600 flex items-center gap-2">
                 <span className="material-symbols-outlined font-bold">check_circle</span>
-                Proof Submitted
+                {manualProofRequired ? "Proof Submitted" : "Payment Status"}
               </h3>
               <p className="text-sm font-semibold text-primary/80 leading-6 mb-4">
-                Your payment confirmation has been saved. The administrator will review and match the transaction.
+                {manualProofRequired
+                  ? "Your payment confirmation has been saved. The administrator will review and match the transaction."
+                  : "This payment order is no longer pending. Refresh the billing page to view the latest account balance."}
               </p>
               <div className="border-4 border-primary bg-[#faf7f2] p-4 text-xs font-mono space-y-2 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
                 <div className="flex justify-between border-b border-primary/20 pb-1">
@@ -1238,10 +1227,12 @@ function CheckoutPanel({
 
             <div className="text-center mb-6 relative z-10 w-full">
               <div className="bg-primary text-primary-fixed font-sans font-black text-2xl uppercase py-3 px-6 border-4 border-primary inline-block mb-4 transform -rotate-2 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
-                KHQR Payment
+                {isKhqrcc ? "Subscription Payment" : "KHQR Payment"}
               </div>
               <p className="font-sans font-black text-sm">Scan with your banking app to pay.</p>
-              <p className="text-[10px] mt-1 font-semibold text-primary/60">Supported by Bakong</p>
+              <p className="text-[10px] mt-1 font-semibold text-primary/60">
+                {isKhqrcc ? "Automatic ABA QR checkout" : "Supported by Bakong"}
+              </p>
             </div>
 
             {/* QR Code Container */}
@@ -1273,7 +1264,23 @@ function CheckoutPanel({
             )}
 
             {/* Complete Purchase Button */}
-            {!hasSubmittedProof ? (
+            {isKhqrcc && order.status === "pending" ? (
+              <button
+                type="button"
+                onClick={() => void handleRefreshPayment()}
+                disabled={!autoVerificationEnabled || checkingPayment}
+                className="w-full bg-[#ffcc00] text-primary font-sans font-black text-xl uppercase py-4 border-4 border-primary shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] transition-all cursor-pointer disabled:bg-[#dcd8cf] disabled:text-primary/30 disabled:border-primary/30 disabled:shadow-none disabled:pointer-events-none active:translate-x-[4px] active:translate-y-[4px] active:shadow-none flex items-center justify-center gap-2 relative z-10"
+              >
+                <span>
+                  {checkingPayment
+                    ? "Checking..."
+                    : autoVerificationEnabled
+                      ? "Check Payment"
+                      : "Payment Not Configured"}
+                </span>
+                {checkingPayment ? <ButtonSpinner /> : <span className="material-symbols-outlined font-bold">payments</span>}
+              </button>
+            ) : !hasSubmittedProof ? (
               <button
                 type="button"
                 onClick={handleSubmitProof}
@@ -1287,10 +1294,11 @@ function CheckoutPanel({
               <div className="w-full flex gap-3 relative z-10 flex-wrap justify-center">
                 <button
                   type="button"
-                  onClick={() => void onRefresh()}
-                  className="bg-primary text-[#faf7f2] font-sans font-bold uppercase text-xs py-3 px-5 border-4 border-primary shadow-[3px_3px_0px_0px_rgba(26,26,26,1)] hover:bg-[#0055ff] hover:text-white transition-colors cursor-pointer"
+                  onClick={() => void handleRefreshPayment()}
+                  disabled={checkingPayment}
+                  className="bg-primary text-[#faf7f2] font-sans font-bold uppercase text-xs py-3 px-5 border-4 border-primary shadow-[3px_3px_0px_0px_rgba(26,26,26,1)] hover:bg-[#0055ff] hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
                 >
-                  Refresh Status
+                  {checkingPayment ? "Checking..." : "Refresh Status"}
                 </button>
                 <button
                   type="button"
@@ -1329,6 +1337,15 @@ function CheckoutPanel({
         </div>
       </div>
     </div>
+  );
+}
+
+function ButtonSpinner() {
+  return (
+    <span
+      aria-hidden="true"
+      className="h-5 w-5 rounded-full border-3 border-primary/35 border-t-primary animate-spin"
+    />
   );
 }
 
@@ -1964,10 +1981,8 @@ function PlanCard({
   planKey,
   action,
   disabled,
-  quantity,
   totalPrice,
   totalTokens,
-  onQuantityChange,
   onAction,
   isCurrent,
 }: {
@@ -1978,13 +1993,14 @@ function PlanCard({
   planKey: PlanKey;
   action: string;
   disabled?: boolean;
-  quantity?: number;
   totalPrice?: string;
   totalTokens?: number;
-  onQuantityChange?: (value: number) => void;
   onAction?: () => void;
   isCurrent?: boolean;
 }) {
+  const audioEstimates =
+    typeof totalTokens === "number" ? getAudioDurationEstimates(totalTokens) : null;
+
   return (
     <article className={`border-4 border-primary p-5 shadow-[4px_4px_0px_0px_#1a1a1a] transition-all relative flex flex-col justify-between ${
       isCurrent
@@ -2003,31 +2019,28 @@ function PlanCard({
           {price}
           <span className="text-sm font-bold lowercase text-[#4a4a4a] ml-1">{unit}</span>
         </p>
-        {typeof quantity === "number" ? (
+        {typeof totalTokens === "number" ? (
           <div className="mt-4 grid gap-2 border-2 border-primary bg-[#faf7f2] p-3 text-xs font-body shadow-[1px_1px_0px_0px_#1a1a1a]">
-            <label className="grid gap-1 font-semibold">
-              Quantity
-              <input
-                type="number"
-                min={1}
-                max={20}
-                value={quantity}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  onQuantityChange?.(Number.isFinite(value) ? Math.max(1, Math.min(20, value)) : 1);
-                }}
-                className="border-2 border-primary px-3 py-1.5 outline-none bg-white font-bold disabled:bg-[#eee9e0]"
-                disabled={isCurrent}
-              />
-            </label>
             <p className="flex justify-between font-semibold font-body">
-              <span>Total</span>
+              <span>Plan price</span>
               <span className="font-bold text-primary">{totalPrice}</span>
             </p>
             <p className="flex justify-between font-semibold border-t border-primary/10 pt-1 font-body">
               <span>Tokens</span>
               <span className="font-bold text-primary">{totalTokens?.toLocaleString()}</span>
             </p>
+            {audioEstimates ? (
+              <>
+                <p className="flex justify-between gap-3 border-t border-primary/10 pt-1 font-semibold font-body">
+                  <span>Standard voice</span>
+                  <span className="text-right font-bold text-primary">~{audioEstimates.standard}</span>
+                </p>
+                <p className="flex justify-between gap-3 font-semibold font-body">
+                  <span>Clone voice</span>
+                  <span className="text-right font-bold text-primary">~{audioEstimates.clone}</span>
+                </p>
+              </>
+            ) : null}
           </div>
         ) : null}
         <PlanDetailBlock planKey={planKey} />
@@ -2104,7 +2117,7 @@ function BusinessPlanCard({
         <div className="mt-3 border border-white/10 bg-white/[0.06] p-3 text-xs font-body shadow-[1px_1px_0px_0px_rgba(255,255,255,0.1)]">
           <p className="font-bold text-[#ffcc00] uppercase font-headline">Business clone rate</p>
           <p className="mt-1 font-semibold">Only Business plan accounts can use this rate.</p>
-          <p className="mt-1 font-semibold text-[#c9d2df]">Starter and Creator use standard clone at 2 tokens/sec.</p>
+          <p className="mt-1 font-semibold text-[#c9d2df]">Paid token packs use standard clone at 2 tokens/sec.</p>
         </div>
         <PlanDetailBlock planKey="business" dark />
       </div>
@@ -2197,8 +2210,8 @@ function PlanComparisonTable() {
             <tr className="bg-[#eee9e0] border-b-4 border-primary font-headline uppercase text-xs text-left text-primary">
               <th className="p-3 border-r border-primary/20">Feature</th>
               <th className="p-3 border-r border-primary/20">Free</th>
-              <th className="p-3 border-r border-primary/20">Starter</th>
               <th className="p-3 border-r border-primary/20">Creator</th>
+              <th className="p-3 border-r border-primary/20">Pro</th>
               <th className="p-3">Business</th>
             </tr>
           </thead>
@@ -2207,8 +2220,8 @@ function PlanComparisonTable() {
               <tr key={row.feature} className="border-b-2 border-primary/20 hover:bg-[#eee9e0]/20 transition-colors">
                 <td className="p-3 border-r border-primary/20 font-headline font-black uppercase text-primary">{row.feature}</td>
                 <td className="p-3 border-r border-primary/20">{row.free}</td>
-                <td className="p-3 border-r border-primary/20">{row.starter}</td>
                 <td className="p-3 border-r border-primary/20">{row.creator}</td>
+                <td className="p-3 border-r border-primary/20">{row.pro}</td>
                 <td className="p-3">{row.business}</td>
               </tr>
             ))}
@@ -2287,7 +2300,7 @@ function formatKhqrAmount(order: PaymentOrderRecord): string {
 function getPaymentStatusInfo(
   order: PaymentOrderRecord,
   autoVerificationEnabled: boolean,
-  checkoutMode: "local_khqr" | "payway_qr" | "static_payway_qr",
+  checkoutMode: CheckoutMode,
 ): {
   title: string;
   description: string;
@@ -2297,7 +2310,7 @@ function getPaymentStatusInfo(
   if (order.status === "approved") {
     return {
       title: "Payment confirmed",
-      description: "Tokens were added to your balance.",
+      description: "Credits were added to your balance.",
       panelClass: "border-[#c8ead7] bg-[#f6fffa]",
       labelClass: "text-[#14884d]",
     };
@@ -2333,6 +2346,17 @@ function getPaymentStatusInfo(
       description: `${order.planName} x ${order.quantity} pack, ${order.tokens.toLocaleString()} tokens. Enter the amount manually, then upload the ABA receipt.`,
       panelClass: "border-[#c8ead7] bg-[#f6fffa]",
       labelClass: "text-[#14884d]",
+    };
+  }
+
+  if (checkoutMode === "khqrcc_qr") {
+    return {
+      title: autoVerificationEnabled ? "Automatic checkout" : "Payment not configured",
+      description: autoVerificationEnabled
+        ? `${order.planName} x ${order.quantity} pack, ${order.tokens.toLocaleString()} credits. Pay with the QR, then wait for automatic confirmation.`
+        : "Automatic checkout is selected, but the server payment credentials are missing.",
+      panelClass: "border-[#c8ead7] bg-[#f6fffa]",
+      labelClass: autoVerificationEnabled ? "text-[#14884d]" : "text-red-700",
     };
   }
 
@@ -2417,30 +2441,43 @@ function AddMoreTokensModal({
           </p>
 
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            {plans.map((plan) => (
-              <article
-                key={plan.id}
-                className="border-3 border-primary bg-white p-4 shadow-[3px_3px_0px_0px_#1a1a1a] flex flex-col justify-between"
-              >
-                <div>
-                  <h3 className="font-headline font-black uppercase text-lg text-primary">{plan.name}</h3>
-                  <p className="mt-1 text-2xl font-headline font-black text-[#10b981]">
-                    {formatUsd(plan.priceCents)}
-                  </p>
-                  <p className="mt-2 text-xs font-body text-[#4a4a4a]">
-                    {plan.tokens.toLocaleString()} tokens included.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onSelectPlan(plan.id)}
-                  disabled={loadingPlan !== ""}
-                  className="mt-4 w-full rounded-none border-2 border-primary bg-[#ffcc00] py-2 text-xs font-headline font-bold uppercase text-primary shadow-[2px_2px_0px_0px_#1a1a1a] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+            {plans.map((plan) => {
+              const audioEstimates = getAudioDurationEstimates(plan.tokens);
+              return (
+                <article
+                  key={plan.id}
+                  className="border-3 border-primary bg-white p-4 shadow-[3px_3px_0px_0px_#1a1a1a] flex flex-col justify-between"
                 >
-                  {loadingPlan === plan.id ? "Preparing..." : "Choose Pack"}
-                </button>
-              </article>
-            ))}
+                  <div>
+                    <h3 className="font-headline font-black uppercase text-lg text-primary">{plan.name}</h3>
+                    <p className="mt-1 text-2xl font-headline font-black text-[#10b981]">
+                      {formatUsd(plan.priceCents)}
+                    </p>
+                    <p className="mt-2 text-xs font-body text-[#4a4a4a]">
+                      {plan.tokens.toLocaleString()} tokens included.
+                    </p>
+                    <div className="mt-3 grid gap-1 border-t border-primary/15 pt-2 text-xs font-body font-semibold text-[#4a4a4a]">
+                      <p className="flex justify-between gap-3">
+                        <span>Standard voice</span>
+                        <span className="text-primary">~{audioEstimates.standard}</span>
+                      </p>
+                      <p className="flex justify-between gap-3">
+                        <span>Clone voice</span>
+                        <span className="text-primary">~{audioEstimates.clone}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onSelectPlan(plan.id)}
+                    disabled={loadingPlan !== ""}
+                    className="mt-4 w-full rounded-none border-2 border-primary bg-[#ffcc00] py-2 text-xs font-headline font-bold uppercase text-primary shadow-[2px_2px_0px_0px_#1a1a1a] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+                  >
+                    {loadingPlan === plan.id ? "Preparing..." : "Choose Pack"}
+                  </button>
+                </article>
+              );
+            })}
           </div>
         </section>
       </div>

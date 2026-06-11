@@ -51,7 +51,7 @@ function parseArgs(argv) {
     password: process.env.SMOKE_USER_PASSWORD || "SmokeTest123!",
     adminEmail: process.env.SMOKE_ADMIN_EMAIL || "",
     adminPassword: process.env.SMOKE_ADMIN_PASSWORD || "",
-    plan: process.env.SMOKE_PLAN_ID || "starter",
+    plan: process.env.SMOKE_PLAN_ID || "creator",
     quantity: Number(process.env.SMOKE_QUANTITY || 1),
   };
 
@@ -219,9 +219,11 @@ async function userBalance(baseUrl, jar) {
 async function main() {
   await loadEnvironment();
   const args = parseArgs(process.argv.slice(2));
-  if (!["starter", "creator"].includes(args.plan)) fail("--plan must be starter or creator.");
-  if (!Number.isInteger(args.quantity) || args.quantity < 1 || args.quantity > 20) {
-    fail("--quantity must be an integer from 1 to 20.");
+  if (!["creator", "pro", "pack_5", "pack_10", "pack_15", "pack_20"].includes(args.plan)) {
+    fail("--plan must be creator, pro, or an active token pack.");
+  }
+  if (args.quantity !== 1) {
+    fail("--quantity must be 1 because each payment purchases one plan.");
   }
 
   console.log("Telegram payment smoke test");

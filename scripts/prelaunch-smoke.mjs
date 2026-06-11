@@ -224,7 +224,7 @@ async function createOrder(baseUrl, userJar) {
     method: "POST",
     route: "/api/payments/orders",
     body: {
-      planId: "starter",
+      planId: "creator",
       quantity: 1,
       userNote: `prelaunch smoke ${new Date().toISOString()}`,
     },

@@ -19,8 +19,19 @@ export async function GET(
   if (!result) {
     return NextResponse.json({ error: "Batch job not found." }, { status: 404 });
   }
-  await refreshBatchJobRollup(id);
-  result = await getUserBatchJobWithItems(session.userId, id) ?? result;
+  try {
+    await refreshBatchJobRollup(id);
+    result = await getUserBatchJobWithItems(session.userId, id) ?? result;
+  } catch (error) {
+    console.error("[batch-jobs] Failed to refresh batch job rollup", {
+      jobId: id,
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+  if (process.env.NODE_ENV !== "production" && result.job.status === "queued") {
+    const { kickBatchWorker } = await import("@/lib/batch-service");
+    kickBatchWorker(id);
+  }
 
   return NextResponse.json(result);
 }

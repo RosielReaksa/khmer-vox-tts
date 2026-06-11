@@ -113,6 +113,13 @@ export async function POST(request: Request) {
         { status: error.status, headers: limit?.headers },
       );
     }
+    if (error instanceof BatchJobServiceError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code, remainingTokens: error.remainingTokens },
+        { status: error.status, headers: limit?.headers },
+      );
+    }
+    console.error("[/api/generate] Unhandled generation error:", error);
     return NextResponse.json({ error: "Generation failed." }, { status: 500, headers: limit?.headers });
   } finally {
     await limit?.release();
