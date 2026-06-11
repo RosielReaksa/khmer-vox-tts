@@ -85,7 +85,7 @@ export function KeyManager({
   async function createKey(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canCreateApiKey) {
-      setMessage("API keys require a paid token pack. Buy Starter or Creator first.");
+      setMessage("API keys require a paid token pack. Buy Creator or a token pack first.");
       return;
     }
     setLoading(true);
@@ -206,7 +206,7 @@ export function KeyManager({
           <h2 className="mt-4 text-xl font-headline font-black uppercase">Buy a paid token pack to use API keys</h2>
           <p className="mt-2 text-sm leading-6 font-body">
             Free accounts can test the web dashboard, but public API access is only for paid
-            Starter or Creator users. Current plan: <strong>{apiAccess.currentPlanName}</strong>.
+            token pack users. Current plan: <strong>{apiAccess.currentPlanName}</strong>.
           </p>
           <a
             href="/app/dashboard/billing"

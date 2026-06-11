@@ -10,6 +10,7 @@ import {
 import { PUBLIC_AUDIO_OUTPUT_FORMAT, publicBatchJobUrls } from "@/lib/audio-api";
 import { acquireUsageLimit, type UsageLimitResult } from "@/lib/rate-limit";
 import { getUsagePolicy } from "@/lib/server-usage-policy";
+import { prepareTextForSpeech } from "@/lib/speech-text-sanitizer";
 import {
   claimNextQueuedBatchJob,
   claimQueuedBatchJob,
@@ -44,6 +45,14 @@ const BATCH_RATE_LIMIT_WAIT_MS = 3_000;
 const BATCH_RATE_LIMIT_MAX_RETRIES = 10;
 const BATCH_ITEM_DELAY_MS = 500;
 const BATCH_WEBHOOK_TIMEOUT_MS = 8_000;
+
+type BatchRateLimitAcquireResult =
+  | Extract<UsageLimitResult, { ok: true }>
+  | {
+      ok: false;
+      retryAt: string;
+      message: string;
+    };
 
 export const MAX_BATCH_ITEMS = 100;
 export const MAX_BATCH_TOTAL_CHARS = 50_000;
@@ -162,10 +171,10 @@ function normalizeOptionalMs(input: number | null | undefined, fieldName: string
 
 function normalizeBatchLine(input: string | BatchLineInput): BatchLineInput | null {
   if (typeof input === "string") {
-    const text = input.trim();
+    const text = prepareTextForSpeech(input);
     return text ? { text } : null;
   }
-  const text = input.text.trim();
+  const text = prepareTextForSpeech(input.text);
   if (!text) return null;
   const startMs = normalizeOptionalMs(input.startMs, "start_ms");
   const endMs = normalizeOptionalMs(input.endMs, "end_ms");
@@ -424,6 +433,12 @@ function batchRateLimitPolicyName(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryAfterHeaderMs(headers: Record<string, string>, fallbackMs: number): number {
+  const retryAfter = Number(headers["Retry-After"]);
+  if (!Number.isFinite(retryAfter) || retryAfter <= 0) return fallbackMs;
+  return Math.max(1_000, Math.min(Math.ceil(retryAfter * 1000), 60_000));
 }
 
 function terminalBatchStatus(status: BatchJobRecord["status"]): boolean {
@@ -714,20 +729,27 @@ async function acquireBatchItemRateLimit(
   userId: string,
   source: GenerationSource,
   mode: GenerationMode,
-): Promise<Extract<UsageLimitResult, { ok: true }> | null> {
+): Promise<BatchRateLimitAcquireResult> {
   const policyName = batchRateLimitPolicyName(source, mode);
   const policy = getUsagePolicy(policyName);
   const key = `batch:${userId}:${mode}:${source}`;
+  let retryDelayMs = BATCH_RATE_LIMIT_WAIT_MS;
+  let lastMessage = "Waiting for generation capacity. The job will retry automatically.";
 
   for (let attempt = 0; attempt < BATCH_RATE_LIMIT_MAX_RETRIES; attempt++) {
     const result = await acquireUsageLimit(key, policy);
     if (result.ok) return result;
+    lastMessage = result.message;
 
     if (result.code === "RATE_LIMITED") {
       const waitMs = Math.min(
-        BATCH_RATE_LIMIT_WAIT_MS * Math.pow(2, attempt),
+        Math.max(
+          retryAfterHeaderMs(result.headers, BATCH_RATE_LIMIT_WAIT_MS),
+          BATCH_RATE_LIMIT_WAIT_MS * Math.pow(2, attempt),
+        ),
         30_000,
       );
+      retryDelayMs = waitMs;
       console.warn(
         `[batch-worker] Rate limited for ${key}, waiting ${waitMs}ms (attempt ${attempt + 1}/${BATCH_RATE_LIMIT_MAX_RETRIES})`,
       );
@@ -737,9 +759,13 @@ async function acquireBatchItemRateLimit(
 
     if (result.code === "TOO_MANY_CONCURRENT_REQUESTS") {
       const waitMs = Math.min(
-        BATCH_RATE_LIMIT_WAIT_MS * Math.pow(2, attempt),
+        Math.max(
+          retryAfterHeaderMs(result.headers, BATCH_RATE_LIMIT_WAIT_MS),
+          BATCH_RATE_LIMIT_WAIT_MS * Math.pow(2, attempt),
+        ),
         30_000,
       );
+      retryDelayMs = waitMs;
       console.warn(
         `[batch-worker] Too many concurrent requests for ${key}, waiting ${waitMs}ms (attempt ${attempt + 1}/${BATCH_RATE_LIMIT_MAX_RETRIES})`,
       );
@@ -749,6 +775,7 @@ async function acquireBatchItemRateLimit(
 
     if (result.code === "RATE_LIMIT_UNAVAILABLE") {
       const waitMs = 500 + Math.random() * 500;
+      retryDelayMs = Math.max(retryDelayMs, 15_000);
       console.warn(
         `[batch-worker] Rate limiter temporarily unavailable for ${key}, retrying in ${Math.round(waitMs)}ms (attempt ${attempt + 1}/${BATCH_RATE_LIMIT_MAX_RETRIES})`,
       );
@@ -759,13 +786,18 @@ async function acquireBatchItemRateLimit(
     console.error(
       `[batch-worker] Rate limit error for ${key}: ${result.code} - ${result.message}`,
     );
-    return null;
+    retryDelayMs = retryAfterHeaderMs(result.headers, 15_000);
+    break;
   }
 
   console.error(
     `[batch-worker] Rate limit retries exhausted for ${key} after ${BATCH_RATE_LIMIT_MAX_RETRIES} attempts`,
   );
-  return null;
+  return {
+    ok: false,
+    retryAt: new Date(Date.now() + Math.max(5_000, retryDelayMs)).toISOString(),
+    message: lastMessage || "Waiting for generation capacity. The job will retry automatically.",
+  };
 }
 
 export async function processBatchJob(jobId: string, options?: { workerId?: string | null }): Promise<{
@@ -820,7 +852,9 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
   let lastWorkerError: string | null = null;
   let isSuspended = false;
 
-  const maxConcurrentItems = Math.max(1, Number(process.env.BATCH_ITEM_CONCURRENCY || 3));
+  const policyConcurrency = getUsagePolicy(batchRateLimitPolicyName(job.source, job.mode)).maxConcurrent;
+  const configuredConcurrency = Math.max(1, Number(process.env.BATCH_ITEM_CONCURRENCY || 3));
+  const maxConcurrentItems = Math.max(1, Math.min(configuredConcurrency, policyConcurrency));
   const queuedItems = loaded.items.filter((item) => item.status === "queued");
 
   if (queuedItems.length > 0) {
@@ -831,31 +865,32 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
     });
 
     const activePromises: Promise<void>[] = [];
+    let isDeferredForCapacity = false;
 
     for (const item of queuedItems) {
-      if (isSuspended) break;
+      if (isSuspended || isDeferredForCapacity) break;
 
       // Limit concurrency
       if (activePromises.length >= maxConcurrentItems) {
         await Promise.race(activePromises);
       }
-      if (isSuspended) break;
+      if (isSuspended || isDeferredForCapacity) break;
 
       const promise = (async () => {
         // Acquire rate limit BEFORE generating each item.
         const limit = await acquireBatchItemRateLimit(job.userId, job.source, job.mode);
 
-        if (!limit) {
-          const nextAttemptCount = item.attemptCount + 1;
-          const exhausted = nextAttemptCount >= maxBatchItemAttempts();
-          await updateBatchJobItem({
-            itemId: item.id,
-            status: "failed",
-            attemptCount: nextAttemptCount,
-            nextRetryAt: exhausted ? null : nextRetryIso(nextAttemptCount),
-            errorMessage: "Rate limiter unavailable. The batch worker could not acquire a generation slot.",
+        if (!limit.ok) {
+          isDeferredForCapacity = true;
+          lastWorkerError = limit.message;
+          await updateBatchJobStatus({
+            jobId: job.id,
+            status: "queued",
+            errorMessage: limit.message,
+            lastWorkerError: limit.message,
+            nextRetryAt: limit.retryAt,
+            workerHeartbeatAt: new Date().toISOString(),
           });
-          lastWorkerError = "Rate limiter unavailable.";
           return;
         }
 

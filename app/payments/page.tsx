@@ -1,31 +1,30 @@
-import Image from "next/image";
 import Link from "next/link";
 import { PublicHeader } from "@/app/components/public-header";
 
 const steps = [
   {
     title: "Choose a token pack",
-    body: "Users select Starter or Creator, choose quantity, and the site calculates total price and token amount.",
+    body: "Users select Creator, Pro, or a paid token pack, choose quantity, and the site calculates total price and credit amount.",
   },
   {
-    title: "Scan the ABA PayWay QR",
-    body: "The checkout displays the merchant QR, exact amount, and order ID. Users pay from ABA Mobile or another KHQR-supported app.",
+    title: "Scan the KHQRcc ABA Pay QR",
+    body: "The checkout creates a fresh QR for the exact order amount. Users pay from ABA Mobile or another KHQR-supported app.",
   },
   {
-    title: "Upload receipt",
-    body: "Users upload the ABA receipt from phone or computer. The order stays pending until admin review.",
+    title: "Automatic verification",
+    body: "KHQRcc confirms the transaction by webhook or server check. No receipt upload is needed for new orders.",
   },
   {
-    title: "Admin approves",
-    body: "Admin checks user email, plan, quantity, amount, receipt, and bank notice. Tokens are credited only once.",
+    title: "Credits added",
+    body: "The system validates order ID, amount, currency, status, and duplicate protection before crediting the account once.",
   },
 ];
 
 const safetyRows = [
   ["Duplicate protection", "Approved orders cannot be credited again."],
   ["Order status", "Pending, reported, approved, rejected, expired, and cancelled states are tracked."],
-  ["Admin audit", "Payment orders store approved time, admin note, receipt proof, and token transaction."],
-  ["Support fallback", "Users can open a support ticket and contact Telegram if receipt approval is delayed."],
+  ["Admin audit", "Payment orders store approved time, provider response, webhook audit, and credit transaction."],
+  ["Support fallback", "Users can open a support ticket and contact Telegram if payment confirmation is delayed."],
 ];
 
 export default function PaymentsPage() {
@@ -42,12 +41,12 @@ export default function PaymentsPage() {
                 Payment flow
               </div>
               <h1 className="text-4xl font-headline font-black uppercase tracking-tighter text-primary lg:text-6xl leading-none">
-                ABA PayWay QR checkout for prepaid TTS tokens
+                KHQRcc ABA Pay checkout for prepaid TTS credits
               </h1>
               <p className="mt-4 font-body text-sm leading-relaxed text-on-surface-variant max-w-2xl border-l-4 border-outline pl-4">
-                VoxTTS Online currently uses manual ABA PayWay QR checkout while production
-                API credentials are under review. Users pay the exact order amount, upload
-                receipt proof, then admin approves and the system credits tokens.
+                VoxTTS Online now uses KHQRcc ABA Pay QR checkout. Users pay the exact
+                order amount, and the system verifies KHQRcc confirmation before adding
+                credits automatically.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <Link
@@ -72,18 +71,15 @@ export default function PaymentsPage() {
             </div>
 
             <div className="border-4 border-outline bg-[#faf7f2] p-5 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
-              <div className="border-2 border-outline bg-white p-4">
-                <Image
-                  src="/payway-static-qr-code.png"
-                  width={290}
-                  height={290}
-                  alt="ABA PayWay QR code"
-                  className="mx-auto h-auto w-full max-w-[290px]"
-                  priority
-                />
+              <div className="grid aspect-square place-items-center border-2 border-outline bg-white p-4 text-center">
+                <div>
+                  <span className="material-symbols-outlined text-6xl text-primary">qr_code_2</span>
+                  <p className="mt-3 font-headline text-xl font-black uppercase text-primary">Dynamic QR</p>
+                  <p className="mt-2 text-xs font-bold text-on-surface-variant">Generated per order by KHQRcc</p>
+                </div>
               </div>
               <p className="mt-3 text-center text-[10px] font-bold text-on-surface-variant font-body">
-                Production review QR. Users must enter the exact order amount shown in checkout.
+                Each checkout receives a new exact-amount ABA Pay QR.
               </p>
             </div>
           </div>
@@ -103,25 +99,25 @@ export default function PaymentsPage() {
 
         <section className="mt-12 grid gap-6 border-4 border-outline bg-white p-6 lg:grid-cols-2 lg:p-8 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]">
           <div>
-            <h2 className="text-2xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-2 mb-3">Current manual mode</h2>
+            <h2 className="text-2xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-2 mb-3">Current KHQRcc mode</h2>
             <p className="text-sm font-body text-on-surface-variant leading-relaxed">
-              Manual mode is intentionally simple for review and early customers. It prevents
-              fake billing by requiring receipt upload and admin confirmation before tokens are
-              added.
+              KHQRcc creates a payment QR for the exact order amount and verifies the
+              transaction before credits are added. Old receipt-based orders remain visible
+              only for history and support.
             </p>
-            <div className="mt-5 border-2 border-outline bg-[#ffdad6] p-4 text-xs font-bold text-[#93000a] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-              PayWay API and webhook automation are not active yet. They will be enabled after
-              ABA PayWay provides production merchant credentials.
+            <div className="mt-5 border-2 border-outline bg-[#def3e5] p-4 text-xs font-bold text-[#0d5f2e] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+              No receipt upload is required for new KHQRcc orders. The app verifies payment
+              status server-side before crediting an account.
             </div>
           </div>
           <div>
-            <h2 className="text-2xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-2 mb-3">Production PayWay plan</h2>
+            <h2 className="text-2xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-2 mb-3">Webhook verification</h2>
             <p className="text-sm font-body text-on-surface-variant leading-relaxed mb-4">
-              When credentials are approved, checkout can create dynamic PayWay QR orders and
-              credit users automatically after a signed webhook or verified transaction result.
+              KHQRcc sends a signed callback and the app can also poll KHQRcc verification
+              before approving an order.
             </p>
             <div className="grid gap-2 text-xs font-medium">
-              <InfoRow label="Callback endpoint" value="/api/webhooks/payway" />
+              <InfoRow label="Callback endpoint" value="/api/webhooks/khqrcc" />
               <InfoRow label="Verification" value="signature, amount, currency, order status" />
               <InfoRow label="Duplicate handling" value="provider transaction ID and order state" />
             </div>

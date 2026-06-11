@@ -308,12 +308,23 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
           try {
             const pollRes = await fetch(`/api/batch/jobs/${jobId}`, { cache: "no-store" });
             if (!pollRes.ok) {
-              throw new Error("Failed to poll background job status.");
+              const errBody = await pollRes.json().catch(() => ({}));
+              const reason = typeof errBody.error === "string"
+                ? errBody.error
+                : `Background job status returned HTTP ${pollRes.status}.`;
+              if ([408, 409, 425, 429, 500, 502, 503, 504].includes(pollRes.status)) {
+                commitWorkspaceSnapshot(mode, {
+                  error: `Waiting for background job status: ${reason}`,
+                });
+                attempts++;
+                continue;
+              }
+              throw new Error(reason);
             }
             const pollData = await pollRes.json();
             const job = pollData.job;
 
-            if (job.status === "completed") {
+            if (job.status === "completed" || job.status === "partial") {
               completed = true;
               const mergedRes = await fetch(`/api/batch/jobs/${jobId}/merged`);
               if (!mergedRes.ok) {
@@ -324,7 +335,9 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
               const url = `data:${mergedData.contentType};base64,${mergedData.audioBase64}`;
               commitWorkspaceSnapshot(mode, {
                 busy: false,
-                error: "",
+                error: job.status === "partial"
+                  ? `Generated ${job.completedItems} of ${job.totalItems} segments. Retry failed lines from Batch Jobs.`
+                  : "",
                 result: mergedData,
                 audioUrl: url,
                 updatedAtLabel: new Date().toLocaleTimeString(),
@@ -474,7 +487,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
           <p className="mt-1 font-body text-sm text-[#4a4a4a] border-l-4 border-primary pl-3">
             {isCloneMode
               ? "Upload a reference voice and generate speech that matches it."
-              : "Convert Khmer text to natural speech using our AI voices."}
+              : "Convert text to natural speech using our AI voices."}
           </p>
         </div>
         <a
@@ -642,14 +655,14 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                 if (isFemale) {
                   name = "Sokha (Female)";
                   type = "Standard Preset Voice style";
-                  description = "A natural, clear, and professional Khmer female voice. Excellent for audiobooks, education, news, and virtual assistants.";
+                  description = "A natural, clear, and professional female preset voice. Excellent for audiobooks, education, news, and virtual assistants.";
                   costRate = "1.5 tokens per generated second";
                   icon = "face_3";
                   iconBg = "bg-tertiary";
                 } else if (isMale) {
                   name = "Piseth (Male)";
                   type = "Standard Preset Voice style";
-                  description = "An energetic, clear, and engaging Khmer male voice. Perfect for video recaps, social media, ads, and narrations.";
+                  description = "An energetic, clear, and engaging male preset voice. Perfect for video recaps, social media, ads, and narrations.";
                   costRate = "1.5 tokens per generated second";
                   icon = "face";
                   iconBg = "bg-primary";
@@ -726,7 +739,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                 value={text}
                 onChange={(event) => setText(event.target.value)}
                 maxLength={MAX_TEXT_CHARS}
-                placeholder="Paste Khmer text..."
+                placeholder="Paste text..."
                 className={`smooth-scroll-region w-full resize-y border-4 border-primary bg-white p-5 text-base leading-7 text-primary outline-none transition focus:bg-[#faf7f2] shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] ${
                   isCloneMode ? "min-h-[190px] xl:min-h-[210px]" : "min-h-[250px] xl:min-h-[280px]"
                 }`}

@@ -49,7 +49,7 @@ function parseArgs(argv) {
   const args = {
     approve: false,
     baseUrl: process.env.SMOKE_BASE_URL || "http://localhost:3000",
-    plan: process.env.SMOKE_PLAN_ID || "starter",
+    plan: process.env.SMOKE_PLAN_ID || "creator",
     quantity: Number(process.env.SMOKE_QUANTITY || 1),
     email: process.env.SMOKE_USER_EMAIL || "",
     password: process.env.SMOKE_USER_PASSWORD || "SmokeTest123!",
@@ -229,11 +229,11 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const plan = String(args.plan);
   const quantity = requireNumber(args.quantity, "quantity");
-  if (!["starter", "creator"].includes(plan)) {
-    fail("--plan must be starter or creator.");
+  if (!["creator", "pro", "pack_5", "pack_10", "pack_15", "pack_20"].includes(plan)) {
+    fail("--plan must be creator, pro, or an active token pack.");
   }
-  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 20) {
-    fail("--quantity must be an integer from 1 to 20.");
+  if (quantity !== 1) {
+    fail("--quantity must be 1 because each payment purchases one plan.");
   }
 
   console.log("Payment smoke test");

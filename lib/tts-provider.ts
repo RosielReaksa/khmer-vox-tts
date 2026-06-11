@@ -61,6 +61,9 @@ function readRequiredUpstreamUrl(): string {
 
 type AudioResponseFormat = typeof PUBLIC_AUDIO_OUTPUT_FORMAT | "wav" | "ogg" | "webm";
 
+const DEFAULT_REFERENCE_AUDIO_FILTER = "highpass=f=70,lowpass=f=7600,loudnorm=I=-23:TP=-3:LRA=11";
+const DEFAULT_PUBLIC_AUDIO_FILTER = "highpass=f=70,lowpass=f=13500,loudnorm=I=-18:TP=-2.5:LRA=9";
+
 function readAudioResponseFormat(): AudioResponseFormat {
   const value = (
     process.env.TTS_UPSTREAM_RESPONSE_FORMAT ??
@@ -68,6 +71,22 @@ function readAudioResponseFormat(): AudioResponseFormat {
   ).trim().toLowerCase();
   if (value === PUBLIC_AUDIO_OUTPUT_FORMAT || value === "wav" || value === "ogg" || value === "webm") return value;
   return "wav";
+}
+
+function readAudioFilter(name: string, fallback: string): string {
+  const value = process.env[name]?.trim();
+  if (value === "off" || value === "none" || value === "0") return "";
+  return value ?? fallback;
+}
+
+function audioFilterArgs(filter: string): string[] {
+  return filter ? ["-af", filter] : [];
+}
+
+function readPublicMp3Bitrate(): string {
+  const value = process.env.TTS_PUBLIC_MP3_BITRATE?.trim().toLowerCase();
+  if (value && /^\d{2,3}k$/.test(value)) return value;
+  return "96k";
 }
 
 function contentTypeForResponseFormat(format: AudioResponseFormat): string {
@@ -130,6 +149,7 @@ function upstreamErrorMessage(body: unknown, fallback: string): string {
 
 async function normalizeCloneSampleForUpstream(sample: CloneSample): Promise<CloneSample> {
   try {
+    const referenceFilter = readAudioFilter("TTS_REFERENCE_AUDIO_FILTER", DEFAULT_REFERENCE_AUDIO_FILTER);
     const wavBytes = await runFfmpeg(
       [
         "-hide_banner",
@@ -137,6 +157,7 @@ async function normalizeCloneSampleForUpstream(sample: CloneSample): Promise<Clo
         "error",
         "-i",
         "pipe:0",
+        ...audioFilterArgs(referenceFilter),
         "-ac",
         "1",
         "-ar",
@@ -354,6 +375,7 @@ async function runFfmpeg(args: string[], input?: Uint8Array): Promise<Uint8Array
 
 async function encodeWavToMp3(bytes: Uint8Array): Promise<{ bytes: Uint8Array; durationSeconds: number | null }> {
   const wav = readPcm16Wav(bytes);
+  const publicFilter = readAudioFilter("TTS_PUBLIC_AUDIO_FILTER", DEFAULT_PUBLIC_AUDIO_FILTER);
   const output = await runFfmpeg(
     [
       "-hide_banner",
@@ -361,10 +383,11 @@ async function encodeWavToMp3(bytes: Uint8Array): Promise<{ bytes: Uint8Array; d
       "error",
       "-i",
       "pipe:0",
+      ...audioFilterArgs(publicFilter),
       "-codec:a",
       "libmp3lame",
       "-b:a",
-      "64k",
+      readPublicMp3Bitrate(),
       "-f",
       "mp3",
       "pipe:1",
@@ -375,6 +398,39 @@ async function encodeWavToMp3(bytes: Uint8Array): Promise<{ bytes: Uint8Array; d
     throw new TtsProviderError("MP3 conversion produced empty audio.", 502);
   }
   return { bytes: output, durationSeconds: wav.durationSeconds };
+}
+
+async function encodeMp3ToPublicMp3(
+  bytes: Uint8Array,
+  durationSeconds: number | null,
+): Promise<{ bytes: Uint8Array; durationSeconds: number | null }> {
+  const publicFilter = readAudioFilter("TTS_PUBLIC_AUDIO_FILTER", DEFAULT_PUBLIC_AUDIO_FILTER);
+  if (!publicFilter) {
+    return { bytes, durationSeconds };
+  }
+
+  const output = await runFfmpeg(
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      "pipe:0",
+      ...audioFilterArgs(publicFilter),
+      "-codec:a",
+      "libmp3lame",
+      "-b:a",
+      readPublicMp3Bitrate(),
+      "-f",
+      "mp3",
+      "pipe:1",
+    ],
+    bytes,
+  );
+  if (output.byteLength <= 0) {
+    throw new TtsProviderError("MP3 mastering produced empty audio.", 502);
+  }
+  return { bytes: output, durationSeconds };
 }
 
 function getWavPcm16Stats(bytes: Uint8Array): { rms: number; peak: number } | null {
@@ -426,21 +482,23 @@ function getWavPcm16Stats(bytes: Uint8Array): { rms: number; peak: number } | nu
   };
 }
 
-function assertUsableGeneratedAudio(bytes: Uint8Array, contentType: string): void {
+function nearSilentAudioMessage(): string {
+  // Standard preset TTS is synthesized in clone mode under the hood, so the
+  // provider layer can't reliably tell "bad reference sample" from "unlucky
+  // generation". Keep the guidance generic and actionable for both.
+  return "Upstream generated near-silent audio. Please try again, or slightly rephrase that part of the text.";
+}
+
+function isNearSilentGeneratedAudio(bytes: Uint8Array, contentType: string): boolean {
   const lower = contentType.toLowerCase();
   if (!lower.includes("wav") && !looksLikeWav(bytes)) {
-    return;
+    return false;
   }
 
   const stats = getWavPcm16Stats(bytes);
-  if (!stats) return;
+  if (!stats) return false;
 
-  if (stats.rms < 80 && stats.peak < 1200) {
-    throw new TtsProviderError(
-      "Upstream generated near-silent audio. Try a clearer reference voice sample.",
-      502,
-    );
-  }
+  return stats.rms < 80 && stats.peak < 1200;
 }
 
 function inferAudioDurationSeconds(bytes: Uint8Array, contentType: string): number | null {
@@ -457,7 +515,12 @@ async function normalizeToPublicMp3(
 ): Promise<{ bytes: Uint8Array; contentType: string; outputSeconds: number | null }> {
   const lower = contentType.toLowerCase();
   if (lower.includes("mpeg") || lower.includes("mp3") || looksLikeMp3(bytes)) {
-    return { bytes, contentType: PUBLIC_AUDIO_CONTENT_TYPE, outputSeconds };
+    const converted = await encodeMp3ToPublicMp3(bytes, outputSeconds);
+    return {
+      bytes: converted.bytes,
+      contentType: PUBLIC_AUDIO_CONTENT_TYPE,
+      outputSeconds: converted.durationSeconds,
+    };
   }
   if (lower.includes("wav") || looksLikeWav(bytes)) {
     const converted = await encodeWavToMp3(bytes);
@@ -658,7 +721,7 @@ async function synthesizeSingleChunk(
     } else {
       delete payload.voice;
     }
-    payload.temperature = readNumericEnv("TTS_CLONE_TEMPERATURE", 1.0, 0.1, 2.0);
+    payload.temperature = readNumericEnv("TTS_CLONE_TEMPERATURE", 0.65, 0.1, 2.0);
     payload.cfg_value = readNumericEnv("TTS_CLONE_CFG_VALUE", 2.0, 0.1, 5.0);
     payload.ref_audio_wav_base64 = base64;
     payload.ref_audio_wav_format = "wav";
@@ -697,11 +760,12 @@ async function synthesizeSingleChunk(
         headers.Authorization = `Bearer ${endpoint.token}`;
       }
 
+      const timeoutMs = readNumericEnv("TTS_UPSTREAM_TIMEOUT_MS", 180000, 30000, 600000);
       const response = await fetch(endpoint.url, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(90000), // 90 seconds timeout to accommodate slow GPU cold starts
+        signal: AbortSignal.timeout(timeoutMs), // configurable; default 180s to absorb slow GPU cold starts
       });
 
       const upstreamRequestId = response.headers.get("x-request-id");
@@ -794,13 +858,73 @@ async function synthesizeSingleChunk(
         throw err;
       }
       if (!(err instanceof TtsProviderError)) {
-        disableEndpoint(endpoint.url, `Network Error: ${err instanceof Error ? err.message : String(err)}`);
+        // A timeout/abort is request-specific (slow GPU cold start or long
+        // generation), not proof the endpoint is unhealthy. Give it only a brief
+        // cooldown so one slow chunk can't disable the whole pool for 5 minutes.
+        const isTimeout =
+          err instanceof DOMException
+            ? err.name === "TimeoutError" || err.name === "AbortError"
+            : err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+        if (isTimeout) {
+          disableEndpoint(endpoint.url, `Timeout: ${err instanceof Error ? err.message : String(err)}`, 15000);
+        } else {
+          disableEndpoint(endpoint.url, `Network Error: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
       console.warn(`Attempt ${attempt}/${maxAttempts} failed on ${endpoint.url}. Retrying next available endpoint...`);
     }
   }
 
   throw lastError || new TtsProviderError("All upstream endpoints in pool failed.", 502);
+}
+
+// VoxCPM2 is stochastic and occasionally returns a near-silent chunk; a retry
+// usually produces usable audio. We retry, but never throw here: if a chunk
+// stays quiet after retries we keep the loudest attempt and continue, so one
+// unlucky sub-chunk cannot fail an entire long-text job. The caller validates
+// the final MERGED output instead.
+async function synthesizeChunkWithSilenceRetry(
+  params: {
+    mode: GenerationMode;
+    text: string;
+    voice: string;
+    model?: string;
+    cloneSample?: CloneSample;
+  },
+  model: string,
+  responseFormat: AudioResponseFormat,
+  expectedContentType: string,
+): Promise<Awaited<ReturnType<typeof synthesizeSingleChunk>>> {
+  const maxAttempts = Math.round(readNumericEnv("TTS_NEAR_SILENCE_RETRIES", 2, 0, 5)) + 1;
+  let best: Awaited<ReturnType<typeof synthesizeSingleChunk>> | null = null;
+  let bestPeak = -1;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const result = await synthesizeSingleChunk(params, model, responseFormat, expectedContentType);
+    if (!isNearSilentGeneratedAudio(result.audioBytes, result.contentType)) {
+      return result;
+    }
+    // Track the loudest near-silent attempt as a fallback.
+    const stats = getWavPcm16Stats(result.audioBytes);
+    const peak = stats?.peak ?? 0;
+    if (peak > bestPeak) {
+      bestPeak = peak;
+      best = result;
+    }
+    if (attempt < maxAttempts) {
+      console.warn(
+        `[TTS] Near-silent chunk (attempt ${attempt}/${maxAttempts}), regenerating ${params.mode} chunk of ${Array.from(params.text).length} chars.`,
+      );
+    } else {
+      console.warn(
+        `[TTS] Chunk still near-silent after ${maxAttempts} attempts; keeping best attempt and continuing.`,
+      );
+    }
+  }
+
+  // All attempts were near-silent — return the best one rather than failing the
+  // whole job. The merged-output check decides if the overall result is unusable.
+  return best as Awaited<ReturnType<typeof synthesizeSingleChunk>>;
 }
 
 export async function synthesizeWithUpstream(params: {
@@ -818,14 +942,17 @@ export async function synthesizeWithUpstream(params: {
   const chunks = splitTextIntoChunks(params.text, 400);
 
   if (chunks.length <= 1) {
-    // Single chunk logic
-    const single = await synthesizeSingleChunk(
+    // Single chunk logic (retries internally on near-silent output)
+    const single = await synthesizeChunkWithSilenceRetry(
       params,
       model,
       responseFormat,
       expectedContentType
     );
-    assertUsableGeneratedAudio(single.audioBytes, single.contentType);
+    // Single chunk has no other audio to carry it, so a silent result is fatal.
+    if (isNearSilentGeneratedAudio(single.audioBytes, single.contentType)) {
+      throw new TtsProviderError(nearSilentAudioMessage(), 502);
+    }
     const publicAudio = await normalizeToPublicMp3(
       single.audioBytes,
       single.contentType,
@@ -841,17 +968,17 @@ export async function synthesizeWithUpstream(params: {
     };
   }
 
-  // Multi-chunk parallel execution
-  const promises = chunks.map((chunkText) =>
-    synthesizeSingleChunk(
+  // Generate chunks sequentially so one long request keeps a steadier speaker
+  // profile. Each chunk retries internally if the model returns near-silent audio.
+  const chunkResults: Array<Awaited<ReturnType<typeof synthesizeSingleChunk>>> = [];
+  for (const chunkText of chunks) {
+    chunkResults.push(await synthesizeChunkWithSilenceRetry(
       { ...params, text: chunkText },
       model,
       responseFormat,
       expectedContentType
-    )
-  );
-
-  const chunkResults = await Promise.all(promises);
+    ));
+  }
 
   const normalizedContentType = normalizeContentType(chunkResults[0].contentType, expectedContentType);
   const mergedBytes =
@@ -859,7 +986,11 @@ export async function synthesizeWithUpstream(params: {
       ? await concatMp3Buffers(chunkResults.map((result) => result.audioBytes))
       : concatPcm16WavBuffers(chunkResults.map((result) => result.audioBytes));
 
-  assertUsableGeneratedAudio(mergedBytes, normalizedContentType);
+  // Only fail if the WHOLE merged result is near-silent. A single quiet sub-chunk
+  // is tolerated (the rest of the audio carries the generation).
+  if (isNearSilentGeneratedAudio(mergedBytes, normalizedContentType)) {
+    throw new TtsProviderError(nearSilentAudioMessage(), 502);
+  }
 
   const publicAudio = await normalizeToPublicMp3(
     mergedBytes,

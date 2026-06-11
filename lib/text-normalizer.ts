@@ -220,10 +220,29 @@ function replaceStandaloneNumbers(text: string): string {
   });
 }
 
+function shouldUseKhmerNumberNormalizer(text: string): boolean {
+  let khmerChars = 0;
+  let latinChars = 0;
+
+  for (const char of text) {
+    if (/[\u1780-\u17ff]/u.test(char)) {
+      khmerChars += 1;
+    } else if (/[A-Za-z]/.test(char)) {
+      latinChars += 1;
+    }
+  }
+
+  return khmerChars > 0 && khmerChars >= latinChars;
+}
+
 export function normalizeText(text: string): string {
   if (!text) return text;
 
   let normalized = normalizeKhmerDigits(text);
+
+  if (!shouldUseKhmerNumberNormalizer(normalized)) {
+    return normalized;
+  }
 
   normalized = replacePhoneNumbers(normalized);
   normalized = replaceDates(normalized);

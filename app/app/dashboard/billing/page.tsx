@@ -3,11 +3,9 @@ import { Suspense } from "react";
 
 import { BillingClient } from "@/app/app/dashboard/billing/billing-client";
 import { VoxLoader } from "@/app/components/vox-loader";
-import { isBakongVerificationConfigured } from "@/lib/bakong";
 import { getCurrentUser } from "@/lib/current-user";
-import { isPaywayQrEnabled } from "@/lib/payway";
+import { isKhqrccConfigured, khqrccAccountLabel } from "@/lib/khqrcc";
 import { TOKEN_PACK_PLANS } from "@/lib/plans";
-import { isStaticPaywayQrEnabled, staticPaywayQrAccountLabel, staticPaywayQrImageUrl } from "@/lib/static-payway";
 import {
   getSystemSetting,
   getUserTotalCreditsEarned,
@@ -58,25 +56,17 @@ async function BillingData() {
     ? "Custom business plan access active"
     : (latestPaidOrder
         ? `${latestPaidOrder.planName} x ${latestPaidOrder.quantity} paid pack`
-        : "Free starter credits");
-  const checkoutMode: "local_khqr" | "payway_qr" | "static_payway_qr" = isStaticPaywayQrEnabled()
-    ? "static_payway_qr"
-    : isPaywayQrEnabled()
-      ? "payway_qr"
-      : "local_khqr";
+        : "Free trial credits");
+  const checkoutMode = "khqrcc_qr" as const;
   const adminActiveSetting = await getSystemSetting("admin_active", "true");
   const initialAdminActive = adminActiveSetting === "true";
 
   const paymentInfo = {
-    khqrName: process.env.KHQR_DISPLAY_NAME?.trim() || "Khmer Vox TTS",
-    khqrAccount: isStaticPaywayQrEnabled()
-      ? staticPaywayQrAccountLabel()
-      : process.env.KHQR_ACCOUNT?.trim() || "Set KHQR_ACCOUNT in .env",
+    khqrName: "Automatic ABA QR",
+    khqrAccount: khqrccAccountLabel(),
     telegramHandle: process.env.TELEGRAM_ADMIN_HANDLE?.trim() || "https://t.me/OfficalVoxTTS",
-    staticQrImageUrl: staticPaywayQrImageUrl(),
-    autoVerificationEnabled: isStaticPaywayQrEnabled()
-      ? false
-      : isPaywayQrEnabled() || isBakongVerificationConfigured(),
+    staticQrImageUrl: "",
+    autoVerificationEnabled: isKhqrccConfigured(),
     checkoutMode,
     initialAdminActive,
   };
@@ -149,25 +139,21 @@ async function BillingData() {
                 </div>
                 <div>
                   <p className="font-headline font-bold uppercase text-sm text-primary">
-                    {paymentInfo.checkoutMode === "static_payway_qr" ? "ABA PayWay QR (Manual)" : "Bakong KHQR"}
+                    Automatic ABA QR
                   </p>
                   <p className="text-xs text-[#4a4a4a] font-body mt-1">
-                    {paymentInfo.checkoutMode === "static_payway_qr"
-                      ? "Static merchant QR, receipt approval"
-                      : "Local QR checkout from your KHQR account"}
+                    Automatic QR checkout and verification
                   </p>
                 </div>
               </div>
               <span className="w-fit border-2 border-primary bg-[#10b981] px-3 py-1 text-[10px] font-headline font-bold uppercase text-primary shadow-[1px_1px_0px_0px_#1a1a1a]">
-                {paymentInfo.autoVerificationEnabled ? "Auto check" : "Manual approval"}
+                Auto check
               </span>
             </div>
           </div>
           {!paymentInfo.autoVerificationEnabled ? (
             <p className="mt-4 border-2 border-primary bg-[#ffcc00]/10 p-4 text-xs font-semibold leading-relaxed text-[#1a1a1a] font-body shadow-[2px_2px_0px_0px_#1a1a1a]">
-              {paymentInfo.checkoutMode === "static_payway_qr"
-                ? "Current mode: manual ABA PayWay QR. Customers enter the exact amount, upload the ABA receipt, and tokens are added after admin confirmation. PayWay API/webhook is not active yet."
-                : "This site generates KHQR codes locally and does not need the PayWay QR API. Tokens are added after admin confirmation from the Telegram or bank payment notice."}
+              Automatic checkout is selected, but the server payment credentials are missing.
             </p>
           ) : null}
         </article>
@@ -226,8 +212,8 @@ function BillingFallback() {
                 KHQR
               </div>
               <div>
-                <p className="font-headline font-bold uppercase text-sm text-primary">Bakong KHQR</p>
-                <p className="text-xs text-[#4a4a4a] font-body mt-1">Local QR checkout from your KHQR account</p>
+                <p className="font-headline font-bold uppercase text-sm text-primary">Automatic ABA QR</p>
+                <p className="text-xs text-[#4a4a4a] font-body mt-1">Automatic QR checkout and verification</p>
               </div>
             </div>
             <span className="border-2 border-primary bg-[#10b981] px-3 py-1 text-[10px] font-headline font-bold uppercase text-primary">

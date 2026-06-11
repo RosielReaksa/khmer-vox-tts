@@ -221,7 +221,7 @@ create index if not exists batch_job_webhook_attempts_status_created_idx
 create table if not exists payment_orders (
   id text primary key,
   user_id text not null references users(id) on delete cascade,
-  plan_id text not null check (plan_id in ('starter', 'creator', 'pack_5', 'pack_10', 'pack_15', 'pack_20')),
+  plan_id text not null check (plan_id in ('starter', 'creator', 'pro', 'pack_5', 'pack_10', 'pack_15', 'pack_20')),
   plan_name text not null,
   quantity integer not null check (quantity > 0),
   unit_price_cents integer not null check (unit_price_cents >= 0),
@@ -268,7 +268,7 @@ create unique index if not exists payment_orders_provider_transaction_unique
 
 create table if not exists payment_webhook_events (
   id text primary key,
-  provider text not null check (provider in ('payway')),
+  provider text not null check (provider in ('payway', 'khqrcc')),
   order_id text,
   payment_order_id text references payment_orders(id) on delete set null,
   event_status text not null check (event_status in ('credited', 'not_credited', 'invalid', 'error')),

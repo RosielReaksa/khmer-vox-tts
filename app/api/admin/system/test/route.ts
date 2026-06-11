@@ -132,8 +132,8 @@ async function testPaywayQr() {
   try {
     const checkout = await createPaywayQrCheckout({
       orderId: createPaywayOrderId(),
-      totalPriceCents: 20,
-      planName: "Starter",
+      totalPriceCents: 150,
+      planName: "Creator",
       quantity: 1,
       userEmail: "system-test@voxtts.local",
     });

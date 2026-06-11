@@ -118,9 +118,16 @@ export function selectUpstreamEndpoint(): UpstreamEndpoint | null {
   return candidates[index];
 }
 
-export function disableEndpoint(url: string, reason: string): void {
-  disabledEndpoints.set(url, { disabledAt: Date.now(), reason });
-  console.warn(`[TTS LoadBalancer] Temporarily disabled endpoint: ${url}. Reason: ${reason}`);
+export function disableEndpoint(url: string, reason: string, cooldownMs: number = DISABLE_DURATION_MS): void {
+  // Store an effective disabledAt that yields the requested cooldown against the
+  // fixed DISABLE_DURATION_MS used by the availability check. A shorter cooldown
+  // (e.g. for request-specific timeouts) avoids poisoning the whole pool, while a
+  // genuine endpoint failure keeps the full 5-minute window.
+  const effectiveDisabledAt = Date.now() - Math.max(0, DISABLE_DURATION_MS - cooldownMs);
+  disabledEndpoints.set(url, { disabledAt: effectiveDisabledAt, reason });
+  console.warn(
+    `[TTS LoadBalancer] Temporarily disabled endpoint: ${url} for ~${Math.round(cooldownMs / 1000)}s. Reason: ${reason}`,
+  );
 }
 
 export function resetEndpointPool(): void {

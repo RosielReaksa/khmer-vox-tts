@@ -1,10 +1,13 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useCallback, useState, useEffect, useTransition } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { preparePaymentProofImage } from "@/lib/client-payment-proof-image";
 import { VoxLoader } from "@/app/components/vox-loader";
+import { useDashboardUser } from "@/app/app/dashboard/dashboard-user-context";
 import Link from "next/link";
+
+type CheckoutMode = "local_khqr" | "payway_qr" | "static_payway_qr" | "khqrcc_qr";
 
 type PaymentOrderRecord = {
   id: string;
@@ -37,19 +40,11 @@ type CheckoutClientProps = {
     telegramHandle: string;
     staticQrImageUrl: string;
     autoVerificationEnabled: boolean;
-    checkoutMode: "local_khqr" | "payway_qr" | "static_payway_qr";
+    checkoutMode: CheckoutMode;
   };
 };
 
 const PLAN_INFO = {
-  starter: {
-    id: "starter" as const,
-    name: "Starter Pack",
-    priceUsd: 0.20,
-    priceCents: 20,
-    tokens: 1000,
-    features: ["1,000 prepaid tokens", "API Key Access", "Standard TTS Synthesis"],
-  },
   creator: {
     id: "creator" as const,
     name: "Creator Pack",
@@ -57,6 +52,14 @@ const PLAN_INFO = {
     priceCents: 150,
     tokens: 10000,
     features: ["10,000 prepaid tokens", "API Key Access", "Voice Cloning Synthesis"],
+  },
+  pro: {
+    id: "pro" as const,
+    name: "Pro Pack",
+    priceUsd: 4.00,
+    priceCents: 400,
+    tokens: 30000,
+    features: ["30,000 prepaid tokens", "API Key Access", "Speech, Clone, and Batch Synthesis"],
   },
   pack_5: {
     id: "pack_5" as const,
@@ -102,6 +105,7 @@ export function CheckoutClient({
   const searchParams = useSearchParams();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const { setTokenBalance } = useDashboardUser();
 
   // Determine initial plan
   const planParam = searchParams.get("plan") || searchParams.get("planId") || "creator";
@@ -165,7 +169,8 @@ export function CheckoutClient({
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  const hasSubmittedProof = success || Boolean(order?.proofImageDataUrl);
+  const isKhqrcc = paymentInfo.checkoutMode === "khqrcc_qr";
+  const hasSubmittedProof = success || Boolean(order?.proofImageDataUrl) || (isKhqrcc && order?.status !== "pending");
 
   const plan = PLAN_INFO[selectedPlanId];
   const orderIdParam = searchParams.get("orderId");
@@ -173,8 +178,24 @@ export function CheckoutClient({
   const subtotal = order ? total / 1.1 : plan.priceUsd;
   const tax = total - subtotal;
 
+  const refreshLiveTokenBalance = useCallback(async () => {
+    try {
+      const response = await fetch("/api/me", { cache: "no-store" });
+      const data = (await response.json()) as {
+        user?: {
+          tokenBalance?: number;
+        } | null;
+      };
+      if (response.ok && typeof data.user?.tokenBalance === "number") {
+        setTokenBalance(data.user.tokenBalance);
+      }
+    } catch (err) {
+      console.error("[checkout] Could not refresh token balance:", err);
+    }
+  }, [setTokenBalance]);
+
   // Initialize payment order
-  async function createOrder(planId: keyof typeof PLAN_INFO) {
+  const createOrder = useCallback(async (planId: keyof typeof PLAN_INFO) => {
     if (suspendedAt) {
       setError(`Your account is suspended. Reason: ${suspendedReason || "Violation of usage policy."}`);
       return;
@@ -208,9 +229,11 @@ export function CheckoutClient({
 
       setOrder(data.order);
       setInfoMessage(
-        paymentInfo.checkoutMode === "static_payway_qr"
-          ? "Scan static PayWay QR and pay exact amount manually, then upload receipt."
-          : "Bakong KHQR generated dynamically. Scan with any Cambodian banking app."
+        isKhqrcc
+          ? "ABA QR generated. Pay with ABA Mobile, then wait for automatic confirmation."
+          : paymentInfo.checkoutMode === "static_payway_qr"
+            ? "Scan static PayWay QR and pay exact amount manually, then upload receipt."
+            : "Bakong KHQR generated dynamically. Scan with any Cambodian banking app."
       );
     } catch (err) {
       console.error(err);
@@ -218,7 +241,7 @@ export function CheckoutClient({
     } finally {
       setLoading(false);
     }
-  }
+  }, [isKhqrcc, paymentInfo.checkoutMode, suspendedAt, suspendedReason]);
 
   useEffect(() => {
     if (!order?.khqrExpiresAt || order.status !== "pending") {
@@ -267,9 +290,53 @@ export function CheckoutClient({
     return () => clearInterval(interval);
   }, [order?.khqrExpiresAt, order?.status, order?.id, router]);
 
-  // Poll order status if proof has been submitted and order is pending
+  const checkKhqrccPayment = useCallback(async () => {
+    if (!order?.id) return;
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/payments/orders/${order.id}/verify`, {
+        method: "POST",
+      });
+      const data = await response.json() as {
+        error?: string;
+        message?: string;
+        order?: PaymentOrderRecord;
+      };
+      if (!response.ok) {
+        setError(data.error ?? "Could not check payment.");
+        return;
+      }
+      if (data.order) {
+        setOrder(data.order);
+        if (data.order.status === "approved") {
+          await refreshLiveTokenBalance();
+        }
+      }
+      setInfoMessage(data.message ?? "Payment status checked.");
+    } catch (err) {
+      console.error(err);
+      setError("Network error while checking payment.");
+    } finally {
+      setSubmitting(false);
+    }
+  }, [order, refreshLiveTokenBalance]);
+
+  // Poll order status while KHQRcc is pending, or after manual proof has been submitted.
   useEffect(() => {
-    if (!hasSubmittedProof || !order?.id) return;
+    if (!order?.id) return;
+    if (isKhqrcc) {
+      if (order.status !== "pending") return;
+
+      const timerId = setInterval(() => {
+        void checkKhqrccPayment();
+      }, 5000);
+
+      return () => clearInterval(timerId);
+    }
+
+    if (!hasSubmittedProof) return;
     if (order.status !== "pending" && order.status !== "user_reported_paid") return;
 
     const pollStatus = async () => {
@@ -281,6 +348,9 @@ export function CheckoutClient({
           const updatedOrder = data.order as PaymentOrderRecord;
           if (updatedOrder.status !== order.status || updatedOrder.adminNote !== order.adminNote) {
             setOrder(updatedOrder);
+            if (updatedOrder.status === "approved") {
+              await refreshLiveTokenBalance();
+            }
           }
         }
       } catch (err) {
@@ -291,16 +361,16 @@ export function CheckoutClient({
     const timerId = setInterval(pollStatus, 5000);
 
     return () => clearInterval(timerId);
-  }, [hasSubmittedProof, order?.id, order?.status, order?.adminNote]);
+  }, [checkKhqrccPayment, hasSubmittedProof, isKhqrcc, order?.id, order?.status, order?.adminNote, refreshLiveTokenBalance]);
 
   // Manage redirect timer upon order approval
   useEffect(() => {
-    if (order?.status === "approved" && hasSubmittedProof) {
+    if (order?.status === "approved" && (hasSubmittedProof || isKhqrcc)) {
       Promise.resolve().then(() => {
         setRedirectCountdown(3);
       });
     }
-  }, [order?.status, hasSubmittedProof]);
+  }, [order?.status, hasSubmittedProof, isKhqrcc]);
 
   useEffect(() => {
     if (redirectCountdown === null) return;
@@ -350,9 +420,11 @@ export function CheckoutClient({
             const orderPlanId = (loadedOrder.planId in PLAN_INFO) ? (loadedOrder.planId as keyof typeof PLAN_INFO) : "creator";
             setSelectedPlanId(orderPlanId);
             setInfoMessage(
-              paymentInfo.checkoutMode === "static_payway_qr"
-                ? "Scan static PayWay QR and pay exact amount manually, then upload receipt."
-                : "Bakong KHQR loaded for this order. Scan with any Cambodian banking app."
+              isKhqrcc
+                ? "ABA QR loaded. Pay with ABA Mobile, then wait for automatic confirmation."
+                : paymentInfo.checkoutMode === "static_payway_qr"
+                  ? "Scan static PayWay QR and pay exact amount manually, then upload receipt."
+                  : "Bakong KHQR loaded for this order. Scan with any Cambodian banking app."
             );
           }
         } catch (err) {
@@ -374,7 +446,16 @@ export function CheckoutClient({
     return () => {
       active = false;
     };
-  }, [orderIdParam, selectedPlanId, loadedOrderId, suspendedAt, suspendedReason, paymentInfo.checkoutMode]);
+  }, [
+    createOrder,
+    isKhqrcc,
+    loadedOrderId,
+    orderIdParam,
+    paymentInfo.checkoutMode,
+    selectedPlanId,
+    suspendedAt,
+    suspendedReason,
+  ]);
 
   // Handle plan selection switch
   const handlePlanSwitch = (planId: keyof typeof PLAN_INFO) => {
@@ -548,10 +629,10 @@ export function CheckoutClient({
             </span>
 
             <h2 className="font-sans font-black text-4xl uppercase tracking-tight mb-2 text-[#128342]">
-              +{order?.tokens.toLocaleString()} Tokens Credited!
+              +{order?.tokens.toLocaleString()} Credits Added!
             </h2>
             <p className="font-body text-base font-bold text-primary mb-6">
-              Your token balance has been updated successfully.
+              Your credit balance has been updated successfully.
             </p>
 
             {redirectCountdown !== null && (
@@ -937,7 +1018,7 @@ export function CheckoutClient({
           </div>
 
           {/* Verification Form Card */}
-          {!isExpired && (
+          {!isExpired && !isKhqrcc ? (
             <form onSubmit={handleSubmit} className="bg-white border-4 border-primary p-6 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
               <h3 className="font-sans font-black text-xl uppercase mb-4 border-b-2 border-primary pb-2">
                 Verify Payment
@@ -1007,7 +1088,30 @@ export function CheckoutClient({
                 </div>
               </div>
             </form>
-          )}
+          ) : !isExpired && isKhqrcc ? (
+            <div className="bg-white border-4 border-primary p-6 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
+              <h3 className="font-sans font-black text-xl uppercase mb-4 border-b-2 border-primary pb-2">
+                Automatic Verification
+              </h3>
+              <p className="text-sm font-semibold text-primary/80 leading-6">
+                Pay with the ABA QR code. The account is credited automatically after payment confirmation.
+              </p>
+              <div className="mt-4 border-4 border-primary bg-[#faf7f2] p-4 text-xs font-mono space-y-2 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
+                <div className="flex justify-between border-b border-primary/20 pb-1">
+                  <span className="text-primary/60 font-sans font-bold">Order ID:</span>
+                  <span className="font-bold truncate max-w-[280px]">{order?.id ?? "-"}</span>
+                </div>
+                <div className="flex justify-between border-b border-primary/20 pb-1">
+                  <span className="text-primary/60 font-sans font-bold">Method:</span>
+                  <span className="font-bold">ABA QR payment</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-primary/60 font-sans font-bold">Status:</span>
+                  <span className="font-bold text-amber-700 uppercase">Waiting for payment</span>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {/* Right Side panels */}
@@ -1018,13 +1122,13 @@ export function CheckoutClient({
 
             <div className="text-center mb-6 relative z-10 w-full">
               <div className="bg-primary text-primary-fixed font-sans font-black text-2xl uppercase py-3 px-6 border-4 border-primary inline-block mb-4 transform -rotate-2 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
-                {isExpired ? "Payment Cancelled" : "KHQR Payment"}
+                {isExpired ? "Payment Cancelled" : isKhqrcc ? "Subscription Payment" : "KHQR Payment"}
               </div>
               <p className="font-sans font-black text-base">
                 {isExpired ? "Order has expired and cannot be paid." : "Scan with your banking app to pay."}
               </p>
               <p className="text-xs mt-1 font-semibold text-primary/60">
-                {isExpired ? "Time window closed" : "Supported by Bakong"}
+                {isExpired ? "Time window closed" : isKhqrcc ? "Automatic ABA QR checkout" : "Supported by Bakong"}
               </p>
             </div>
 
@@ -1078,14 +1182,32 @@ export function CheckoutClient({
             ) : (
               <>
                 {/* Submit button */}
-                <button
-                  onClick={handleSubmit}
-                  disabled={loading || submitting || !order || !proofImageBase64}
-                  className="w-full bg-[#ffcc00] text-primary font-sans font-black text-xl uppercase py-4 border-4 border-primary shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] transition-all cursor-pointer disabled:bg-[#dcd8cf] disabled:text-primary/30 disabled:border-primary/30 disabled:shadow-none disabled:pointer-events-none active:translate-x-[4px] active:translate-y-[4px] active:shadow-none flex items-center justify-center gap-2 relative z-10"
-                >
-                  <span>{submitting ? "Verifying..." : "Complete Purchase"}</span>
-                  <span className="material-symbols-outlined font-bold">arrow_forward</span>
-                </button>
+                {isKhqrcc ? (
+                  <button
+                    type="button"
+                    onClick={() => void checkKhqrccPayment()}
+                    disabled={loading || submitting || !order || !paymentInfo.autoVerificationEnabled}
+                    className="w-full bg-[#ffcc00] text-primary font-sans font-black text-xl uppercase py-4 border-4 border-primary shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] transition-all cursor-pointer disabled:bg-[#dcd8cf] disabled:text-primary/30 disabled:border-primary/30 disabled:shadow-none disabled:pointer-events-none active:translate-x-[4px] active:translate-y-[4px] active:shadow-none flex items-center justify-center gap-2 relative z-10"
+                  >
+                    <span>
+                      {submitting
+                        ? "Checking..."
+                        : paymentInfo.autoVerificationEnabled
+                          ? "Check Payment"
+                          : "Payment Not Configured"}
+                    </span>
+                    {submitting ? <ButtonSpinner /> : <span className="material-symbols-outlined font-bold">payments</span>}
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSubmit}
+                    disabled={loading || submitting || !order || !proofImageBase64}
+                    className="w-full bg-[#ffcc00] text-primary font-sans font-black text-xl uppercase py-4 border-4 border-primary shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] transition-all cursor-pointer disabled:bg-[#dcd8cf] disabled:text-primary/30 disabled:border-primary/30 disabled:shadow-none disabled:pointer-events-none active:translate-x-[4px] active:translate-y-[4px] active:shadow-none flex items-center justify-center gap-2 relative z-10"
+                  >
+                    <span>{submitting ? "Verifying..." : "Complete Purchase"}</span>
+                    <span className="material-symbols-outlined font-bold">arrow_forward</span>
+                  </button>
+                )}
 
                 {/* Cancel Order button */}
                 {order && (
@@ -1109,5 +1231,14 @@ export function CheckoutClient({
         </div>
       </div>
     </div>
+  );
+}
+
+function ButtonSpinner() {
+  return (
+    <span
+      aria-hidden="true"
+      className="h-5 w-5 rounded-full border-3 border-primary/35 border-t-primary animate-spin"
+    />
   );
 }

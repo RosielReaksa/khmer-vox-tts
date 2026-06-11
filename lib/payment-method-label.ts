@@ -12,6 +12,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 export function paymentMethodLabel(order: PaymentOrderRecord): string {
   const method = paymentMethodFromPayload(order.providerPayload);
   if (method) return PAYMENT_METHOD_LABELS[method] ?? method;
+  if (order.paymentProvider === "khqrcc") return "ABA QR payment";
   if (order.paymentProvider === "static_payway") return "ABA PayWay QR";
   if (order.paymentProvider === "payway") return "ABA PayWay";
   if (order.paymentProvider === "telegram_payway") return "Telegram PayWay notice";

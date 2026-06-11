@@ -1,34 +1,31 @@
-import Image from "next/image";
 import Link from "next/link";
 import { PublicHeader } from "@/app/components/public-header";
-
-import { staticPaywayQrImageUrl } from "@/lib/static-payway";
 
 const steps = [
   {
     title: "Choose token pack",
-    body: "Open Billing or Checkout, choose Starter or Creator, and confirm the total amount before paying.",
+    body: "Open Billing or Checkout, choose Creator, Pro, or a paid token pack, and confirm the total amount before paying.",
   },
   {
-    title: "Scan ABA/KHQR",
-    body: "Use ABA Mobile or any KHQR-supported bank app. If the page shows a static PayWay QR, enter the exact amount manually.",
+    title: "Scan KHQRcc QR",
+    body: "Use ABA Mobile or any KHQR-supported bank app. The checkout QR is generated for the exact order amount.",
   },
   {
-    title: "Upload receipt",
-    body: "Click I Paid and upload the ABA receipt screenshot. The order remains pending while admin checks the payment notice.",
+    title: "Wait for verification",
+    body: "KHQRcc confirms the payment by webhook or server check. New orders do not need receipt upload.",
   },
   {
-    title: "Tokens credited",
-    body: "After approval, tokens are added once and API keys can use the paid balance.",
+    title: "Credits added",
+    body: "After verification, credits are added once and API keys can use the paid balance.",
   },
 ];
 
 const statusRows = [
-  ["pending", "Order created. Pay and upload receipt, or wait for admin verification."],
-  ["approved", "Payment matched. Tokens have been credited."],
-  ["rejected", "Admin could not verify the payment, amount, or receipt."],
+  ["pending", "Order created. Pay the exact QR amount and wait for KHQRcc verification."],
+  ["approved", "Payment matched. Credits have been added."],
+  ["rejected", "Admin could not verify the payment or amount."],
   ["expired", "The QR/order expired. Create a new order before paying."],
-  ["cancelled", "Customer cancelled before payment approval. No tokens were credited."],
+  ["cancelled", "Customer cancelled before payment approval. No credits were added."],
 ];
 
 export default function PaymentGuidePage() {
@@ -51,11 +48,11 @@ export default function PaymentGuidePage() {
                 </Link>
               </div>
               <h1 className="text-4xl font-headline font-black uppercase tracking-tighter text-primary lg:text-6xl leading-none">
-                How to pay with ABA KHQR
+                How to pay with KHQRcc ABA Pay
               </h1>
               <p className="mt-4 font-body text-sm leading-relaxed text-on-surface-variant max-w-2xl border-l-4 border-outline pl-4">
-                Khmer Vox TTS uses manual ABA/KHQR receipt approval while PayWay API onboarding is delayed.
-                This lets customers buy prepaid TTS tokens without waiting for Visa/Mastercard checkout.
+                Khmer Vox TTS uses KHQRcc ABA Pay QR checkout for prepaid credits.
+                Pay the exact QR amount and the server verifies KHQRcc confirmation automatically.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <Link
@@ -73,18 +70,15 @@ export default function PaymentGuidePage() {
               </div>
             </div>
             <div className="border-4 border-outline bg-[#faf7f2] p-4 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] self-center">
-              <div className="border-2 border-outline bg-white p-3">
-                <Image
-                  src={staticPaywayQrImageUrl()}
-                  width={290}
-                  height={290}
-                  alt="ABA PayWay QR code"
-                  className="mx-auto h-auto w-full max-w-[290px]"
-                  priority
-                />
+              <div className="grid aspect-square place-items-center border-2 border-outline bg-white p-3 text-center">
+                <div>
+                  <span className="material-symbols-outlined text-6xl text-primary">qr_code_2</span>
+                  <p className="mt-3 font-headline text-xl font-black uppercase text-primary">Dynamic QR</p>
+                  <p className="mt-2 text-xs font-bold text-on-surface-variant">Generated per checkout</p>
+                </div>
               </div>
               <p className="mt-3 text-center text-[10px] font-bold text-on-surface-variant font-body leading-relaxed">
-                If static QR mode is active, enter the exact amount shown in checkout.
+                The QR is created by KHQRcc for the exact selected pack amount.
               </p>
             </div>
           </article>
@@ -120,8 +114,8 @@ export default function PaymentGuidePage() {
           <section className="border-4 border-outline bg-[#ffdad6] p-6 text-xs font-bold text-[#93000a] shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
             <h2 className="text-lg font-headline font-black uppercase text-[#93000a] mb-2">Important</h2>
             <p className="font-body leading-relaxed">
-              Do not cancel an order after paying. If you already paid, upload the receipt and contact support
-              with the order ID. Approved orders are credited once; duplicate receipts do not create extra tokens.
+              Do not cancel an order after paying. If you already paid and the order is still pending,
+              contact support with the order ID. Approved orders are credited once.
             </p>
           </section>
         </section>
@@ -129,4 +123,3 @@ export default function PaymentGuidePage() {
     </div>
   );
 }
-

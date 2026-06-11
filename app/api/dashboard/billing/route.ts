@@ -1,11 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { isBakongVerificationConfigured } from "@/lib/bakong";
 import { getCurrentUser } from "@/lib/current-user";
 import { cachedDashboardValue, dashboardCacheKey } from "@/lib/dashboard-count-cache";
-import { isPaywayQrEnabled } from "@/lib/payway";
+import { isKhqrccConfigured, khqrccAccountLabel } from "@/lib/khqrcc";
 import { TOKEN_PACK_PLANS } from "@/lib/plans";
-import { isStaticPaywayQrEnabled, staticPaywayQrAccountLabel, staticPaywayQrImageUrl } from "@/lib/static-payway";
 import {
   getSystemSetting,
   getUserTotalCreditsEarned,
@@ -38,16 +36,12 @@ export async function GET() {
     totalCreditsEarned,
     apiAccess,
     paymentInfo: {
-      khqrName: process.env.KHQR_DISPLAY_NAME?.trim() || "Khmer Vox TTS",
-      khqrAccount: isStaticPaywayQrEnabled()
-        ? staticPaywayQrAccountLabel()
-        : process.env.KHQR_ACCOUNT?.trim() || "Set KHQR_ACCOUNT in .env",
+      khqrName: "KHQRcc ABA Pay",
+      khqrAccount: khqrccAccountLabel(),
       telegramHandle: process.env.TELEGRAM_ADMIN_HANDLE?.trim() || "https://t.me/OfficalVoxTTS",
-      staticQrImageUrl: staticPaywayQrImageUrl(),
-      autoVerificationEnabled: isStaticPaywayQrEnabled()
-        ? false
-        : isPaywayQrEnabled() || isBakongVerificationConfigured(),
-      checkoutMode: isStaticPaywayQrEnabled() ? "static_payway_qr" : isPaywayQrEnabled() ? "payway_qr" : "local_khqr",
+      staticQrImageUrl: "",
+      autoVerificationEnabled: isKhqrccConfigured(),
+      checkoutMode: "khqrcc_qr",
       initialAdminActive: adminActiveSetting === "true",
     },
   });

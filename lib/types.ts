@@ -10,12 +10,19 @@ export type GenerationSource = "dashboard" | "api_key";
 export type GenerationStatus = "processing" | "success" | "failed";
 export type BatchJobStatus = "queued" | "running" | "completed" | "partial" | "failed" | "needs_review";
 export type BatchJobItemStatus = "queued" | "running" | "success" | "failed";
-export type PaymentPlanId = "starter" | "creator" | "pack_5" | "pack_10" | "pack_15" | "pack_20";
+export type PaymentPlanId =
+  | "starter"
+  | "creator"
+  | "pro"
+  | "pack_5"
+  | "pack_10"
+  | "pack_15"
+  | "pack_20";
 export type PaymentOrderStatus = "pending" | "approved" | "rejected" | "expired" | "cancelled";
 export type PaymentSupportTicketStatus = "open" | "resolved";
-export type PaymentWebhookProvider = "payway";
+export type PaymentWebhookProvider = "payway" | "khqrcc";
 export type PaymentWebhookEventStatus = "credited" | "not_credited" | "invalid" | "error";
-export type PaymentProvider = "payway" | "static_payway" | "telegram_payway";
+export type PaymentProvider = "payway" | "static_payway" | "telegram_payway" | "khqrcc";
 export type TelegramPaymentEventDecision =
   | "ready_to_approve"
   | "auto_approved"

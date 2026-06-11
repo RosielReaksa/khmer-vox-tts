@@ -1,4 +1,5 @@
 import { PLAN_COMPARISON_ROWS, PLAN_DETAILS, type PlanKey } from "@/lib/plan-details";
+import { getAudioDurationEstimates } from "@/lib/plans";
 import HomePlayground from "@/app/components/home-playground";
 import { PublicHeader } from "@/app/components/public-header";
 
@@ -6,7 +7,7 @@ const features = [
   {
     title: "Khmer TTS API",
     description:
-      "Generate Khmer speech from text and return MP3 audio in a single request.",
+      "Generate speech from text and return MP3 audio in a single request.",
   },
   {
     title: "Session Clone Voice",
@@ -24,16 +25,16 @@ const features = [
       "Issue per-user API keys and connect your own apps without exposing worker secrets.",
   },
   {
-    title: "ABA PayWay Review Flow",
+    title: "KHQRcc ABA Pay Checkout",
     description:
-      "Manual PayWay QR checkout is live now; production API/webhook integration is ready when credentials are approved.",
+      "Generate exact-amount ABA Pay QR orders and verify payment by webhook or server check.",
   },
 ];
 
 const steps = [
   "Create an account and receive 100 free tokens.",
-  "Buy a token pack with the ABA PayWay QR checkout.",
-  "Generate Khmer speech in the dashboard or from an API key.",
+  "Buy a token pack with the KHQRcc ABA Pay QR checkout.",
+  "Generate speech in the dashboard or from an API key.",
   "Download MP3 files, batch ZIP files, or integrate responses in your own app.",
 ];
 
@@ -49,16 +50,6 @@ const plans = [
     highlighted: false,
   },
   {
-    id: "starter",
-    name: "Starter",
-    price: "$0.20",
-    tokenCount: 1_000,
-    cta: "Buy Starter",
-    ctaHref: "/app/checkout",
-    detail: "Good for short tests and quick bot integrations.",
-    highlighted: true,
-  },
-  {
     id: "creator",
     name: "Creator",
     price: "$1.50",
@@ -67,6 +58,16 @@ const plans = [
     ctaHref: "/app/checkout",
     detail: "Built for regular batch generation workloads.",
     highlighted: false,
+  },
+  {
+    id: "pro",
+    name: "Pro",
+    price: "$4.00",
+    tokenCount: 30_000,
+    cta: "Buy Pro",
+    ctaHref: "/app/checkout?plan=pro",
+    detail: "More credits for growing creators and larger batch workloads.",
+    highlighted: true,
   },
 ];
 
@@ -82,7 +83,7 @@ const businessPlanFeatures = [
 const faqs = [
   {
     q: "What is one token?",
-    a: "One token equals one second of generation duration relative to the base rate. Starter and Creator use Standard TTS at 1.5 tokens per generated audio second and standard clone at two tokens per generated audio second. The Business clone rate is only for approved Business plan accounts and starts at 1.5 tokens per audio second, with 1 token per audio second available for high-volume prepaid accounts.",
+    a: "One token equals one second of generation duration relative to the base rate. Paid token packs use Standard TTS at 1.5 tokens per generated audio second and standard clone at two tokens per generated audio second. The Business clone rate is only for approved Business plan accounts and starts at 1.5 tokens per audio second, with 1 token per audio second available for high-volume prepaid accounts.",
   },
   {
     q: "Is the clone reference saved forever?",
@@ -90,66 +91,47 @@ const faqs = [
   },
   {
     q: "Can developers use their own API keys?",
-    a: "Yes, after buying a paid token pack. Free accounts can test the dashboard, but API key creation and API calls require Starter or Creator.",
+    a: "Yes, after buying a paid token pack. Free accounts can test the dashboard, but API key creation and API calls require a paid token pack.",
   },
   {
     q: "How do payments work in Cambodia?",
-    a: "Current checkout uses a manual ABA PayWay QR. Users scan, pay the exact amount, upload the receipt, then admin approves and credits tokens. Automatic PayWay webhook support is prepared for production credentials.",
+    a: "Current checkout uses KHQRcc ABA Pay QR. Users scan the exact-amount QR, then the server verifies KHQRcc confirmation before credits are added.",
   },
 ];
 
 const paymentFlow = [
   {
     title: "1. User chooses token pack",
-    body: "Starter is 1,000 tokens for $0.20. Creator is 10,000 tokens for $1.50.",
+    body: "Creator is 10,000 tokens for $1.50 and Pro is 30,000 tokens for $4.00. Larger add-on packs are available on Billing.",
   },
   {
-    title: "2. User pays by ABA PayWay QR",
-    body: "The checkout shows the static merchant QR, exact total, order ID, and receipt upload instructions.",
+    title: "2. User pays by KHQRcc ABA Pay QR",
+    body: "The checkout creates a fresh exact-amount QR for the selected pack.",
   },
   {
-    title: "3. Admin verifies receipt",
-    body: "The admin dashboard shows pending orders, receipt proof, user email, amount, quantity, and token total before approval.",
+    title: "3. Server verifies payment",
+    body: "The app verifies KHQRcc signature, amount, currency, order status, and duplicate transaction data.",
   },
   {
-    title: "4. Tokens are credited",
-    body: "After approval, the system adds tokens once and updates billing, dashboard balance, API limits, and payment history.",
+    title: "4. Credits are added",
+    body: "After approval, the system adds credits once and updates billing, dashboard balance, API limits, and payment history.",
   },
 ];
 
 const reviewCards = [
   {
     title: "Business",
-    body: "VoxTTS Online sells prepaid Khmer text-to-speech API tokens for developers, creators, dubbing tools, and automation systems.",
+    body: "VoxTTS Online sells prepaid text-to-speech API tokens for developers, creators, dubbing tools, and automation systems.",
   },
   {
     title: "Product",
-    body: "Users generate Khmer speech, session clone voice, and batch audio from the web dashboard or authenticated API endpoints.",
+    body: "Users generate speech, session clone voice, and batch audio from the web dashboard or authenticated API endpoints.",
   },
   {
     title: "Payment",
-    body: "Manual PayWay QR is active for review. PayWay production credentials will be used for automatic QR checkout and callback verification.",
+    body: "KHQRcc ABA Pay QR is active for automatic checkout and callback verification.",
   },
 ];
-
-function formatDuration(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainingSeconds = seconds % 60;
-
-  if (hours > 0) {
-    if (remainingSeconds > 0) return `${hours}h ${minutes}m ${remainingSeconds}s`;
-    if (minutes > 0) return `${hours}h ${minutes}m`;
-    return `${hours}h`;
-  }
-
-  if (minutes > 0) {
-    if (remainingSeconds > 0) return `${minutes}m ${remainingSeconds}s`;
-    return `${minutes}m`;
-  }
-
-  return `${remainingSeconds}s`;
-}
 
 function PlanFeatureBlock({
   planKey,
@@ -203,7 +185,7 @@ function PlanComparisonTable() {
       <div className="border-b-4 border-primary bg-primary-fixed px-4 py-3 text-primary">
         <h3 className="font-headline font-black text-lg uppercase tracking-tight">Full Plan Comparison</h3>
         <p className="font-body text-xs font-bold uppercase mt-1">
-          Free is for dashboard testing. Starter and Creator unlock paid API keys. Business is approved manually.
+          Free is for dashboard testing. Paid token packs unlock paid API keys. Business is approved manually.
         </p>
       </div>
       <div className="overflow-x-auto">
@@ -212,8 +194,8 @@ function PlanComparisonTable() {
             <tr>
               <th className="px-4 py-3 border-r-2 border-primary">Feature</th>
               <th className="px-4 py-3 border-r-2 border-primary">Free</th>
-              <th className="px-4 py-3 border-r-2 border-primary">Starter</th>
               <th className="px-4 py-3 border-r-2 border-primary">Creator</th>
+              <th className="px-4 py-3 border-r-2 border-primary">Pro</th>
               <th className="px-4 py-3">Business</th>
             </tr>
           </thead>
@@ -222,8 +204,8 @@ function PlanComparisonTable() {
               <tr key={row.feature} className={`border-b-2 border-primary last:border-b-0 align-top ${idx % 2 === 0 ? "bg-white" : "bg-[#fcfbf9]"}`}>
                 <td className="px-4 py-3 font-semibold text-primary border-r-2 border-primary font-headline uppercase text-xs">{row.feature}</td>
                 <td className="px-4 py-3 text-[#1a1a1a] border-r-2 border-primary">{row.free}</td>
-                <td className="px-4 py-3 text-[#1a1a1a] border-r-2 border-primary">{row.starter}</td>
                 <td className="px-4 py-3 text-[#1a1a1a] border-r-2 border-primary">{row.creator}</td>
+                <td className="px-4 py-3 text-[#1a1a1a] border-r-2 border-primary">{row.pro}</td>
                 <td className="px-4 py-3 text-[#1a1a1a]">{row.business}</td>
               </tr>
             ))}
@@ -254,7 +236,7 @@ export default function Home() {
               Redefined
             </h1>
             <p className="font-body text-lg sm:text-xl md:text-2xl font-medium text-on-surface-variant max-w-lg border-l-4 border-primary pl-4">
-              Generate ultra-realistic Khmer speech and clone custom voices with state-of-the-art precision. Built for Cambodian creators, businesses, and developers.
+              Generate ultra-realistic speech and clone custom voices with state-of-the-art precision. Built for Cambodian creators, businesses, and developers.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 md:gap-6 mt-4 w-full sm:w-auto">
               <a href="/app/signup" className="font-label text-lg sm:text-xl uppercase font-bold bg-primary text-on-primary border-4 border-primary px-6 sm:px-8 py-3 sm:py-4 hover:bg-primary-fixed hover:text-primary transition-colors duration-100 ease-linear shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] active:translate-x-1 active:translate-y-1 active:shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] flex items-center justify-center gap-2 w-full sm:w-auto">
@@ -341,13 +323,13 @@ export default function Home() {
             <div className="flex flex-col gap-6">
               <div>
                 <span className="bg-accent text-on-primary border-2 border-primary font-headline uppercase font-bold text-xs px-2.5 py-1">
-                  PayWay Review Ready
+                  KHQRcc Payment Ready
                 </span>
                 <h2 className="font-headline font-black text-3xl md:text-5xl uppercase tracking-tighter text-primary mt-4 mb-2">
                   Clear business, product, and payment flow
                 </h2>
                 <p className="font-body text-sm md:text-base text-on-surface-variant">
-                  The current site is ready for manual payment review. PayWay production credentials will be used for automatic QR checkout and callback verification.
+                  The current site uses KHQRcc ABA Pay QR checkout with signed callback and server-side transaction verification.
                 </p>
               </div>
               <div className="grid gap-4">
@@ -373,10 +355,10 @@ export default function Home() {
                   Cambodia checkout
                 </span>
                 <h2 className="font-headline font-black text-3xl md:text-5xl uppercase tracking-tighter text-primary mt-4 mb-2">
-                  Manual ABA PayWay QR now, automatic callback later
+                  KHQRcc ABA Pay QR with automatic callback
                 </h2>
                 <p className="font-body text-sm md:text-base text-on-surface-variant">
-                  Users pay with ABA mobile or a KHQR-supported bank app. Until PayWay production credentials are approved, token crediting is protected by admin receipt verification.
+                  Users pay with ABA Mobile or a KHQR-supported bank app. Credits are added after KHQRcc payment confirmation is verified.
                 </p>
               </div>
               <div className="grid gap-4">
@@ -407,13 +389,15 @@ export default function Home() {
           </p>
 
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-            {plans.map((plan) => (
-              <article
-                key={plan.name}
-                className={`bg-white border-4 border-primary p-6 flex flex-col justify-between shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] ${
-                  plan.highlighted ? "bg-primary-fixed" : ""
-                }`}
-              >
+            {plans.map((plan) => {
+              const audioEstimates = getAudioDurationEstimates(plan.tokenCount);
+              return (
+                <article
+                  key={plan.name}
+                  className={`bg-white border-4 border-primary p-6 flex flex-col justify-between shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] ${
+                    plan.highlighted ? "bg-primary-fixed" : ""
+                  }`}
+                >
                 <div>
                   <div className="flex justify-between items-start mb-2">
                     <h3 className="font-headline font-black text-xl uppercase tracking-tight">{plan.name}</h3>
@@ -433,8 +417,8 @@ export default function Home() {
 
                   <div className="border-2 border-primary bg-[#eee9e0] p-3 text-xs font-headline font-bold uppercase mb-4 text-primary">
                     <p className="font-black">Usage Estimate</p>
-                    <p className="mt-1">Normal: {formatDuration(Math.floor(plan.tokenCount / 1.5))}</p>
-                    <p>Clone: {formatDuration(Math.floor(plan.tokenCount / 2))}</p>
+                    <p className="mt-1">Standard voice: ~{audioEstimates.standard}</p>
+                    <p>Clone voice: ~{audioEstimates.clone}</p>
                   </div>
 
                   <PlanFeatureBlock planKey={plan.id as PlanKey} dark={false} />
@@ -450,8 +434,9 @@ export default function Home() {
                 >
                   {plan.cta}
                 </a>
-              </article>
-            ))}
+                </article>
+              );
+            })}
 
             {/* Business card */}
             <article className="bg-primary text-[#f5f0e8] border-4 border-primary p-6 flex flex-col justify-between shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">

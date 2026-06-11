@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { verifyBakongPayment } from "@/lib/bakong";
+import { checkKhqrccTransactionForOrder } from "@/lib/khqrcc";
 import { checkPaywayTransactionForOrder } from "@/lib/payway";
 import { readSessionFromCookie } from "@/lib/session";
 import { approvePaymentOrder, confirmPaymentOrderPaid, listUserPaymentOrders } from "@/lib/store";
@@ -22,7 +23,7 @@ export async function POST(
   }
 
   if (order.status === "approved") {
-    return NextResponse.json({ ok: true, status: "approved", message: "Payment confirmed. Tokens added.", order });
+    return NextResponse.json({ ok: true, status: "approved", message: "Payment confirmed. Credits added.", order });
   }
   if (order.status !== "pending") {
     const message =
@@ -71,10 +72,47 @@ export async function POST(
       ok: paid.ok,
       status: paid.ok ? "approved" : paid.reason === "ORDER_EXPIRED" ? "expired" : "failed",
       message: paid.ok
-        ? "Payment confirmed by PayWay. Tokens added."
+        ? "Payment confirmed by PayWay. Credits added."
         : paid.reason === "ORDER_EXPIRED"
           ? "This KHQR order expired. Create a new payment order."
           : "PayWay confirmed payment but credit failed.",
+      order: paid.order ?? order,
+    });
+  }
+
+  if (order.paymentProvider === "khqrcc") {
+    const verification = await checkKhqrccTransactionForOrder(order);
+    if (verification.status !== "paid") {
+      return NextResponse.json({
+        ok: true,
+        status: verification.status,
+        message: verification.message,
+        order,
+      });
+    }
+
+    const paid = await confirmPaymentOrderPaid({
+      orderId: order.id,
+      provider: "khqrcc",
+      providerTransactionId: verification.providerTransactionId,
+      providerReference: verification.providerReference,
+      providerApprovalCode: verification.providerApprovalCode,
+      providerStatusCode: verification.providerStatusCode,
+      providerStatus: verification.providerStatus,
+      providerAmount: verification.providerAmount,
+      providerCurrency: verification.providerCurrency,
+      providerPayload: verification.providerPayload,
+      paidAt: verification.paidAt,
+    });
+
+    return NextResponse.json({
+      ok: paid.ok,
+      status: paid.ok ? "approved" : paid.reason === "ORDER_EXPIRED" ? "expired" : "failed",
+      message: paid.ok
+        ? "Payment confirmed by KHQRcc. Credits added."
+        : paid.reason === "ORDER_EXPIRED"
+          ? "This KHQRcc order expired. Create a new payment order."
+          : "KHQRcc confirmed payment but credit failed.",
       order: paid.order ?? order,
     });
   }
@@ -101,7 +139,7 @@ export async function POST(
     ok: approved.ok,
     status: approved.ok ? "approved" : approved.reason === "ORDER_EXPIRED" ? "expired" : "failed",
     message: approved.ok
-      ? "Payment confirmed. Tokens added."
+      ? "Payment confirmed. Credits added."
       : approved.reason === "ORDER_EXPIRED"
         ? "This KHQR order expired. Create a new payment order."
         : "Payment confirmed but credit failed.",

@@ -297,7 +297,7 @@ export function PaymentsAdminClient({
                 <th className="px-3 py-2 font-semibold">Paid</th>
                 <th className="px-3 py-2 font-semibold">Proof</th>
                 <th className="px-3 py-2 font-semibold">Decision</th>
-                <th className="px-3 py-2 font-semibold">Note</th>
+                <th className="px-3 py-2 font-semibold">Origin</th>
                 <th className="px-3 py-2 font-semibold">Action</th>
               </tr>
             </thead>
@@ -398,8 +398,8 @@ export function PaymentsAdminClient({
                         "-"
                       )}
                     </td>
-                    <td className="max-w-[180px] truncate px-3 py-2 font-body text-[#5e6678]">
-                      {order.userNote || order.adminNote || "-"}
+                    <td className="max-w-[190px] px-3 py-2 font-body text-[#5e6678]">
+                      <OriginNote order={order} />
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-2">
@@ -480,6 +480,115 @@ function formatKhqrAmount(order: PaymentOrderWithUser): string {
 
 function isReportedPendingOrder(order: PaymentOrderWithUser): boolean {
   return order.status === "pending" && Boolean(order.proofImageDataUrl || order.providerStatus === "user_reported_paid");
+}
+
+function OriginNote({ order }: { order: PaymentOrderWithUser }) {
+  const report = getOriginReport(order);
+  if (!report) return <span>-</span>;
+
+  return (
+    <span
+      title={report.fullText}
+      className={`inline-flex max-w-full items-center rounded-none border px-2 py-1 text-[11px] font-headline font-bold uppercase tracking-wider ${report.className}`}
+    >
+      <span className="truncate">{report.label}</span>
+    </span>
+  );
+}
+
+function getOriginReport(order: PaymentOrderWithUser): { label: string; fullText: string; className: string } | null {
+  const adminNote = order.adminNote?.trim() ?? "";
+  const userNote = order.userNote?.trim() ?? "";
+  const fullText = userNote || adminNote || order.providerStatus || order.paymentProvider || "";
+  const lowerAdmin = adminNote.toLowerCase();
+
+  if (lowerAdmin.includes("cancelled by customer")) {
+    return {
+      label: "Customer cancelled",
+      fullText: adminNote,
+      className: "border-zinc-500 bg-zinc-100 text-zinc-700",
+    };
+  }
+
+  if (lowerAdmin.includes("expired before payment")) {
+    return {
+      label: "QR expired",
+      fullText: adminNote,
+      className: "border-amber-700 bg-amber-50 text-amber-900",
+    };
+  }
+
+  if (lowerAdmin.includes("auto approved by khqrcc")) {
+    return {
+      label: "KHQRcc verified",
+      fullText: adminNote,
+      className: "border-emerald-800 bg-[#def3e5] text-emerald-900",
+    };
+  }
+
+  if (lowerAdmin.includes("auto approved by bakong")) {
+    return {
+      label: "Bakong verified",
+      fullText: adminNote,
+      className: "border-emerald-800 bg-[#def3e5] text-emerald-900",
+    };
+  }
+
+  if (order.status === "rejected") {
+    return {
+      label: "Admin rejected",
+      fullText: adminNote || "Rejected by admin.",
+      className: "border-red-800 bg-red-50 text-red-800",
+    };
+  }
+
+  if (order.providerStatus === "user_reported_paid") {
+    return {
+      label: "User reported paid",
+      fullText: fullText || "User marked this payment as paid.",
+      className: "border-amber-700 bg-amber-50 text-amber-900",
+    };
+  }
+
+  if (order.proofImageDataUrl) {
+    return {
+      label: "Receipt uploaded",
+      fullText: fullText || "User uploaded a payment receipt.",
+      className: "border-amber-700 bg-amber-50 text-amber-900",
+    };
+  }
+
+  if (order.paymentProvider === "khqrcc") {
+    return {
+      label: "KHQRcc checkout",
+      fullText: fullText || "Order created from KHQRcc checkout.",
+      className: "border-primary/40 bg-white text-primary",
+    };
+  }
+
+  if (userNote) {
+    return {
+      label: trimOriginLabel(userNote),
+      fullText: userNote,
+      className: "border-primary/40 bg-white text-primary",
+    };
+  }
+
+  if (adminNote) {
+    return {
+      label: trimOriginLabel(adminNote),
+      fullText: adminNote,
+      className: "border-primary/40 bg-white text-primary",
+    };
+  }
+
+  return null;
+}
+
+function trimOriginLabel(value: string): string {
+  const clean = value.replace(/\s+/g, " ").trim();
+  if (clean.length <= 28) return clean;
+  return `${clean.slice(0, 25)}...`;
 }
 
 function DecisionModal({

@@ -106,7 +106,7 @@ export default function ApiDocsPage() {
               Developer Docs
             </h1>
             <p className="text-lg md:text-xl font-body font-medium text-on-surface-variant max-w-2xl leading-relaxed">
-              Integrate realistic Khmer Text-to-Speech (TTS) and voice cloning capabilities into your apps via standard RESTful endpoints.
+              Integrate realistic text-to-speech (TTS) and voice cloning capabilities into your apps via standard RESTful endpoints.
             </p>
           </div>
 
@@ -176,7 +176,7 @@ export default function ApiDocsPage() {
               </div>
               <ol className="grid gap-4 text-sm">
                 <Step number={1} text="Create an account or sign in." />
-                <Step number={2} text="Buy Starter or Creator from Billing. Free accounts cannot create or use API keys." />
+                <Step number={2} text="Buy Creator, Pro, or a paid token pack from Billing. Free accounts cannot create or use API keys." />
                 <Step number={3} text="Open Dashboard > API and create an API key. Daily and monthly limits are optional." />
                 <Step number={4} text="For dubbing tools, start with the multipart clone endpoint using sample, input, and voice_consent=true. Use batch clone with items for many segments." />
               </ol>
@@ -200,8 +200,8 @@ export default function ApiDocsPage() {
               <div className="grid gap-4 lg:grid-cols-3">
                 <DubbingSetupCard
                   title="1. First live test"
-                  body="Call /api/v1/audio/clone with multipart/form-data. Send sample as a file, input as Khmer text, and voice_consent=true."
-                  code={`sample=@reference.wav\ninput=Khmer line text\nvoice_consent=true`}
+                  body="Call /api/v1/audio/clone with multipart/form-data. Send sample as a file, input as speech text, and voice_consent=true."
+                  code={`sample=@reference.wav\ninput=your text here\nvoice_consent=true`}
                 />
                 <DubbingSetupCard
                   title="2. Production segments"
@@ -381,15 +381,14 @@ export default function ApiDocsPage() {
               <p className="text-[10px] font-headline font-black uppercase tracking-widest text-[#4a4a4a] mb-1">Payment readiness</p>
               <h2 className="text-3xl font-headline font-black uppercase text-primary mb-4">Payment Webhooks</h2>
               <p className="font-body text-sm leading-relaxed text-on-surface-variant mb-6">
-                Current checkout uses manual ABA PayWay QR receipt approval, so production PayWay webhooks
-                are not active yet. After ABA PayWay issues production credentials, use the URL below so the
+                Current checkout uses KHQRcc ABA Pay QR. Configure the callback URL below in KHQRcc so the
                 app can check signature, amount, currency, order status, and duplicate callbacks before
-                adding tokens automatically.
+                adding credits automatically.
               </p>
-              <CodeBlock title="Webhook URL" code={`${baseUrl}/api/webhooks/payway`} />
+              <CodeBlock title="Webhook URL" code={`${baseUrl}/api/webhooks/khqrcc`} />
               <div className="mt-6 grid gap-4 md:grid-cols-2">
-                <InfoCard title="Current mode" value="Manual PayWay QR + admin receipt approval" />
-                <InfoCard title="Production mode" value="Dynamic PayWay QR + signed callback verification" />
+                <InfoCard title="Current mode" value="KHQRcc ABA Pay QR checkout" />
+                <InfoCard title="Verification" value="Signed callback + transaction check" />
               </div>
               <div className="mt-6 flex flex-wrap gap-3 pt-6 border-t-2 border-outline">
                 <Link
