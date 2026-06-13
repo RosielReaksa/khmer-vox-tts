@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { runGenerationForUser, GenerationServiceError, countChars } from "@/lib/generation-service";
+import { BatchJobServiceError } from "@/lib/batch-service";
+import { createQueuedDashboardGeneration } from "@/lib/generation-queue";
 import { acquireUsageLimit, type UsageLimitResult } from "@/lib/rate-limit";
 import { getUsagePolicy } from "@/lib/server-usage-policy";
 import { readSessionFromCookie } from "@/lib/session";
 import { findUserVoiceById } from "@/lib/store";
 import {
   MAX_CLONE_SAMPLE_BYTES,
+  MAX_DASHBOARD_TTS_CHARS,
   MAX_MODEL_CHARS,
-  MAX_TEXT_CHARS,
   MAX_VOICE_CHARS,
 } from "@/lib/usage-policy";
 import { isVoiceCloneConsentAccepted } from "@/lib/voice-consent";
@@ -17,7 +18,7 @@ import { DEFAULT_CLONE_VOICE_INSTRUCTION } from "@/lib/voice-defaults";
 
 export const runtime = "nodejs";
 
-const textSchema = z.string().min(1).max(MAX_TEXT_CHARS);
+const textSchema = z.string().min(1).max(MAX_DASHBOARD_TTS_CHARS);
 const voiceSchema = z.string().min(1).max(MAX_VOICE_CHARS);
 const modelSchema = z.string().min(1).max(MAX_MODEL_CHARS);
 
@@ -40,7 +41,7 @@ export async function POST(request: Request) {
     const textParsed = textSchema.safeParse(typeof textValue === "string" ? textValue : "");
     if (!textParsed.success) {
       return NextResponse.json(
-        { error: `Invalid text input. Text max is ${MAX_TEXT_CHARS.toLocaleString()} characters.` },
+        { error: `Invalid text input. Text max is ${MAX_DASHBOARD_TTS_CHARS.toLocaleString()} characters.` },
         { status: 400 },
       );
     }
@@ -58,6 +59,7 @@ export async function POST(request: Request) {
     let sampleBytes: Uint8Array;
     let mimeType: string;
     let fileName: string;
+    let cloneConsentAccepted = false;
 
     if (!(sampleValue instanceof File) || sampleValue.size === 0) {
       // No file uploaded, check if voiceValue points to a saved user voice
@@ -70,6 +72,8 @@ export async function POST(request: Request) {
       sampleBytes = new Uint8Array(buffer);
       mimeType = savedVoice.mimeType;
       fileName = savedVoice.fileName;
+      // Saved voices captured consent when they were created.
+      cloneConsentAccepted = true;
     } else {
       if (sampleValue.size > MAX_CLONE_SAMPLE_BYTES) {
         return NextResponse.json(
@@ -86,40 +90,7 @@ export async function POST(request: Request) {
       sampleBytes = new Uint8Array(await sampleValue.arrayBuffer());
       mimeType = sampleValue.type || "audio/wav";
       fileName = sampleValue.name;
-    }
-
-    const textChars = countChars(textParsed.data);
-    const AUTO_QUEUE_THRESHOLD = 2000;
-    if (textChars >= AUTO_QUEUE_THRESHOLD) {
-      const { splitTextIntoChunks } = await import("@/lib/tts-provider");
-      const { createQueuedBatchJob, kickBatchWorker } = await import("@/lib/batch-service");
-
-      const chunks = splitTextIntoChunks(textParsed.data, 1000);
-      const lines = chunks.map((chunk) => ({ text: chunk }));
-
-      const { job } = await createQueuedBatchJob({
-        userId: session.userId,
-        source: "dashboard",
-        mode: "clone",
-        title: `Auto-segmented Clone (${textChars} chars)`,
-        lines,
-        voice: voiceParsed.data,
-        model,
-        cloneSample: {
-          bytes: sampleBytes,
-          mimeType,
-          fileName,
-        },
-        cloneConsentAccepted: true,
-      });
-
-      kickBatchWorker(job.id);
-
-      return NextResponse.json({
-        ok: true,
-        queued: true,
-        jobId: job.id,
-      });
+      cloneConsentAccepted = true;
     }
 
     const usageLimit = await acquireUsageLimit(
@@ -134,9 +105,8 @@ export async function POST(request: Request) {
     }
     limit = usageLimit;
 
-    const result = await runGenerationForUser({
+    const { job } = await createQueuedDashboardGeneration({
       userId: session.userId,
-      source: "dashboard",
       mode: "clone",
       text: textParsed.data,
       voice: voiceParsed.data,
@@ -146,22 +116,27 @@ export async function POST(request: Request) {
         mimeType: mimeType,
         fileName: fileName,
       },
+      cloneConsentAccepted,
     });
 
     return NextResponse.json({
       ok: true,
-      ...result,
+      queued: true,
+      jobId: job.id,
+      job: {
+        id: job.id,
+        status: job.status,
+        totalItems: job.totalItems,
+        creditsEstimated: job.creditsEstimated,
+      },
     }, {
+      status: 202,
       headers: limit.headers,
     });
   } catch (error) {
-    if (error instanceof GenerationServiceError) {
+    if (error instanceof BatchJobServiceError) {
       return NextResponse.json(
-        {
-          error: error.message,
-          code: error.code,
-          remainingTokens: error.remainingTokens,
-        },
+        { error: error.message, code: error.code, remainingTokens: error.remainingTokens },
         { status: error.status, headers: limit?.headers },
       );
     }

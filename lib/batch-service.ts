@@ -20,6 +20,7 @@ import {
   createBatchJobWebhookAttempt,
   findUserById,
   getBatchJobWithItems,
+  getStoreMode,
   recordWorkerHeartbeat,
   recoverStuckBatchJobs,
   getUserTokenBalance,
@@ -40,6 +41,7 @@ import type {
 } from "@/lib/types";
 import { MAX_TEXT_CHARS, type UsagePolicyName } from "@/lib/usage-policy";
 import { VOICE_CLONE_CONSENT_TEXT } from "@/lib/voice-consent";
+import { safeFetch } from "@/lib/ssrf-guard";
 
 const BATCH_RATE_LIMIT_WAIT_MS = 3_000;
 const BATCH_RATE_LIMIT_MAX_RETRIES = 10;
@@ -55,6 +57,7 @@ type BatchRateLimitAcquireResult =
     };
 
 export const MAX_BATCH_ITEMS = 100;
+export const MAX_DASHBOARD_BATCH_ITEMS = 160;
 export const MAX_BATCH_TOTAL_CHARS = 50_000;
 export const MAX_WEBHOOK_URL_CHARS = 2_048;
 export const MAX_EXTERNAL_ID_CHARS = 160;
@@ -264,9 +267,10 @@ async function validateBatchRequest(params: {
   if (lines.length === 0) {
     throw new BatchJobServiceError("At least one text line is required.", 400, "BATCH_EMPTY");
   }
-  if (lines.length > MAX_BATCH_ITEMS) {
+  const maxItems = params.source === "dashboard" ? MAX_DASHBOARD_BATCH_ITEMS : MAX_BATCH_ITEMS;
+  if (lines.length > maxItems) {
     throw new BatchJobServiceError(
-      `Batch max is ${MAX_BATCH_ITEMS.toLocaleString()} text lines.`,
+      `Batch max is ${maxItems.toLocaleString()} text lines.`,
       400,
       "BATCH_TOO_MANY_ITEMS",
     );
@@ -486,8 +490,29 @@ function retryBackoffMs(attemptCount: number): number {
   return Math.min(baseMs * Math.max(1, 2 ** Math.max(0, attemptCount - 1)), maxMs);
 }
 
+function batchItemConcurrency(): number {
+  const configured = Number(process.env.BATCH_ITEM_CONCURRENCY);
+  if (Number.isInteger(configured) && configured > 0) {
+    return configured;
+  }
+
+  // The file-backed local store serializes mutations through one JSON file.
+  // Concurrent item finalization can otherwise race and lose a generation
+  // record. Postgres production keeps parallel processing.
+  return getStoreMode() === "json" ? 1 : 3;
+}
+
 function nextRetryIso(attemptCount: number): string {
   return new Date(Date.now() + retryBackoffMs(attemptCount)).toISOString();
+}
+
+const inlineKickState = globalThis as typeof globalThis & {
+  __khmerVoxInlineBatchKicks?: Set<string>;
+};
+
+function activeInlineBatchKicks(): Set<string> {
+  inlineKickState.__khmerVoxInlineBatchKicks ??= new Set<string>();
+  return inlineKickState.__khmerVoxInlineBatchKicks;
 }
 
 function webhookSigningSecret(): string {
@@ -544,6 +569,10 @@ function publicBatchJobPayload(job: BatchJobRecord, items: BatchJobItemRecord[])
       completed_at: job.completedAt,
       status_url: urls.status_url,
       download_url: urls.download_url,
+      audio_url: urls.audio_url,
+      zip_url: urls.zip_url,
+      v2_status_url: urls.v2_status_url,
+      v2_audio_url: urls.v2_audio_url,
     },
     items: items.map((item) => ({
       id: item.externalId ?? String(item.itemIndex + 1),
@@ -560,7 +589,7 @@ function publicBatchJobPayload(job: BatchJobRecord, items: BatchJobItemRecord[])
       output_seconds: item.outputSeconds,
       credits_charged: item.creditsCharged,
       error: item.errorMessage,
-      has_audio: Boolean(item.audioBase64),
+      has_audio: Boolean(item.audioBase64 || item.audioObjectKey),
     })),
   };
 }
@@ -569,7 +598,7 @@ async function postJsonWithTimeout(url: string, body: string, headers: Record<st
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), BATCH_WEBHOOK_TIMEOUT_MS);
   try {
-    return await fetch(url, {
+    return await safeFetch(url, {
       method: "POST",
       headers,
       body,
@@ -824,8 +853,10 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
 
   let { job } = loaded;
   if (terminalBatchStatus(job.status)) {
+    const refreshed = await refreshBatchJobRollup(job.id);
+    const current = refreshed ? await getBatchJobWithItems(job.id) : loaded;
     await deliverBatchJobWebhookIfNeeded(job.id);
-    return loaded;
+    return current ?? loaded;
   }
   if (job.status === "queued") {
     const claimed = await claimQueuedBatchJob(job.id, activeWorkerId);
@@ -853,7 +884,7 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
   let isSuspended = false;
 
   const policyConcurrency = getUsagePolicy(batchRateLimitPolicyName(job.source, job.mode)).maxConcurrent;
-  const configuredConcurrency = Math.max(1, Number(process.env.BATCH_ITEM_CONCURRENCY || 3));
+  const configuredConcurrency = batchItemConcurrency();
   const maxConcurrentItems = Math.max(1, Math.min(configuredConcurrency, policyConcurrency));
   const queuedItems = loaded.items.filter((item) => item.status === "queued");
 
@@ -916,7 +947,9 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
             itemId: runningItem.id,
             status: "success",
             generationId: result.generationId,
-            audioBase64: result.audioBase64,
+            audioBase64: result.audioObjectKey ? null : result.audioBase64,
+            audioObjectKey: result.audioObjectKey,
+            audioObjectUrl: result.audioObjectUrl,
             contentType: result.contentType,
             outputSeconds: result.outputSeconds,
             creditsCharged: result.creditsCharged,
@@ -1042,8 +1075,16 @@ export async function processNextBatchJob(options?: { workerId?: string | null }
 export function kickBatchWorker(jobId: string): void {
   if (process.env.DISABLE_INLINE_JOB_WORKER === "true") return;
 
+  const activeKicks = activeInlineBatchKicks();
+  if (activeKicks.has(jobId)) return;
+  activeKicks.add(jobId);
+
   const maxRetries = 2;
   const activeWorkerId = workerId("inline-kick");
+
+  function releaseKick(): void {
+    activeKicks.delete(jobId);
+  }
 
   async function runWithRetry(attempt: number): Promise<void> {
     try {
@@ -1054,7 +1095,9 @@ export function kickBatchWorker(jobId: string): void {
         setTimeout(() => {
           void runWithRetry(0);
         }, delay);
+        return;
       }
+      releaseKick();
     } catch (error) {
       console.error(
         `[batch-worker] Failed to process batch job ${jobId} (attempt ${attempt + 1}/${maxRetries + 1})`,
@@ -1084,6 +1127,7 @@ export function kickBatchWorker(jobId: string): void {
             failError,
           );
         }
+        releaseKick();
       }
     }
   }

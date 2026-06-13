@@ -3,6 +3,7 @@ import "server-only";
 
 import { normalizeWebhookCallbackUrl } from "@/lib/batch-service";
 import { createWebhookTestEvent } from "@/lib/store";
+import { safeFetch } from "@/lib/ssrf-guard";
 import type { WebhookTestEventRecord, WebhookTestEventType } from "@/lib/types";
 
 const WEBHOOK_TEST_TIMEOUT_MS = 8_000;
@@ -94,7 +95,7 @@ async function postJsonWithTimeout(url: string, body: string, headers: Record<st
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), WEBHOOK_TEST_TIMEOUT_MS);
   try {
-    return await fetch(url, {
+    return await safeFetch(url, {
       method: "POST",
       headers,
       body,

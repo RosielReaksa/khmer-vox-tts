@@ -71,6 +71,11 @@ const EMPTY_STORE: DataStore = {
 };
 
 let mutationQueue: Promise<unknown> = Promise.resolve();
+let cachedStore: DataStore | null = null;
+let cachedStoreMtimeMs = -1;
+let cachedStoreSize = -1;
+let storeCacheVersion = 0;
+let pendingStoreRead: Promise<DataStore> | null = null;
 
 const STORE_LOCK_PATH = `${STORE_PATH}.lock`;
 const STORE_LOCK_STALE_MS = 30_000;
@@ -78,6 +83,14 @@ const STORE_LOCK_MAX_WAIT_MS = 10_000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function invalidateStoreReadCache(): void {
+  cachedStore = null;
+  cachedStoreMtimeMs = -1;
+  cachedStoreSize = -1;
+  pendingStoreRead = null;
+  storeCacheVersion += 1;
 }
 
 function errorCode(error: unknown): string | null {
@@ -167,26 +180,52 @@ async function ensureStoreFile(): Promise<void> {
 
 async function readStore(): Promise<DataStore> {
   await ensureStoreFile();
-  // writeStore replaces the file atomically (temp + rename), but reads are not
-  // lock-synchronized, so a concurrent writer (or a second dev process) can make
-  // a read catch a transient/partial state -> JSON.parse throws "Unterminated
-  // string". Because writes are atomic, retrying after a short delay reads a
-  // clean file. This prevents intermittent 500s on generate/poll.
-  let raw = "";
-  let lastError: unknown = null;
-  const maxAttempts = 5;
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    raw = await fs.readFile(/*turbopackIgnore: true*/ STORE_PATH, "utf8");
-    try {
-      return normalizeStore(JSON.parse(raw) as Partial<DataStore>);
-    } catch (error) {
-      lastError = error;
-      if (attempt < maxAttempts - 1) {
-        await delay(Math.min(200, 30 + attempt * 40));
+  const initialStat = await fs.stat(/*turbopackIgnore: true*/ STORE_PATH);
+  if (
+    cachedStore &&
+    cachedStoreMtimeMs === initialStat.mtimeMs &&
+    cachedStoreSize === initialStat.size
+  ) {
+    return cachedStore;
+  }
+
+  if (pendingStoreRead) {
+    return pendingStoreRead;
+  }
+
+  const cacheVersion = storeCacheVersion;
+  pendingStoreRead = (async () => {
+    // writeStore replaces the file atomically (temp + rename), but reads are not
+    // lock-synchronized, so retry if another local process replaces the file.
+    let raw = "";
+    let lastError: unknown = null;
+    const maxAttempts = 5;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      raw = await fs.readFile(/*turbopackIgnore: true*/ STORE_PATH, "utf8");
+      try {
+        const parsedStore = normalizeStore(JSON.parse(raw) as Partial<DataStore>);
+        if (cacheVersion === storeCacheVersion) {
+          const finalStat = await fs.stat(/*turbopackIgnore: true*/ STORE_PATH);
+          cachedStore = parsedStore;
+          cachedStoreMtimeMs = finalStat.mtimeMs;
+          cachedStoreSize = finalStat.size;
+        }
+        return parsedStore;
+      } catch (error) {
+        lastError = error;
+        if (attempt < maxAttempts - 1) {
+          await delay(Math.min(200, 30 + attempt * 40));
+        }
       }
     }
+    throw lastError ?? new Error("Failed to read local JSON store.");
+  })();
+
+  try {
+    return await pendingStoreRead;
+  } finally {
+    pendingStoreRead = null;
   }
-  throw lastError ?? new Error("Failed to read local JSON store.");
 }
 
 function normalizeStore(parsed: Partial<DataStore>): DataStore {
@@ -212,8 +251,10 @@ function normalizeStore(parsed: Partial<DataStore>): DataStore {
     generations: (parsed.generations ?? []).map((generation) => ({
       ...generation,
       audioBase64: generation.audioBase64 ?? null,
+      audioObjectKey: generation.audioObjectKey ?? null,
+      audioObjectUrl: generation.audioObjectUrl ?? null,
       contentType: generation.contentType ?? null,
-      hasAudio: Boolean(generation.audioBase64),
+      hasAudio: Boolean(generation.audioBase64 || generation.audioObjectKey),
     })),
     batchJobs: (parsed.batchJobs ?? []).map((job) => ({
       ...job,
@@ -244,6 +285,8 @@ function normalizeStore(parsed: Partial<DataStore>): DataStore {
       ...item,
       generationId: item.generationId ?? null,
       audioBase64: item.audioBase64 ?? null,
+      audioObjectKey: item.audioObjectKey ?? null,
+      audioObjectUrl: item.audioObjectUrl ?? null,
       contentType: item.contentType ?? null,
       externalId: item.externalId ?? null,
       speaker: item.speaker ?? null,
@@ -383,11 +426,16 @@ function normalizeStore(parsed: Partial<DataStore>): DataStore {
 async function writeStore(store: DataStore): Promise<void> {
   const tempPath = `${STORE_PATH}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await fs.writeFile(/*turbopackIgnore: true*/ tempPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+    await fs.writeFile(/*turbopackIgnore: true*/ tempPath, `${JSON.stringify(store)}\n`, "utf8");
     const maxAttempts = process.platform === "win32" ? 40 : 1;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       try {
         await fs.rename(/*turbopackIgnore: true*/ tempPath, /*turbopackIgnore: true*/ STORE_PATH);
+        const stat = await fs.stat(/*turbopackIgnore: true*/ STORE_PATH);
+        storeCacheVersion += 1;
+        cachedStore = store;
+        cachedStoreMtimeMs = stat.mtimeMs;
+        cachedStoreSize = stat.size;
         return;
       } catch (error) {
         if (!isRetryableStoreReplaceError(error) || attempt === maxAttempts - 1) {
@@ -397,6 +445,7 @@ async function writeStore(store: DataStore): Promise<void> {
       }
     }
   } catch (error) {
+    invalidateStoreReadCache();
     await fs.rm(/*turbopackIgnore: true*/ tempPath, { force: true }).catch(() => undefined);
     throw error;
   }
@@ -406,6 +455,10 @@ async function updateStore<T>(mutator: (store: DataStore) => T | Promise<T>): Pr
   const run = mutationQueue.then(async () => {
     const releaseLock = await acquireStoreWriteLock();
     try {
+      // A local dev server can coexist with smoke scripts or older Next worker
+      // processes. Always reload after taking the lock so a write never starts
+      // from a stale cached snapshot and drops another process's changes.
+      invalidateStoreReadCache();
       const store = await readStore();
       const result = await mutator(store);
       await writeStore(store);
@@ -712,8 +765,10 @@ export async function createGenerationRecord(
       createdAt: input.createdAt ?? new Date().toISOString(),
       ...input,
       audioBase64: input.audioBase64 ?? null,
+      audioObjectKey: input.audioObjectKey ?? null,
+      audioObjectUrl: input.audioObjectUrl ?? null,
       contentType: input.contentType ?? null,
-      hasAudio: Boolean(input.audioBase64),
+      hasAudio: Boolean(input.audioBase64 || input.audioObjectKey),
     };
     store.generations.push(record);
     return record;
@@ -730,6 +785,8 @@ export async function updateGenerationRecord(input: {
   latencyMs?: number;
   errorMessage?: string | null;
   audioBase64?: string | null;
+  audioObjectKey?: string | null;
+  audioObjectUrl?: string | null;
   contentType?: string | null;
 }): Promise<GenerationRecord | null> {
   return updateStore((store) => {
@@ -745,8 +802,10 @@ export async function updateGenerationRecord(input: {
     if (input.latencyMs !== undefined) record.latencyMs = input.latencyMs;
     if (input.errorMessage !== undefined) record.errorMessage = input.errorMessage;
     if (input.audioBase64 !== undefined) record.audioBase64 = input.audioBase64;
+    if (input.audioObjectKey !== undefined) record.audioObjectKey = input.audioObjectKey;
+    if (input.audioObjectUrl !== undefined) record.audioObjectUrl = input.audioObjectUrl;
     if (input.contentType !== undefined) record.contentType = input.contentType;
-    record.hasAudio = Boolean(record.audioBase64);
+    record.hasAudio = Boolean(record.audioBase64 || record.audioObjectKey);
 
     return record;
   });
@@ -947,7 +1006,11 @@ function rollupBatchJob(store: DataStore, jobId: string): BatchJobRecord | null 
     job.status = failedItems === 0 ? "completed" : completedItems > 0 ? "partial" : "needs_review";
     job.nextRetryAt = null;
     job.completedAt ??= now;
-    if (job.status === "partial" || job.status === "needs_review") {
+    if (job.status === "completed") {
+      job.errorMessage = null;
+      job.deadLetterReason = null;
+      job.lastWorkerError = null;
+    } else if (job.status === "partial" || job.status === "needs_review") {
       job.deadLetterReason ??= completedItems > 0
         ? "Some batch items exhausted their retry limit."
         : "All batch items exhausted their retry limit.";
@@ -1069,6 +1132,8 @@ export async function createBatchJob(input: {
       status: "queued",
       generationId: null,
       audioBase64: null,
+      audioObjectKey: null,
+      audioObjectUrl: null,
       contentType: null,
       outputSeconds: 0,
       creditsEstimated: line.creditsEstimated,
@@ -1211,6 +1276,8 @@ export async function updateBatchJobItem(input: {
   status: BatchJobItemRecord["status"];
   generationId?: string | null;
   audioBase64?: string | null;
+  audioObjectKey?: string | null;
+  audioObjectUrl?: string | null;
   contentType?: string | null;
   outputSeconds?: number;
   creditsCharged?: number;
@@ -1227,6 +1294,8 @@ export async function updateBatchJobItem(input: {
     item.updatedAt = new Date().toISOString();
     if ("generationId" in input) item.generationId = input.generationId ?? null;
     if ("audioBase64" in input) item.audioBase64 = input.audioBase64 ?? null;
+    if ("audioObjectKey" in input) item.audioObjectKey = input.audioObjectKey ?? null;
+    if ("audioObjectUrl" in input) item.audioObjectUrl = input.audioObjectUrl ?? null;
     if ("contentType" in input) item.contentType = input.contentType ?? null;
     if ("outputSeconds" in input) item.outputSeconds = Math.max(0, Math.round(input.outputSeconds ?? 0));
     if ("creditsCharged" in input) item.creditsCharged = Math.max(0, Math.round(input.creditsCharged ?? 0));
@@ -1488,6 +1557,97 @@ export async function purgeQueuedBatchJobs(adminUserId: string, reason: string):
     }
 
     return activeJobs.length;
+  });
+}
+
+export type AudioStorageCleanupResult = {
+  cutoffAt: string;
+  retentionDays: number;
+  dryRun: boolean;
+  limit: number;
+  batchItemsCleared: number;
+  generationsCleared: number;
+  cloneSamplesCleared: number;
+  estimatedBytesReleased: number;
+};
+
+function base64StorageBytes(value: string | null | undefined): number {
+  if (!value) return 0;
+  return Math.max(0, Math.floor((value.length * 3) / 4));
+}
+
+function olderThanCutoff(value: string | null | undefined, cutoffMs: number): boolean {
+  if (!value) return false;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) && time < cutoffMs;
+}
+
+export async function cleanupOldAudioStorage(input?: {
+  retentionDays?: number;
+  dryRun?: boolean;
+  limit?: number;
+}): Promise<AudioStorageCleanupResult> {
+  const retentionDays = Math.max(1, Math.min(Math.round(input?.retentionDays ?? 30), 3650));
+  const limit = Math.max(1, Math.min(Math.round(input?.limit ?? 500), 5000));
+  const dryRun = Boolean(input?.dryRun);
+  const cutoffAt = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+  const cutoffMs = new Date(cutoffAt).getTime();
+
+  return updateStore((store) => {
+    const terminalJobIds = new Set(
+      store.batchJobs
+        .filter((job) =>
+          (job.status === "completed" || job.status === "partial" || job.status === "failed" || job.status === "needs_review") &&
+          olderThanCutoff(job.completedAt ?? job.updatedAt ?? job.createdAt, cutoffMs),
+        )
+        .map((job) => job.id),
+    );
+
+    const batchItems = store.batchJobItems
+      .filter((item) => terminalJobIds.has(item.jobId) && Boolean(item.audioBase64))
+      .slice(0, limit);
+    const generations = store.generations
+      .filter((generation) => generation.status === "success" && Boolean(generation.audioBase64) && olderThanCutoff(generation.createdAt, cutoffMs))
+      .slice(0, limit);
+    const cloneJobs = store.batchJobs
+      .filter((job) => terminalJobIds.has(job.id) && Boolean(job.cloneSampleBase64))
+      .slice(0, limit);
+
+    const estimatedBytesReleased =
+      batchItems.reduce((sum, item) => sum + base64StorageBytes(item.audioBase64), 0) +
+      generations.reduce((sum, generation) => sum + base64StorageBytes(generation.audioBase64), 0) +
+      cloneJobs.reduce((sum, job) => sum + base64StorageBytes(job.cloneSampleBase64), 0);
+
+    if (!dryRun) {
+      const now = new Date().toISOString();
+      for (const item of batchItems) {
+        item.audioBase64 = null;
+        item.contentType = null;
+        item.updatedAt = now;
+      }
+      for (const generation of generations) {
+        generation.audioBase64 = null;
+        generation.contentType = null;
+        generation.hasAudio = Boolean(generation.audioObjectKey);
+      }
+      for (const job of cloneJobs) {
+        job.cloneSampleBase64 = null;
+        job.cloneSampleMimeType = null;
+        job.cloneSampleFileName = null;
+        job.updatedAt = now;
+      }
+    }
+
+    return {
+      cutoffAt,
+      retentionDays,
+      dryRun,
+      limit,
+      batchItemsCleared: batchItems.length,
+      generationsCleared: generations.length,
+      cloneSamplesCleared: cloneJobs.length,
+      estimatedBytesReleased,
+    };
   });
 }
 

@@ -3,6 +3,7 @@ import "server-only";
 import { spawn } from "child_process";
 
 import { PUBLIC_AUDIO_CONTENT_TYPE, PUBLIC_AUDIO_OUTPUT_FORMAT } from "@/lib/audio-api";
+import { hasSpeakableText } from "@/lib/speech-text-sanitizer";
 import type { GenerationMode } from "@/lib/types";
 import { DEFAULT_CLONE_VOICE_INSTRUCTION } from "@/lib/voice-defaults";
 import { concatMp3Buffers } from "./audio-merge";
@@ -62,7 +63,10 @@ function readRequiredUpstreamUrl(): string {
 type AudioResponseFormat = typeof PUBLIC_AUDIO_OUTPUT_FORMAT | "wav" | "ogg" | "webm";
 
 const DEFAULT_REFERENCE_AUDIO_FILTER = "highpass=f=70,lowpass=f=7600,loudnorm=I=-23:TP=-3:LRA=11";
-const DEFAULT_PUBLIC_AUDIO_FILTER = "highpass=f=70,lowpass=f=13500,loudnorm=I=-18:TP=-2.5:LRA=9";
+const DEFAULT_GENERATED_CHUNK_SILENCE_FILTER =
+  "silenceremove=start_periods=1:start_duration=0.10:start_threshold=-45dB:start_silence=0.15:stop_periods=-1:stop_duration=1.25:stop_threshold=-45dB:stop_silence=0.25";
+const DEFAULT_GENERATED_FINAL_SILENCE_FILTER =
+  "silenceremove=start_periods=1:start_duration=0.10:start_threshold=-45dB:start_silence=0.15:stop_periods=-1:stop_duration=1.25:stop_threshold=-45dB:stop_silence=0.25";
 
 function readAudioResponseFormat(): AudioResponseFormat {
   const value = (
@@ -86,7 +90,13 @@ function audioFilterArgs(filter: string): string[] {
 function readPublicMp3Bitrate(): string {
   const value = process.env.TTS_PUBLIC_MP3_BITRATE?.trim().toLowerCase();
   if (value && /^\d{2,3}k$/.test(value)) return value;
-  return "96k";
+  // 96k mono was audibly compressed for a paid product; 160k is near-transparent
+  // for 24 kHz mono speech and is the max MPEG-2 bitrate at that sample rate.
+  return "160k";
+}
+
+function readCanonicalGeneratedSampleRate(): number {
+  return Math.round(readNumericEnv("TTS_CANONICAL_SAMPLE_RATE", 24000, 8000, 48000));
 }
 
 function contentTypeForResponseFormat(format: AudioResponseFormat): string {
@@ -211,12 +221,67 @@ function normalizeCloneVoiceDescription(voice: string): string {
   return trimmed;
 }
 
+function isPresetReferenceSample(sample: CloneSample | undefined | null): boolean {
+  if (!sample?.fileName) return false;
+  return /^reference_(male|female)\.wav$/i.test(sample.fileName.trim());
+}
+
 function readNumericEnv(name: string, fallback: number, min: number, max: number): number {
   const value = process.env[name]?.trim();
   if (!value) return fallback;
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));
+}
+
+function readIntegerEnv(name: string, fallback: number, min: number, max: number): number {
+  return Math.round(readNumericEnv(name, fallback, min, max));
+}
+
+function readBooleanEnv(name: string, fallback: boolean): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (!value) return fallback;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return fallback;
+}
+
+function estimatedCharsPerSecond(mode: GenerationMode): number {
+  return mode === "clone" ? 13 : 20;
+}
+
+function upstreamChunkChars(mode: GenerationMode): number {
+  const targetSeconds = readIntegerEnv("TTS_UPSTREAM_CHUNK_TARGET_SECONDS", 60, 15, 120);
+  const fallback = Math.round(estimatedCharsPerSecond(mode) * targetSeconds);
+  const configured = Number(process.env.TTS_UPSTREAM_CHUNK_CHARS);
+  if (Number.isInteger(configured) && configured >= 600) {
+    return Math.min(5000, configured);
+  }
+  return fallback;
+}
+
+function fallbackChunkChars(): number {
+  return readIntegerEnv("TTS_NEAR_SILENCE_FALLBACK_CHARS", 120, 60, 300);
+}
+
+function minimumFallbackChunkChars(): number {
+  const maxFallback = fallbackChunkChars();
+  return readIntegerEnv("TTS_NEAR_SILENCE_MIN_FALLBACK_CHARS", 24, 12, Math.max(12, maxFallback - 1));
+}
+
+function nextFallbackSplitChars(inputChars: number): number | null {
+  const maxFallback = fallbackChunkChars();
+  const minFallback = minimumFallbackChunkChars();
+
+  if (inputChars <= minFallback) {
+    return null;
+  }
+  if (inputChars > maxFallback) {
+    return maxFallback;
+  }
+
+  const halfSize = Math.max(minFallback, Math.ceil(inputChars / 2));
+  return halfSize < inputChars ? halfSize : null;
 }
 
 function estimateMaxGenerateLength(text: string, mode: GenerationMode): number {
@@ -276,6 +341,39 @@ function looksLikeMp3(bytes: Uint8Array): boolean {
   return buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0;
 }
 
+// Detects an empty / header-only WAV: a valid RIFF/WAVE container whose `data`
+// chunk carries no audio samples (e.g. the ~78-byte "RIFF....WAVEfmt ...LIST...
+// data[ffffffff]" the upstream sometimes returns when a generation produced no
+// audio). This is an upstream blip, not a format problem, so it should be
+// surfaced as a retryable "no audio" error rather than the misleading
+// "format not supported" message.
+function isEmptyOrHeaderOnlyWav(bytes: Uint8Array): boolean {
+  if (!looksLikeWav(bytes)) return false;
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 12;
+  while (offset + 8 <= buffer.length) {
+    const chunkId = buffer.toString("ascii", offset, offset + 4);
+    const declaredSize = buffer.readUInt32LE(offset + 4);
+    const chunkDataOffset = offset + 8;
+    if (chunkId === "data") {
+      const remaining = buffer.length - chunkDataOffset;
+      // 0xFFFFFFFF (or any value past the buffer) means "rest of buffer"; the
+      // real payload is `remaining`. Fewer than 2 bytes = no PCM-16 samples.
+      const actual = declaredSize > remaining ? remaining : declaredSize;
+      return actual < 2;
+    }
+    if (chunkDataOffset + declaredSize > buffer.length) break;
+    offset = chunkDataOffset + declaredSize + (declaredSize % 2);
+  }
+  // No data chunk at all → also empty.
+  return true;
+}
+
+function upstreamEmptyAudioMessage(): string {
+  return "Upstream returned no audio for this segment. Please try again.";
+}
+
+
 type Pcm16WavInfo = {
   channels: 1 | 2;
   sampleRate: number;
@@ -283,6 +381,26 @@ type Pcm16WavInfo = {
   dataOffset: number;
   dataSize: number;
 };
+
+const WAV_FORMAT_PCM = 0x0001;
+const WAV_FORMAT_EXTENSIBLE = 0xfffe;
+const WAV_EXTENSIBLE_PCM_SUBFORMAT = "0100000000001000800000aa00389b71";
+
+function isPcm16WavFormat(params: {
+  audioFormat: number;
+  bitsPerSample: number;
+  fmtChunk: Buffer | null;
+}): boolean {
+  if (params.bitsPerSample !== 16) return false;
+  if (params.audioFormat === WAV_FORMAT_PCM) return true;
+  if (params.audioFormat !== WAV_FORMAT_EXTENSIBLE || !params.fmtChunk || params.fmtChunk.length < 40) {
+    return false;
+  }
+
+  // WAVE_FORMAT_EXTENSIBLE stores the real codec in a 16-byte SubFormat GUID
+  // at byte 24 of the fmt chunk. FFmpeg may emit this wrapper even for PCM.
+  return params.fmtChunk.subarray(24, 40).toString("hex").toLowerCase() === WAV_EXTENSIBLE_PCM_SUBFORMAT;
+}
 
 function readPcm16Wav(bytes: Uint8Array): Pcm16WavInfo {
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -295,6 +413,7 @@ function readPcm16Wav(bytes: Uint8Array): Pcm16WavInfo {
   let channels = 0;
   let sampleRate = 0;
   let bitsPerSample = 0;
+  let fmtChunk: Buffer | null = null;
   let dataOffset = 0;
   let dataSize = 0;
 
@@ -302,22 +421,37 @@ function readPcm16Wav(bytes: Uint8Array): Pcm16WavInfo {
     const chunkId = buffer.toString("ascii", offset, offset + 4);
     const chunkSize = buffer.readUInt32LE(offset + 4);
     const chunkDataOffset = offset + 8;
-    if (chunkDataOffset + chunkSize > buffer.length) break;
 
     if (chunkId === "fmt " && chunkSize >= 16) {
       audioFormat = buffer.readUInt16LE(chunkDataOffset);
       channels = buffer.readUInt16LE(chunkDataOffset + 2);
       sampleRate = buffer.readUInt32LE(chunkDataOffset + 4);
       bitsPerSample = buffer.readUInt16LE(chunkDataOffset + 14);
+      fmtChunk = buffer.subarray(chunkDataOffset, Math.min(buffer.length, chunkDataOffset + chunkSize));
     } else if (chunkId === "data") {
       dataOffset = chunkDataOffset;
-      dataSize = chunkSize;
+      // When FFmpeg streams WAV to a non-seekable pipe it cannot backfill the
+      // data chunk size and writes a placeholder (0xFFFFFFFF) or a value that
+      // overruns the actual buffer. In that case the real payload is simply the
+      // rest of the buffer. Clamp instead of trusting the declared size, which
+      // otherwise made the loop break and report an unsupported format.
+      const remaining = buffer.length - chunkDataOffset;
+      dataSize = chunkSize > remaining ? remaining : chunkSize;
+      // data is the last meaningful chunk for our purposes; stop scanning so a
+      // clamped size doesn't get advanced past the buffer.
+      break;
     }
 
+    if (chunkDataOffset + chunkSize > buffer.length) break;
     offset = chunkDataOffset + chunkSize + (chunkSize % 2);
   }
 
-  if (audioFormat !== 1 || bitsPerSample !== 16 || (channels !== 1 && channels !== 2) || sampleRate <= 0 || dataSize <= 0) {
+  if (
+    !isPcm16WavFormat({ audioFormat, bitsPerSample, fmtChunk }) ||
+    (channels !== 1 && channels !== 2) ||
+    sampleRate <= 0 ||
+    dataSize <= 0
+  ) {
     throw new TtsProviderError("Upstream WAV format is not supported for MP3 conversion.", 502);
   }
 
@@ -373,9 +507,205 @@ async function runFfmpeg(args: string[], input?: Uint8Array): Promise<Uint8Array
   });
 }
 
+async function runFfmpegCollectStderr(args: string[], input?: Uint8Array): Promise<string> {
+  const executable = resolveFfmpegExecutable();
+
+  return await new Promise<string>((resolve, reject) => {
+    const child = spawn(executable, args, { windowsHide: true });
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", () => {});
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr.push(chunk);
+    });
+    child.on("error", (error) => {
+      reject(new TtsProviderError(`FFmpeg analysis could not start: ${error.message}`, 502));
+    });
+    child.on("close", (code) => {
+      const text = Buffer.concat(stderr).toString("utf8");
+      if (code === 0) {
+        resolve(text);
+        return;
+      }
+      reject(new TtsProviderError(text.trim().slice(0, 260) || `FFmpeg analysis failed with exit code ${code}.`, 502));
+    });
+    if (input) {
+      child.stdin.end(Buffer.from(input));
+    } else {
+      child.stdin.end();
+    }
+  });
+}
+
+// Caps over-long pauses in the delivered audio. VoxCPM2 frequently inserts
+// 1.5-2s dead-air gaps at spaces/punctuation in long text, which sounds like
+// choppy "cut cut" speech. We decode to PCM, find silent runs longer than
+// TTS_OUTPUT_MAX_PAUSE_SECONDS, and shorten each to TTS_OUTPUT_KEEP_PAUSE_SECONDS
+// (deterministic, unlike ffmpeg silenceremove's stop_silence which leaves
+// inconsistent residual gaps). Shorter natural pauses are untouched. Silence
+// only: speech samples are never altered. Runs before loudness normalization.
+// Disabled with TTS_OUTPUT_PAUSE_CAP=false.
+async function capLongPauses(bytes: Uint8Array): Promise<Uint8Array> {
+  if (!readBooleanEnv("TTS_OUTPUT_PAUSE_CAP", true)) {
+    return bytes;
+  }
+  const maxPause = readNumericEnv("TTS_OUTPUT_MAX_PAUSE_SECONDS", 0.7, 0.3, 3);
+  const keepPause = Math.min(
+    maxPause,
+    readNumericEnv("TTS_OUTPUT_KEEP_PAUSE_SECONDS", 0.4, 0.1, 2),
+  );
+  const thresholdDb = readNumericEnv("TTS_OUTPUT_PAUSE_THRESHOLD_DB", -45, -70, -20);
+
+  try {
+    const sampleRate = readCanonicalGeneratedSampleRate();
+    // Decode whatever we merged (MP3) to mono PCM16 so pause handling is exact.
+    const pcmBytes = await runFfmpeg(
+      [
+        "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+        "-map", "0:a:0", "-vn", "-ac", "1", "-ar", String(sampleRate),
+        "-codec:a", "pcm_s16le", "-sample_fmt", "s16", "-f", "s16le", "pipe:1",
+      ],
+      bytes,
+    );
+    const pcm = Buffer.from(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength);
+    const totalSamples = Math.floor(pcm.length / 2);
+    if (totalSamples === 0) return bytes;
+
+    const threshold = dbToAmplitude(thresholdDb);
+    const maxPauseSamples = Math.round(maxPause * sampleRate);
+    const keepPauseSamples = Math.round(keepPause * sampleRate);
+    // Detect quiet runs on a small window so we don't chop mid-syllable.
+    const win = Math.max(1, Math.round(sampleRate * 0.02)); // 20ms
+
+    const keptRanges: Array<[number, number]> = [];
+    let runStart = -1; // start sample of current quiet run
+    let cursor = 0; // start of the not-yet-emitted speech region
+
+    function windowIsQuiet(start: number): boolean {
+      const end = Math.min(totalSamples, start + win);
+      let sum = 0;
+      let n = 0;
+      for (let i = start; i < end; i++) {
+        const v = pcm.readInt16LE(i * 2);
+        sum += v * v;
+        n++;
+      }
+      return n > 0 && Math.sqrt(sum / n) < threshold;
+    }
+
+    for (let s = 0; s < totalSamples; s += win) {
+      if (windowIsQuiet(s)) {
+        if (runStart < 0) runStart = s;
+      } else if (runStart >= 0) {
+        const runEnd = s; // exclusive
+        if (runEnd - runStart > maxPauseSamples) {
+          // Emit speech up to the quiet run plus only keepPause of the silence.
+          keptRanges.push([cursor, runStart + keepPauseSamples]);
+          cursor = runEnd;
+        }
+        runStart = -1;
+      }
+    }
+    // Trailing quiet run (e.g. long tail) gets capped too.
+    if (runStart >= 0 && totalSamples - runStart > maxPauseSamples) {
+      keptRanges.push([cursor, runStart + keepPauseSamples]);
+      cursor = totalSamples;
+    }
+    keptRanges.push([cursor, totalSamples]);
+
+    // Nothing to trim: return original to avoid a needless re-encode.
+    const keptSamples = keptRanges.reduce((acc, [a, b]) => acc + Math.max(0, b - a), 0);
+    if (keptSamples >= totalSamples) {
+      return bytes;
+    }
+
+    const out = Buffer.alloc(keptSamples * 2);
+    let offset = 0;
+    for (const [a, b] of keptRanges) {
+      const start = Math.max(0, a) * 2;
+      const end = Math.min(totalSamples, b) * 2;
+      if (end > start) {
+        pcm.copy(out, offset, start, end);
+        offset += end - start;
+      }
+    }
+
+    const wav = createPcm16Wav(out, 1, sampleRate);
+    const encoded = await encodeWavToMp3(wav);
+    return encoded.bytes.byteLength > 0 ? encoded.bytes : bytes;
+  } catch {
+    // Pause capping is a finishing touch; never fail delivery over it.
+    return bytes;
+  }
+}
+
+// Final whole-file loudness normalization for delivered audio. This is the one
+// place we intentionally raise/even out volume: VoxCPM2 output is naturally
+// quiet (~-29 LUFS) and can fade within a long passage, so we normalize the
+// fully merged audio to a consistent target with a true-peak limiter. It is
+// volume only (no EQ, no tone shaping) and uses two passes so the gain is
+// applied cleanly without pumping. Disabled with TTS_OUTPUT_LOUDNORM=false.
+async function normalizeOutputLoudness(bytes: Uint8Array): Promise<Uint8Array> {
+  if (!readBooleanEnv("TTS_OUTPUT_LOUDNORM", true)) {
+    return bytes;
+  }
+  const targetI = readNumericEnv("TTS_OUTPUT_LOUDNORM_I", -16, -36, -8);
+  const targetTp = readNumericEnv("TTS_OUTPUT_LOUDNORM_TP", -1.5, -9, -0.5);
+  const targetLra = readNumericEnv("TTS_OUTPUT_LOUDNORM_LRA", 11, 1, 20);
+  const base = `loudnorm=I=${targetI}:TP=${targetTp}:LRA=${targetLra}`;
+
+  try {
+    // Pass 1: measure the merged file's real loudness.
+    const stderr = await runFfmpegCollectStderr(
+      ["-hide_banner", "-nostdin", "-i", "pipe:0", "-af", `${base}:print_format=json`, "-f", "null", "-"],
+      bytes,
+    );
+    const jsonMatch = stderr.match(/\{[^{}]*"input_i"[^{}]*\}/);
+    if (!jsonMatch) return bytes;
+    const measured = JSON.parse(jsonMatch[0]) as Record<string, string>;
+    const keys = ["input_i", "input_tp", "input_lra", "input_thresh", "target_offset"];
+    if (!keys.every((k) => typeof measured[k] === "string" && measured[k].length > 0)) {
+      return bytes;
+    }
+
+    // Pass 2: apply linear gain from the measured values, with the true-peak
+    // limiter preventing clipping. No EQ is applied at any point.
+    const applyFilter =
+      `${base}` +
+      `:measured_I=${measured.input_i}` +
+      `:measured_TP=${measured.input_tp}` +
+      `:measured_LRA=${measured.input_lra}` +
+      `:measured_thresh=${measured.input_thresh}` +
+      `:offset=${measured.target_offset}` +
+      `:linear=true`;
+    const output = await runFfmpeg(
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-af",
+        applyFilter,
+        "-codec:a",
+        "libmp3lame",
+        "-b:a",
+        readPublicMp3Bitrate(),
+        "-f",
+        "mp3",
+        "pipe:1",
+      ],
+      bytes,
+    );
+    return output.byteLength > 0 ? output : bytes;
+  } catch {
+    // Loudness normalization is a finishing touch; never fail delivery over it.
+    return bytes;
+  }
+}
+
 async function encodeWavToMp3(bytes: Uint8Array): Promise<{ bytes: Uint8Array; durationSeconds: number | null }> {
   const wav = readPcm16Wav(bytes);
-  const publicFilter = readAudioFilter("TTS_PUBLIC_AUDIO_FILTER", DEFAULT_PUBLIC_AUDIO_FILTER);
+
   const output = await runFfmpeg(
     [
       "-hide_banner",
@@ -383,7 +713,6 @@ async function encodeWavToMp3(bytes: Uint8Array): Promise<{ bytes: Uint8Array; d
       "error",
       "-i",
       "pipe:0",
-      ...audioFilterArgs(publicFilter),
       "-codec:a",
       "libmp3lame",
       "-b:a",
@@ -400,85 +729,217 @@ async function encodeWavToMp3(bytes: Uint8Array): Promise<{ bytes: Uint8Array; d
   return { bytes: output, durationSeconds: wav.durationSeconds };
 }
 
-async function encodeMp3ToPublicMp3(
-  bytes: Uint8Array,
-  durationSeconds: number | null,
-): Promise<{ bytes: Uint8Array; durationSeconds: number | null }> {
-  const publicFilter = readAudioFilter("TTS_PUBLIC_AUDIO_FILTER", DEFAULT_PUBLIC_AUDIO_FILTER);
-  if (!publicFilter) {
-    return { bytes, durationSeconds };
-  }
+type WavPcm16Stats = {
+  rms: number;
+  peak: number;
+  durationSeconds: number | null;
+  rmsDb: number;
+  peakDb: number;
+  lowWindowRatio: number;
+  longestLowSeconds: number;
+  trailingLowSeconds: number;
+  highZeroCrossingWindowRatio: number;
+  longestHighZeroCrossingSeconds: number;
+  maximumZeroCrossingRate: number;
+  steadyTonalWindowRatio: number;
+  longestSteadyTonalSeconds: number;
+};
 
-  const output = await runFfmpeg(
-    [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-i",
-      "pipe:0",
-      ...audioFilterArgs(publicFilter),
-      "-codec:a",
-      "libmp3lame",
-      "-b:a",
-      readPublicMp3Bitrate(),
-      "-f",
-      "mp3",
-      "pipe:1",
-    ],
-    bytes,
-  );
-  if (output.byteLength <= 0) {
-    throw new TtsProviderError("MP3 mastering produced empty audio.", 502);
-  }
-  return { bytes: output, durationSeconds };
+function amplitudeToDb(value: number): number {
+  if (value <= 0) return Number.NEGATIVE_INFINITY;
+  return 20 * Math.log10(value / 32768);
 }
 
-function getWavPcm16Stats(bytes: Uint8Array): { rms: number; peak: number } | null {
-  if (bytes.byteLength < 44) return null;
-  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
+function dbToAmplitude(db: number): number {
+  return 32768 * Math.pow(10, db / 20);
+}
+
+function getSteadyTonalStats(
+  windowRmsValues: number[],
+  windowZeroCrossingRates: number[],
+  windowSeconds: number,
+): { ratio: number; longestSeconds: number } {
+  if (windowRmsValues.length === 0 || windowRmsValues.length !== windowZeroCrossingRates.length) {
+    return { ratio: 0, longestSeconds: 0 };
+  }
+
+  const groupSeconds = readNumericEnv("TTS_AUDIO_TONAL_GROUP_SECONDS", 1, 0.5, 3);
+  const groupWindows = Math.max(2, Math.round(groupSeconds / Math.max(0.01, windowSeconds)));
+  if (windowRmsValues.length < groupWindows) {
+    return { ratio: 0, longestSeconds: 0 };
+  }
+
+  const minRms = dbToAmplitude(readNumericEnv("TTS_AUDIO_TONAL_MIN_DB", -22, -40, -8));
+  const maxEnvelopeCv = readNumericEnv("TTS_AUDIO_TONAL_MAX_ENVELOPE_CV", 0.18, 0.03, 1);
+  const minAverageZcr = readNumericEnv("TTS_AUDIO_TONAL_MIN_AVG_ZCR", 0.07, 0.01, 0.4);
+  const minPeakZcr = readNumericEnv("TTS_AUDIO_TONAL_MIN_PEAK_ZCR", 0.10, 0.02, 0.6);
+
+  let tonalGroups = 0;
+  let totalGroups = 0;
+  let currentTonalGroups = 0;
+  let longestTonalGroups = 0;
+
+  for (let index = 0; index + groupWindows <= windowRmsValues.length; index++) {
+    const rmsGroup = windowRmsValues.slice(index, index + groupWindows);
+    const zcrGroup = windowZeroCrossingRates.slice(index, index + groupWindows);
+    const meanRms = rmsGroup.reduce((sum, value) => sum + value, 0) / rmsGroup.length;
+    const variance = rmsGroup.reduce((sum, value) => sum + ((value - meanRms) ** 2), 0) / rmsGroup.length;
+    const envelopeCv = Math.sqrt(variance) / Math.max(1, meanRms);
+    const averageZcr = zcrGroup.reduce((sum, value) => sum + value, 0) / zcrGroup.length;
+    const peakZcr = Math.max(...zcrGroup);
+    const isSteadyTonal =
+      meanRms >= minRms &&
+      envelopeCv <= maxEnvelopeCv &&
+      averageZcr >= minAverageZcr &&
+      peakZcr >= minPeakZcr;
+
+    totalGroups += 1;
+    if (isSteadyTonal) {
+      tonalGroups += 1;
+      currentTonalGroups += 1;
+      longestTonalGroups = Math.max(longestTonalGroups, currentTonalGroups);
+    } else {
+      currentTonalGroups = 0;
+    }
+  }
+
+  return {
+    ratio: totalGroups > 0 ? tonalGroups / totalGroups : 0,
+    // A run of N consecutive tonal group-starts spans N-1+groupWindows windows
+    // of real audio. Counting only the starts under-reported every burst by
+    // groupSeconds-windowSeconds (~0.75s), which let real ~3.25s stuck-vowel
+    // sections pass a 2.5s threshold.
+    longestSeconds: longestTonalGroups > 0
+      ? (longestTonalGroups - 1 + groupWindows) * windowSeconds
+      : 0,
+  };
+}
+
+function getWavPcm16Stats(bytes: Uint8Array): WavPcm16Stats | null {
+  if (bytes.byteLength < 44 || !looksLikeWav(bytes)) return null;
+
+  let info: Pcm16WavInfo;
+  try {
+    info = readPcm16Wav(bytes);
+  } catch {
     return null;
   }
 
-  let offset = 12;
-  let bitsPerSample = 0;
-  let dataOffset = 0;
-  let dataSize = 0;
-  while (offset + 8 <= buffer.length) {
-    const chunkId = buffer.toString("ascii", offset, offset + 4);
-    const chunkSize = buffer.readUInt32LE(offset + 4);
-    const chunkDataOffset = offset + 8;
-    if (chunkDataOffset + chunkSize > buffer.length) break;
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const end = Math.min(buffer.length, info.dataOffset + info.dataSize);
+  const totalSamples = Math.floor((end - info.dataOffset) / 2);
+  if (totalSamples <= 0) return null;
 
-    if (chunkId === "fmt " && chunkSize >= 16) {
-      bitsPerSample = buffer.readUInt16LE(chunkDataOffset + 14);
-    } else if (chunkId === "data") {
-      dataOffset = chunkDataOffset;
-      dataSize = chunkSize;
-      break;
-    }
-
-    offset = chunkDataOffset + chunkSize + (chunkSize % 2);
-  }
-
-  if (bitsPerSample !== 16 || dataSize < 2) return null;
+  const lowThreshold = dbToAmplitude(readNumericEnv("TTS_AUDIO_LOW_WINDOW_DB", -45, -70, -25));
+  const windowSeconds = readNumericEnv("TTS_AUDIO_ANALYSIS_WINDOW_SECONDS", 0.25, 0.05, 1);
+  const samplesPerWindow = Math.max(1, Math.round(info.sampleRate * info.channels * windowSeconds));
+  const highZeroCrossingThreshold = readNumericEnv("TTS_AUDIO_HIGH_ZCR_THRESHOLD", 0.42, 0.15, 0.9);
 
   let sumSquares = 0;
   let peak = 0;
   let samples = 0;
-  const end = Math.min(buffer.length, dataOffset + dataSize);
-  for (let index = dataOffset; index + 1 < end; index += 2) {
-    const value = buffer.readInt16LE(index);
-    const abs = Math.abs(value);
-    peak = Math.max(peak, abs);
-    sumSquares += value * value;
-    samples += 1;
+  let windowSumSquares = 0;
+  let windowSamples = 0;
+  let windowZeroCrossings = 0;
+  let previousWindowSample = 0;
+  let hasPreviousWindowSample = false;
+  let lowWindows = 0;
+  let totalWindows = 0;
+  let currentLowWindows = 0;
+  let longestLowWindows = 0;
+  let trailingLowWindows = 0;
+  let highZeroCrossingWindows = 0;
+  let currentHighZeroCrossingWindows = 0;
+  let longestHighZeroCrossingWindows = 0;
+  let maximumZeroCrossingRate = 0;
+  const windowRmsValues: number[] = [];
+  const windowZeroCrossingRates: number[] = [];
+
+  function flushWindow(): void {
+    if (windowSamples === 0) return;
+    const windowRms = Math.sqrt(windowSumSquares / windowSamples);
+    const isLow = windowRms < lowThreshold;
+    const zeroCrossingRate = windowZeroCrossings / Math.max(1, windowSamples - 1);
+    const isHighZeroCrossing = !isLow && zeroCrossingRate >= highZeroCrossingThreshold;
+    windowRmsValues.push(windowRms);
+    windowZeroCrossingRates.push(zeroCrossingRate);
+    totalWindows += 1;
+    if (isLow) {
+      lowWindows += 1;
+      currentLowWindows += 1;
+      trailingLowWindows += 1;
+      longestLowWindows = Math.max(longestLowWindows, currentLowWindows);
+    } else {
+      currentLowWindows = 0;
+      trailingLowWindows = 0;
+    }
+    if (isHighZeroCrossing) {
+      highZeroCrossingWindows += 1;
+      currentHighZeroCrossingWindows += 1;
+      longestHighZeroCrossingWindows = Math.max(
+        longestHighZeroCrossingWindows,
+        currentHighZeroCrossingWindows,
+      );
+    } else {
+      currentHighZeroCrossingWindows = 0;
+    }
+    maximumZeroCrossingRate = Math.max(maximumZeroCrossingRate, zeroCrossingRate);
+    windowSumSquares = 0;
+    windowSamples = 0;
+    windowZeroCrossings = 0;
+    previousWindowSample = 0;
+    hasPreviousWindowSample = false;
   }
 
+  for (let index = info.dataOffset; index + 1 < end; index += 2) {
+    const value = buffer.readInt16LE(index);
+    const abs = Math.abs(value);
+    const square = value * value;
+    peak = Math.max(peak, abs);
+    sumSquares += square;
+    samples += 1;
+    windowSumSquares += square;
+    windowSamples += 1;
+    if (
+      hasPreviousWindowSample &&
+      value !== 0 &&
+      previousWindowSample !== 0 &&
+      (value > 0) !== (previousWindowSample > 0)
+    ) {
+      windowZeroCrossings += 1;
+    }
+    previousWindowSample = value;
+    hasPreviousWindowSample = true;
+    if (windowSamples >= samplesPerWindow) {
+      flushWindow();
+    }
+  }
+  flushWindow();
+
   if (samples === 0) return null;
+  const rms = Math.sqrt(sumSquares / samples);
+  const lowWindowRatio = totalWindows > 0 ? lowWindows / totalWindows : 0;
+  const lowWindowSeconds = samplesPerWindow / Math.max(1, info.sampleRate * info.channels);
+  const steadyTonal = getSteadyTonalStats(
+    windowRmsValues,
+    windowZeroCrossingRates,
+    lowWindowSeconds,
+  );
+
   return {
-    rms: Math.sqrt(sumSquares / samples),
+    rms,
     peak,
+    durationSeconds: info.durationSeconds,
+    rmsDb: amplitudeToDb(rms),
+    peakDb: amplitudeToDb(peak),
+    lowWindowRatio,
+    longestLowSeconds: longestLowWindows * lowWindowSeconds,
+    trailingLowSeconds: trailingLowWindows * lowWindowSeconds,
+    highZeroCrossingWindowRatio: totalWindows > 0 ? highZeroCrossingWindows / totalWindows : 0,
+    longestHighZeroCrossingSeconds: longestHighZeroCrossingWindows * lowWindowSeconds,
+    maximumZeroCrossingRate,
+    steadyTonalWindowRatio: steadyTonal.ratio,
+    longestSteadyTonalSeconds: steadyTonal.longestSeconds,
   };
 }
 
@@ -489,16 +950,88 @@ function nearSilentAudioMessage(): string {
   return "Upstream generated near-silent audio. Please try again, or slightly rephrase that part of the text.";
 }
 
-function isNearSilentGeneratedAudio(bytes: Uint8Array, contentType: string): boolean {
+function generatedAudioSilenceIssue(stats: WavPcm16Stats): string | null {
+  const maxLowWindowRatio = readNumericEnv("TTS_AUDIO_MAX_LOW_WINDOW_RATIO", 0.85, 0.2, 0.98);
+  const maxLongSilenceSeconds = readNumericEnv("TTS_AUDIO_MAX_LONG_SILENCE_SECONDS", 10, 2, 30);
+  const maxTrailingSilenceSeconds = readNumericEnv("TTS_AUDIO_MAX_TRAILING_SILENCE_SECONDS", 4, 0.5, 15);
+
+  if ((stats.durationSeconds ?? 0) < 0.2) {
+    return "audio is too short";
+  }
+  if (stats.rms < 80 && stats.peak < 1200) {
+    return `very low level (rms ${stats.rmsDb.toFixed(1)} dB, peak ${stats.peakDb.toFixed(1)} dB)`;
+  }
+  if ((stats.durationSeconds ?? 0) >= 3 && stats.lowWindowRatio > maxLowWindowRatio) {
+    return `mostly quiet (${Math.round(stats.lowWindowRatio * 100)}% low-level windows)`;
+  }
+  if ((stats.durationSeconds ?? 0) >= 3 && stats.trailingLowSeconds > maxTrailingSilenceSeconds) {
+    return `contains a long quiet tail (${stats.trailingLowSeconds.toFixed(1)}s)`;
+  }
+  if ((stats.durationSeconds ?? 0) >= 8 && stats.longestLowSeconds > maxLongSilenceSeconds) {
+    return `contains a long silent section (${stats.longestLowSeconds.toFixed(1)}s)`;
+  }
+
+  return null;
+}
+
+function generatedAudioQualityIssue(bytes: Uint8Array, contentType: string): string | null {
   const lower = contentType.toLowerCase();
   if (!lower.includes("wav") && !looksLikeWav(bytes)) {
-    return false;
+    return null;
   }
 
   const stats = getWavPcm16Stats(bytes);
-  if (!stats) return false;
+  if (!stats) return null;
+  return generatedAudioStatsIssue(stats);
+}
 
-  return stats.rms < 80 && stats.peak < 1200;
+// Full per-chunk quality gate operating on already-computed PCM stats: silence
+// first, then sustained non-speech noise and stuck-tonal "buzz" sections. Kept
+// stats-based so both the post-decode validator and the in-loop generation
+// retry path can share the exact same checks.
+function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
+  const maxHighZeroCrossingRatio = readNumericEnv("TTS_AUDIO_MAX_HIGH_ZCR_RATIO", 0.18, 0.02, 0.8);
+  const maxHighZeroCrossingSeconds = readNumericEnv("TTS_AUDIO_MAX_HIGH_ZCR_SECONDS", 1, 0.25, 5);
+  // Stuck-vowel buzz bursts from VoxCPM2 are typically 1-2s each. The old
+  // 2.5s threshold (further weakened by the duration under-count fixed in
+  // getSteadyTonalStats) let chunks full of 1-1.75s buzz sections through to
+  // the final MP3. Reject earlier so the retry/temperature-bump path can
+  // regenerate the chunk instead of delivering buzzing audio.
+  const maxSteadyTonalSeconds = readNumericEnv("TTS_AUDIO_MAX_STEADY_TONAL_SECONDS", 1.5, 0.75, 10);
+  const maxSteadyTonalRatio = readNumericEnv("TTS_AUDIO_MAX_STEADY_TONAL_RATIO", 0.12, 0.05, 0.8);
+
+  const silenceIssue = generatedAudioSilenceIssue(stats);
+  if (silenceIssue) return silenceIssue;
+  if (
+    (stats.durationSeconds ?? 0) >= 2 &&
+    stats.longestHighZeroCrossingSeconds > maxHighZeroCrossingSeconds
+  ) {
+    return `contains sustained non-speech noise (${stats.longestHighZeroCrossingSeconds.toFixed(1)}s)`;
+  }
+  if (
+    (stats.durationSeconds ?? 0) >= 4 &&
+    stats.highZeroCrossingWindowRatio > maxHighZeroCrossingRatio
+  ) {
+    return `contains too much high-frequency noise (${Math.round(stats.highZeroCrossingWindowRatio * 100)}% of windows)`;
+  }
+  if (
+    (stats.durationSeconds ?? 0) >= 4 &&
+    stats.longestSteadyTonalSeconds > maxSteadyTonalSeconds
+  ) {
+    return `contains a sustained stuck tonal section (${stats.longestSteadyTonalSeconds.toFixed(1)}s)`;
+  }
+  if (
+    (stats.durationSeconds ?? 0) >= 8 &&
+    stats.steadyTonalWindowRatio > maxSteadyTonalRatio
+  ) {
+    return `contains too much stuck tonal audio (${Math.round(stats.steadyTonalWindowRatio * 100)}% of windows)`;
+  }
+
+  return null;
+}
+
+function isNearSilentGeneratedAudio(bytes: Uint8Array, contentType: string): boolean {
+  return generatedAudioQualityIssue(bytes, contentType) !== null;
 }
 
 function inferAudioDurationSeconds(bytes: Uint8Array, contentType: string): number | null {
@@ -508,35 +1041,332 @@ function inferAudioDurationSeconds(bytes: Uint8Array, contentType: string): numb
   return null;
 }
 
+type GeneratedAudioCleanupPhase = "chunk" | "final";
+
+function trimPcm16Edges(
+  data: Buffer,
+  channels: 1 | 2,
+  sampleRate: number,
+  phase: GeneratedAudioCleanupPhase,
+): Buffer {
+  const bytesPerFrame = channels * 2;
+  const totalFrames = Math.floor(data.length / bytesPerFrame);
+  if (totalFrames <= 0) return data;
+
+  // Trim only deeper silence (-52 dB) so the natural decay/breath of speech is
+  // kept at chunk edges. Trimming too close to the voice (the old -46 dB) cut
+  // the tails and made joined sentences sound clipped ("cut cut").
+  const threshold = dbToAmplitude(readNumericEnv("TTS_AUDIO_EDGE_TRIM_DB", -52, -70, -25));
+  const windowMs = readNumericEnv("TTS_AUDIO_EDGE_WINDOW_MS", 40, 10, 250);
+  const windowFrames = Math.max(1, Math.round(sampleRate * windowMs / 1000));
+  const startPaddingMs = phase === "chunk"
+    ? readNumericEnv("TTS_CHUNK_START_PADDING_MS", 35, 0, 500)
+    : readNumericEnv("TTS_FINAL_START_PADDING_MS", 30, 0, 1000);
+  // Keep more of the trailing decay on each chunk so sentence ends are not
+  // chopped before the join.
+  const endPaddingMs = phase === "chunk"
+    ? readNumericEnv("TTS_CHUNK_END_PADDING_MS", 110, 0, 500)
+    : readNumericEnv("TTS_FINAL_END_PADDING_MS", 100, 0, 1000);
+
+  function isAudibleWindow(startFrame: number, endFrame: number): boolean {
+    let sumSquares = 0;
+    let sampleCount = 0;
+    for (let frame = startFrame; frame < endFrame; frame++) {
+      const frameOffset = frame * bytesPerFrame;
+      for (let channel = 0; channel < channels; channel++) {
+        const value = data.readInt16LE(frameOffset + channel * 2);
+        sumSquares += value * value;
+        sampleCount += 1;
+      }
+    }
+    return sampleCount > 0 && Math.sqrt(sumSquares / sampleCount) >= threshold;
+  }
+
+  let firstAudibleFrame = -1;
+  for (let startFrame = 0; startFrame < totalFrames; startFrame += windowFrames) {
+    const endFrame = Math.min(totalFrames, startFrame + windowFrames);
+    if (isAudibleWindow(startFrame, endFrame)) {
+      firstAudibleFrame = startFrame;
+      break;
+    }
+  }
+
+  let lastAudibleFrame = -1;
+  for (let endFrame = totalFrames; endFrame > 0; endFrame -= windowFrames) {
+    const startFrame = Math.max(0, endFrame - windowFrames);
+    if (isAudibleWindow(startFrame, endFrame)) {
+      lastAudibleFrame = endFrame;
+      break;
+    }
+  }
+
+  if (firstAudibleFrame < 0 || lastAudibleFrame <= firstAudibleFrame) {
+    return data;
+  }
+
+  const startPaddingFrames = Math.round(sampleRate * startPaddingMs / 1000);
+  const endPaddingFrames = Math.round(sampleRate * endPaddingMs / 1000);
+  const startFrame = Math.max(0, firstAudibleFrame - startPaddingFrames);
+  const endFrame = Math.min(totalFrames, lastAudibleFrame + endPaddingFrames);
+  return Buffer.from(data.subarray(startFrame * bytesPerFrame, endFrame * bytesPerFrame));
+}
+
+function applyPcm16EdgeFade(
+  data: Buffer,
+  channels: 1 | 2,
+  sampleRate: number,
+  phase: GeneratedAudioCleanupPhase,
+): Buffer {
+  const fadeMs = phase === "chunk"
+    ? readNumericEnv("TTS_CHUNK_EDGE_FADE_MS", 0, 0, 100)
+    : readNumericEnv("TTS_FINAL_EDGE_FADE_MS", 8, 0, 100);
+  if (fadeMs <= 0) return data;
+
+  const bytesPerFrame = channels * 2;
+  const totalFrames = Math.floor(data.length / bytesPerFrame);
+  const fadeFrames = Math.min(
+    Math.round(sampleRate * fadeMs / 1000),
+    Math.floor(totalFrames / 4),
+  );
+  if (fadeFrames <= 0) return data;
+
+  const output = Buffer.from(data);
+  for (let frame = 0; frame < fadeFrames; frame++) {
+    const startGain = (frame + 1) / fadeFrames;
+    const endGain = (fadeFrames - frame) / fadeFrames;
+    const startOffset = frame * bytesPerFrame;
+    const endOffset = (totalFrames - fadeFrames + frame) * bytesPerFrame;
+    for (let channel = 0; channel < channels; channel++) {
+      const channelOffset = channel * 2;
+      const startValue = output.readInt16LE(startOffset + channelOffset);
+      const endValue = output.readInt16LE(endOffset + channelOffset);
+      output.writeInt16LE(Math.round(startValue * startGain), startOffset + channelOffset);
+      output.writeInt16LE(Math.round(endValue * endGain), endOffset + channelOffset);
+    }
+  }
+  return output;
+}
+
+async function cleanGeneratedAudioToWav(
+  bytes: Uint8Array,
+  phase: GeneratedAudioCleanupPhase,
+): Promise<{
+  bytes: Uint8Array;
+  durationSeconds: number | null;
+  qualityIssue: string | null;
+  stats: WavPcm16Stats | null;
+}> {
+  const filter = phase === "chunk"
+    ? readAudioFilter("TTS_GENERATED_CHUNK_SILENCE_FILTER", DEFAULT_GENERATED_CHUNK_SILENCE_FILTER)
+    : readAudioFilter("TTS_GENERATED_FINAL_SILENCE_FILTER", DEFAULT_GENERATED_FINAL_SILENCE_FILTER);
+  const sampleRate = readCanonicalGeneratedSampleRate();
+
+  const pcmBytes = await runFfmpeg(
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      "pipe:0",
+      "-map",
+      "0:a:0",
+      "-vn",
+      ...audioFilterArgs(filter),
+      "-ac",
+      "1",
+      "-ar",
+      String(sampleRate),
+      "-codec:a",
+      "pcm_s16le",
+      "-sample_fmt",
+      "s16",
+      "-f",
+      "s16le",
+      "pipe:1",
+    ],
+    bytes,
+  );
+  if (pcmBytes.byteLength < 2) {
+    throw new TtsProviderError("Generated audio became empty after silence cleanup.", 502);
+  }
+
+  const trimmedPcm = trimPcm16Edges(
+    Buffer.from(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength),
+    1,
+    sampleRate,
+    phase,
+  );
+  const fadedPcm = applyPcm16EdgeFade(trimmedPcm, 1, sampleRate, phase);
+  const wavBytes = createPcm16Wav(
+    fadedPcm,
+    1,
+    sampleRate,
+  );
+  readPcm16Wav(wavBytes);
+  const stats = getWavPcm16Stats(wavBytes);
+  if (!stats) {
+    throw new TtsProviderError("Generated audio could not be normalized to PCM WAV.", 502);
+  }
+
+  return {
+    bytes: wavBytes,
+    durationSeconds: stats.durationSeconds ?? inferWavDurationSeconds(wavBytes),
+    qualityIssue: generatedAudioQualityIssue(wavBytes, "audio/wav"),
+    stats,
+  };
+}
+
+async function analyzeRawGeneratedAudioSilence(
+  bytes: Uint8Array,
+  contentType: string,
+): Promise<{ issue: string | null; durationSeconds: number | null }> {
+  let stats: WavPcm16Stats | null = null;
+
+  if (contentType.toLowerCase().includes("wav") || looksLikeWav(bytes)) {
+    stats = getWavPcm16Stats(bytes);
+  }
+
+  if (!stats) {
+    const sampleRate = readCanonicalGeneratedSampleRate();
+    const pcmBytes = await runFfmpeg(
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        String(sampleRate),
+        "-codec:a",
+        "pcm_s16le",
+        "-sample_fmt",
+        "s16",
+        "-f",
+        "s16le",
+        "pipe:1",
+      ],
+      bytes,
+    );
+    if (pcmBytes.byteLength < 2) {
+      return { issue: "decoded audio is empty", durationSeconds: null };
+    }
+    const wavBytes = createPcm16Wav(
+      Buffer.from(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength),
+      1,
+      sampleRate,
+    );
+    stats = getWavPcm16Stats(wavBytes);
+  }
+
+  if (!stats) {
+    return { issue: "generated audio could not be analyzed", durationSeconds: null };
+  }
+
+  return {
+    issue: generatedAudioStatsIssue(stats),
+    durationSeconds: stats.durationSeconds,
+  };
+}
+
+async function publicMp3RoundTripQualityIssue(
+  wavBytes: Uint8Array,
+  phase: GeneratedAudioCleanupPhase,
+): Promise<string | null> {
+  try {
+    const encoded = await encodeWavToMp3(wavBytes);
+    const decoded = await cleanGeneratedAudioToWav(encoded.bytes, phase);
+    return decoded.qualityIssue;
+  } catch (error) {
+    return error instanceof Error
+      ? error.message
+      : "Generated audio could not be validated after MP3 conversion.";
+  }
+}
+
+type NormalizePublicMp3Options = {
+  ignoreQualityIssue?: (issue: string) => boolean;
+};
+
 async function normalizeToPublicMp3(
   bytes: Uint8Array,
   contentType: string,
   outputSeconds: number | null,
+  _options: NormalizePublicMp3Options = {},
 ): Promise<{ bytes: Uint8Array; contentType: string; outputSeconds: number | null }> {
-  const lower = contentType.toLowerCase();
-  if (lower.includes("mpeg") || lower.includes("mp3") || looksLikeMp3(bytes)) {
-    const converted = await encodeMp3ToPublicMp3(bytes, outputSeconds);
+  const lowerContentType = contentType.toLowerCase();
+  if (lowerContentType.includes("mp3") || lowerContentType.includes("mpeg") || looksLikeMp3(bytes)) {
     return {
-      bytes: converted.bytes,
+      bytes,
       contentType: PUBLIC_AUDIO_CONTENT_TYPE,
-      outputSeconds: converted.durationSeconds,
+      outputSeconds,
     };
   }
-  if (lower.includes("wav") || looksLikeWav(bytes)) {
-    const converted = await encodeWavToMp3(bytes);
-    return {
-      bytes: converted.bytes,
-      contentType: PUBLIC_AUDIO_CONTENT_TYPE,
-      outputSeconds: outputSeconds ?? converted.durationSeconds,
-    };
+
+  if (!lowerContentType.includes("wav") && !looksLikeWav(bytes)) {
+    throw new TtsProviderError("Upstream returned an audio format that cannot be converted to MP3.", 502);
   }
-  throw new TtsProviderError("Upstream returned an audio format that cannot be converted to MP3.", 502);
+
+  const converted = await encodeWavToMp3(bytes);
+  return {
+    bytes: converted.bytes,
+    contentType: PUBLIC_AUDIO_CONTENT_TYPE,
+    outputSeconds: converted.durationSeconds ?? outputSeconds,
+  };
+}
+
+export async function cleanPublicMp3ForDelivery(
+  bytes: Uint8Array,
+  outputSeconds: number | null,
+): Promise<{ bytes: Uint8Array; contentType: string; outputSeconds: number | null }> {
+  return normalizeToPublicMp3(bytes, looksLikeWav(bytes) ? "audio/wav" : PUBLIC_AUDIO_CONTENT_TYPE, outputSeconds);
+}
+
+export async function mergePublicMp3SegmentsForDelivery(
+  buffers: Uint8Array[],
+  outputSeconds: number | null,
+): Promise<{ bytes: Uint8Array; contentType: string; outputSeconds: number | null }> {
+  if (buffers.length === 0) {
+    throw new TtsProviderError("No audio segments were available to merge.", 502);
+  }
+
+  // Keep delivered segments close to the upstream result: convert WAV to MP3
+  // when needed, then join MP3 frames without extra cleanup or mastering.
+  const publicSegments: Uint8Array[] = [];
+  let summedSeconds = 0;
+  let hasSummedSeconds = false;
+
+  for (const buffer of buffers) {
+    const segmentContentType = looksLikeWav(buffer) ? "audio/wav" : PUBLIC_AUDIO_CONTENT_TYPE;
+    const inferredSeconds = inferAudioDurationSeconds(buffer, segmentContentType);
+    const normalized = await normalizeToPublicMp3(buffer, segmentContentType, inferredSeconds);
+    publicSegments.push(normalized.bytes);
+    if (typeof normalized.outputSeconds === "number" && Number.isFinite(normalized.outputSeconds) && normalized.outputSeconds > 0) {
+      summedSeconds += normalized.outputSeconds;
+      hasSummedSeconds = true;
+    }
+  }
+
+  const merged = await concatMp3Buffers(publicSegments);
+  const depaused = await capLongPauses(merged);
+  const normalized = await normalizeOutputLoudness(depaused);
+  return {
+    bytes: normalized,
+    contentType: PUBLIC_AUDIO_CONTENT_TYPE,
+    outputSeconds: outputSeconds ?? (hasSummedSeconds ? summedSeconds : null),
+  };
 }
 
 export function splitTextIntoChunks(text: string, maxChunkChars = 400): string[] {
+  maxChunkChars = Math.max(1, Math.floor(maxChunkChars));
   const charCount = Array.from(text).length;
   if (charCount <= maxChunkChars) {
-    return [text];
+    const trimmed = text.trim();
+    return hasSpeakableText(trimmed) ? [trimmed] : [];
   }
 
   const chunks: string[] = [];
@@ -571,8 +1401,8 @@ export function splitTextIntoChunks(text: string, maxChunkChars = 400): string[]
         currentLen = paraChars.length;
       } else {
         // We need to split the paragraph by sentence boundaries or spaces
-        // Punctuation characters to split on: Khmer '។', English '.', '!', '?', etc.
-        const sentences = paraClean.split(/(?<=[។\.\!\?])\s*/);
+        // Split on spoken sentence endings. Khmer full stop is \u17d4.
+        const sentences = paraClean.split(/(?<=[\u17d4.!?])\s*/u);
         for (const sentence of sentences) {
           const sentenceClean = sentence.trim();
           if (!sentenceClean) continue;
@@ -642,7 +1472,41 @@ export function splitTextIntoChunks(text: string, maxChunkChars = 400): string[]
     chunks.push(currentChunk.join(""));
   }
 
-  return chunks.filter(Boolean);
+  return chunks
+    .flatMap((chunk) => {
+      const trimmed = chunk.trim();
+      const chars = Array.from(trimmed);
+      if (chars.length <= maxChunkChars) return trimmed ? [trimmed] : [];
+
+      const pieces: string[] = [];
+      for (let index = 0; index < chars.length; index += maxChunkChars) {
+        const piece = chars.slice(index, index + maxChunkChars).join("").trim();
+        if (piece) pieces.push(piece);
+      }
+      return pieces;
+    })
+    .reduce<string[]>((normalized, chunk) => {
+      const trimmed = chunk.trim();
+      if (!trimmed) return normalized;
+      if (hasSpeakableText(trimmed)) {
+        normalized.push(trimmed);
+        return normalized;
+      }
+
+      // A hard character split can leave a final Khmer full stop or quote by
+      // itself. Attach that punctuation to the previous spoken chunk when it is
+      // only a tiny overflow; otherwise drop it instead of asking VoxCPM2 to
+      // synthesize punctuation-only "speech".
+      const previous = normalized[normalized.length - 1];
+      if (previous) {
+        const previousLen = Array.from(previous).length;
+        const punctuationLen = Array.from(trimmed).length;
+        if (punctuationLen <= 12 && previousLen + punctuationLen <= maxChunkChars + 12) {
+          normalized[normalized.length - 1] = `${previous}${trimmed}`;
+        }
+      }
+      return normalized;
+    }, []);
 }
 
 function createPcm16Wav(data: Buffer, channels: 1 | 2, sampleRate: number): Uint8Array {
@@ -667,6 +1531,92 @@ function createPcm16Wav(data: Buffer, channels: 1 | 2, sampleRate: number): Uint
   return new Uint8Array(Buffer.concat([header, data]));
 }
 
+// Estimates the speech loudness (RMS amplitude) of a PCM16 WAV chunk, ignoring
+// silent/pause windows so two chunks with different amounts of pause are still
+// compared on their spoken parts only. Returns null when the chunk is not PCM
+// WAV or has no speech windows.
+function estimateWavSpeechRms(bytes: Uint8Array): number | null {
+  let info: Pcm16WavInfo;
+  try {
+    info = readPcm16Wav(bytes);
+  } catch {
+    return null;
+  }
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const dataEnd = Math.min(buffer.length, info.dataOffset + info.dataSize);
+  const bytesPerFrame = info.channels * 2;
+  const windowFrames = Math.max(1, Math.round(info.sampleRate * 0.05)); // 50 ms
+  const windowBytes = windowFrames * bytesPerFrame;
+  const floor = dbToAmplitude(readNumericEnv("TTS_CHUNK_LEVEL_FLOOR_DB", -45, -70, -20));
+
+  let speechSumSquares = 0;
+  let speechSamples = 0;
+  for (let windowStart = info.dataOffset; windowStart < dataEnd; windowStart += windowBytes) {
+    const windowEnd = Math.min(dataEnd, windowStart + windowBytes);
+    let sumSquares = 0;
+    let count = 0;
+    for (let index = windowStart; index + 1 < windowEnd; index += 2) {
+      const value = buffer.readInt16LE(index);
+      sumSquares += value * value;
+      count += 1;
+    }
+    if (count === 0) continue;
+    const rms = Math.sqrt(sumSquares / count);
+    if (rms >= floor) {
+      speechSumSquares += sumSquares;
+      speechSamples += count;
+    }
+  }
+  return speechSamples > 0 ? Math.sqrt(speechSumSquares / speechSamples) : null;
+}
+
+// Independently generated chunks come back at slightly different levels, so
+// long audio drifts louder/quieter from one chunk to the next. This aligns each
+// PCM16 WAV chunk to the median chunk loudness using a capped *linear gain*
+// only (no EQ, no compression, no mastering), preserving the raw VoxCPM2 tone
+// while keeping the whole file at one consistent volume. Non-WAV chunks and
+// single-chunk audio are returned unchanged.
+function levelWavChunksToCommonLoudness(chunks: Uint8Array[]): Uint8Array[] {
+  if (!readBooleanEnv("TTS_CHUNK_LEVEL_MATCH", true) || chunks.length < 2) {
+    return chunks;
+  }
+
+  const levels = chunks.map(estimateWavSpeechRms);
+  const measurable = levels
+    .filter((value): value is number => typeof value === "number" && value > 0)
+    .sort((a, b) => a - b);
+  if (measurable.length === 0) {
+    return chunks;
+  }
+  const reference = measurable[Math.floor(measurable.length / 2)]; // median level
+  if (reference <= 0) {
+    return chunks;
+  }
+
+  const maxGainDb = readNumericEnv("TTS_CHUNK_LEVEL_MAX_GAIN_DB", 6, 0, 18);
+  return chunks.map((chunk, index) => {
+    const level = levels[index];
+    if (!level || level <= 0) return chunk;
+    const clampedGainDb = Math.max(-maxGainDb, Math.min(maxGainDb, 20 * Math.log10(reference / level)));
+    if (Math.abs(clampedGainDb) < 0.25) return chunk;
+    const gain = Math.pow(10, clampedGainDb / 20);
+
+    let info: Pcm16WavInfo;
+    try {
+      info = readPcm16Wav(chunk);
+    } catch {
+      return chunk;
+    }
+    const out = Buffer.from(chunk);
+    const dataEnd = Math.min(out.length, info.dataOffset + info.dataSize);
+    for (let i = info.dataOffset; i + 1 < dataEnd; i += 2) {
+      const scaled = Math.round(out.readInt16LE(i) * gain);
+      out.writeInt16LE(Math.max(-32768, Math.min(32767, scaled)), i);
+    }
+    return out;
+  });
+}
+
 function concatPcm16WavBuffers(buffers: Uint8Array[]): Uint8Array {
   if (buffers.length === 0) return new Uint8Array();
   if (buffers.length === 1) return buffers[0];
@@ -679,15 +1629,182 @@ function concatPcm16WavBuffers(buffers: Uint8Array[]): Uint8Array {
     }
   }
 
-  const data = Buffer.concat(
-    buffers.map((buffer, index) => {
-      const info = infos[index];
-      const source = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-      return source.subarray(info.dataOffset, info.dataOffset + info.dataSize);
-    }),
-  );
+  // Long-form chunks may split either at a real sentence pause or in the middle
+  // of a long Khmer phrase. Quiet boundaries get a short pause; audible
+  // boundaries are crossfaded so they do not sound like a hard cut.
+  const crossfadeMs = readNumericEnv("TTS_CHUNK_CROSSFADE_MS", 45, 0, 250);
+  const joinSilenceMs = readNumericEnv("TTS_CHUNK_JOIN_SILENCE_MS", 70, 0, 500);
+  const joinEdgeWindowMs = readNumericEnv("TTS_CHUNK_JOIN_EDGE_WINDOW_MS", 60, 10, 250);
+  const joinQuietDb = readNumericEnv("TTS_CHUNK_JOIN_QUIET_DB", -42, -70, -20);
+  const joinSilenceFrames = Math.round(first.sampleRate * joinSilenceMs / 1000);
+  const joinSilence = joinSilenceFrames > 0 ? Buffer.alloc(joinSilenceFrames * first.channels * 2) : null;
+
+  let rawSegments = buffers.map((buffer, index) => {
+    const info = infos[index];
+    const source = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    return Buffer.from(source.subarray(info.dataOffset, info.dataOffset + info.dataSize));
+  });
+
+  // Chunks are generated independently, so their average level can drift a few
+  // dB from one to the next. Listeners hear that drift as "uneven" long audio.
+  // Align each segment's RMS to the median segment level (gain capped) before
+  // joining, so the final loudnorm pass gets consistent input.
+  if (readBooleanEnv("TTS_CHUNK_LOUDNESS_MATCH", true) && rawSegments.length > 1) {
+    const rmsValues = rawSegments.map((segment) => {
+      let sumSquares = 0;
+      const samples = Math.floor(segment.length / 2);
+      for (let index = 0; index + 1 < segment.length; index += 2) {
+        const value = segment.readInt16LE(index);
+        sumSquares += value * value;
+      }
+      return samples > 0 ? Math.sqrt(sumSquares / samples) : 0;
+    });
+    const audible = rmsValues.filter((value) => value > 0).sort((a, b) => a - b);
+    if (audible.length > 0) {
+      const median = audible[Math.floor(audible.length / 2)];
+      const maxGainDb = readNumericEnv("TTS_CHUNK_LOUDNESS_MAX_GAIN_DB", 3, 0, 12);
+      rawSegments = rawSegments.map((segment, index) => {
+        const rms = rmsValues[index];
+        if (rms <= 0 || median <= 0) return segment;
+        const gainDb = Math.max(-maxGainDb, Math.min(maxGainDb, 20 * Math.log10(median / rms)));
+        if (Math.abs(gainDb) < 0.25) return segment;
+        const gain = Math.pow(10, gainDb / 20);
+        const adjusted = Buffer.from(segment);
+        for (let offset = 0; offset + 1 < adjusted.length; offset += 2) {
+          const value = Math.round(adjusted.readInt16LE(offset) * gain);
+          adjusted.writeInt16LE(Math.max(-32768, Math.min(32767, value)), offset);
+        }
+        return adjusted;
+      });
+    }
+  }
+
+  const bytesPerFrame = first.channels * 2;
+
+  function pcmWindowDb(segment: Buffer, startFrame: number, frameCount: number): number {
+    const totalFrames = Math.floor(segment.length / bytesPerFrame);
+    const start = Math.max(0, Math.min(totalFrames, startFrame));
+    const end = Math.max(start, Math.min(totalFrames, start + frameCount));
+    let sumSquares = 0;
+    let samples = 0;
+    for (let frame = start; frame < end; frame++) {
+      const frameOffset = frame * bytesPerFrame;
+      for (let channel = 0; channel < first.channels; channel++) {
+        const value = segment.readInt16LE(frameOffset + channel * 2);
+        sumSquares += value * value;
+        samples += 1;
+      }
+    }
+    return samples > 0 ? amplitudeToDb(Math.sqrt(sumSquares / samples)) : Number.NEGATIVE_INFINITY;
+  }
+
+  function isQuietEdge(segment: Buffer, edge: "head" | "tail"): boolean {
+    const totalFrames = Math.floor(segment.length / bytesPerFrame);
+    const windowFrames = Math.min(totalFrames, Math.round(first.sampleRate * joinEdgeWindowMs / 1000));
+    if (windowFrames <= 0) return true;
+    const startFrame = edge === "head" ? 0 : totalFrames - windowFrames;
+    return pcmWindowDb(segment, startFrame, windowFrames) <= joinQuietDb;
+  }
+
+  // Applies only the fade needed at the current seam. Fading both ends of the
+  // accumulated buffer on every append gradually dulls the first syllable and
+  // can make joins sound more abrupt than the source chunks.
+  function applyDeclickFade(segment: Buffer, options: { fadeIn?: boolean; fadeOut?: boolean }): Buffer {
+    const declickMs = readNumericEnv("TTS_CHUNK_JOIN_DECLICK_MS", 10, 0, 40);
+    const declickFrames = Math.min(
+      Math.round(first.sampleRate * declickMs / 1000),
+      Math.floor(Math.floor(segment.length / bytesPerFrame) / 4),
+    );
+    if (declickFrames <= 0) return segment;
+    const out = Buffer.from(segment);
+    const totalFrames = Math.floor(out.length / bytesPerFrame);
+    for (let frame = 0; frame < declickFrames; frame++) {
+      const fadeInGain = (frame + 1) / declickFrames;
+      const fadeOutGain = (declickFrames - frame) / declickFrames;
+      const startOffset = frame * bytesPerFrame;
+      const endOffset = (totalFrames - declickFrames + frame) * bytesPerFrame;
+      for (let channel = 0; channel < first.channels; channel++) {
+        const channelOffset = channel * 2;
+        if (options.fadeIn) {
+          const startValue = out.readInt16LE(startOffset + channelOffset);
+          out.writeInt16LE(Math.round(startValue * fadeInGain), startOffset + channelOffset);
+        }
+        if (options.fadeOut) {
+          const endValue = out.readInt16LE(endOffset + channelOffset);
+          out.writeInt16LE(Math.round(endValue * fadeOutGain), endOffset + channelOffset);
+        }
+      }
+    }
+    return out;
+  }
+
+  function joinSegments(left: Buffer, right: Buffer): Buffer {
+    // Pause mode only when both sides are already quiet, which usually means
+    // the split landed on a real phrase/sentence boundary. Mid-phrase splits
+    // stay gapless and are overlap-blended below.
+    if (joinSilence && joinSilence.length > 0 && isQuietEdge(left, "tail") && isQuietEdge(right, "head")) {
+      return Buffer.concat([
+        applyDeclickFade(left, { fadeOut: true }),
+        joinSilence,
+        applyDeclickFade(right, { fadeIn: true }),
+      ]);
+    }
+
+    // Gapless mode: overlap-blend audible seams so hard chunk splits do not
+    // become audible stop/start cuts.
+    const leftFrames = Math.floor(left.length / bytesPerFrame);
+    const rightFrames = Math.floor(right.length / bytesPerFrame);
+    const fadeFrames = Math.min(
+      Math.round(first.sampleRate * crossfadeMs / 1000),
+      Math.floor(leftFrames / 3),
+      Math.floor(rightFrames / 3),
+    );
+    if (fadeFrames <= 0) {
+      return Buffer.concat([left, right]);
+    }
+
+    const overlapBytes = fadeFrames * bytesPerFrame;
+    const crossfaded = Buffer.alloc(overlapBytes);
+    const leftStart = left.length - overlapBytes;
+
+    for (let frame = 0; frame < fadeFrames; frame++) {
+      const t = (frame + 1) / (fadeFrames + 1);
+      const leftGain = Math.cos((t * Math.PI) / 2);
+      const rightGain = Math.sin((t * Math.PI) / 2);
+      const outFrameOffset = frame * bytesPerFrame;
+      const leftFrameOffset = leftStart + outFrameOffset;
+      for (let channel = 0; channel < first.channels; channel++) {
+        const channelOffset = channel * 2;
+        const leftSample = left.readInt16LE(leftFrameOffset + channelOffset);
+        const rightSample = right.readInt16LE(outFrameOffset + channelOffset);
+        const mixed = Math.round((leftSample * leftGain) + (rightSample * rightGain));
+        crossfaded.writeInt16LE(Math.max(-32768, Math.min(32767, mixed)), outFrameOffset + channelOffset);
+      }
+    }
+
+    return Buffer.concat([
+      left.subarray(0, left.length - overlapBytes),
+      crossfaded,
+      right.subarray(overlapBytes),
+    ]);
+  }
+
+  let data: Buffer = rawSegments[0];
+  for (let index = 1; index < rawSegments.length; index++) {
+    data = joinSegments(data, rawSegments[index]);
+  }
 
   return createPcm16Wav(data, first.channels, first.sampleRate);
+}
+
+// VoxCPM2 failures are sticky at low temperature: resending the identical
+// payload tends to reproduce the same near-silent result. Each quality retry
+// raises temperature slightly so the model samples a different trajectory.
+function retryAdjustedTemperature(baseTemperature: number, qualityRetryAttempt: number): number {
+  if (qualityRetryAttempt <= 0) return baseTemperature;
+  const step = readNumericEnv("TTS_RETRY_TEMPERATURE_STEP", 0.15, 0, 0.5);
+  const max = readNumericEnv("TTS_RETRY_TEMPERATURE_MAX", 0.9, 0.3, 2.0);
+  return Math.min(max, baseTemperature + step * qualityRetryAttempt);
 }
 
 async function synthesizeSingleChunk(
@@ -700,8 +1817,15 @@ async function synthesizeSingleChunk(
   },
   model: string,
   responseFormat: AudioResponseFormat,
-  expectedContentType: string
-): Promise<{ audioBytes: Uint8Array; contentType: string; upstreamRequestId: string | null; durationSeconds: number | null }> {
+  expectedContentType: string,
+  qualityRetryAttempt = 0,
+): Promise<{
+  audioBytes: Uint8Array;
+  contentType: string;
+  upstreamRequestId: string | null;
+  durationSeconds: number | null;
+  endpointUrl: string;
+}> {
   const payload: Record<string, unknown> = {
     model,
     input: params.text,
@@ -710,21 +1834,33 @@ async function synthesizeSingleChunk(
     max_generate_length: estimateMaxGenerateLength(params.text, params.mode),
   };
 
-  if (params.mode === "clone") {
-    if (!params.cloneSample) {
-      throw new TtsProviderError("Clone mode requires an uploaded sample.", 400);
-    }
+  if (params.cloneSample) {
     const normalizedSample = await normalizeCloneSampleForUpstream(params.cloneSample);
     const base64 = Buffer.from(normalizedSample.bytes).toString("base64");
-    if (process.env.TTS_CLONE_USE_VOICE_DESCRIPTION?.trim().toLowerCase() === "true") {
-      payload.voice = normalizeCloneVoiceDescription(params.voice);
-    } else {
-      delete payload.voice;
-    }
-    payload.temperature = readNumericEnv("TTS_CLONE_TEMPERATURE", 0.65, 0.1, 2.0);
-    payload.cfg_value = readNumericEnv("TTS_CLONE_CFG_VALUE", 2.0, 0.1, 5.0);
     payload.ref_audio_wav_base64 = base64;
     payload.ref_audio_wav_format = "wav";
+
+    if (params.mode === "clone" && !isPresetReferenceSample(params.cloneSample)) {
+      if (process.env.TTS_CLONE_USE_VOICE_DESCRIPTION?.trim().toLowerCase() === "true") {
+        payload.voice = normalizeCloneVoiceDescription(params.voice);
+      } else {
+        delete payload.voice;
+      }
+      payload.temperature = retryAdjustedTemperature(
+        readNumericEnv("TTS_CLONE_TEMPERATURE", 0.55, 0.1, 2.0),
+        qualityRetryAttempt,
+      );
+      payload.cfg_value = readNumericEnv("TTS_CLONE_CFG_VALUE", 2.0, 0.1, 5.0);
+    } else {
+      // Standard preset TTS keeps the fixed speaker hint so the model stays on
+      // the same intended voice while still using the preset reference sample.
+      payload.voice = params.voice;
+      payload.temperature = retryAdjustedTemperature(
+        readNumericEnv("TTS_PRESET_TEMPERATURE", 0.45, 0.1, 2.0),
+        qualityRetryAttempt,
+      );
+      payload.cfg_value = readNumericEnv("TTS_PRESET_CFG_VALUE", 2.0, 0.1, 5.0);
+    }
   }
 
   const pool = getUpstreamEndpoints();
@@ -820,6 +1956,11 @@ async function synthesizeSingleChunk(
         const audioBytes = Buffer.from(base64, "base64");
         const normalizedContentType = normalizeContentType(contentType, expectedContentType);
 
+        if (isEmptyOrHeaderOnlyWav(audioBytes)) {
+          recordMetric(endpoint.url, params.text.length, Date.now() - startTime, false);
+          throw new TtsProviderError(upstreamEmptyAudioMessage(), 502);
+        }
+
         const durationSeconds =
           asNumberOrNull(data.duration_seconds) ??
           asNumberOrNull(data.audio_duration_seconds) ??
@@ -833,12 +1974,17 @@ async function synthesizeSingleChunk(
           contentType: normalizedContentType,
           upstreamRequestId,
           durationSeconds,
+          endpointUrl: endpoint.url,
         };
       }
 
       const bytes = new Uint8Array(await response.arrayBuffer());
       if (bytes.byteLength === 0) {
         throw new TtsProviderError("Upstream returned empty audio data.", 502);
+      }
+      if (isEmptyOrHeaderOnlyWav(bytes)) {
+        recordMetric(endpoint.url, params.text.length, Date.now() - startTime, false);
+        throw new TtsProviderError(upstreamEmptyAudioMessage(), 502);
       }
       const contentType = normalizeContentType(responseContentType, expectedContentType);
 
@@ -849,15 +1995,22 @@ async function synthesizeSingleChunk(
         contentType,
         upstreamRequestId,
         durationSeconds: null,
+        endpointUrl: endpoint.url,
       };
 
     } catch (err) {
       recordMetric(endpoint.url, params.text.length, Date.now() - startTime, false);
       lastError = err as Error;
-      if (err instanceof TtsProviderError && (err.status === 400 || err.status === 401 || err.status === 403 || err.status === 422)) {
-        throw err;
-      }
-      if (!(err instanceof TtsProviderError)) {
+      if (err instanceof TtsProviderError) {
+        if (err.status === 400 || err.status === 401 || err.status === 403 || err.status === 422) {
+          throw err;
+        }
+        disableEndpoint(
+          endpoint.url,
+          `Synthesis Error ${err.status}: ${err.message}`,
+          err.status === 502 ? 15000 : undefined,
+        );
+      } else {
         // A timeout/abort is request-specific (slow GPU cold start or long
         // generation), not proof the endpoint is unhealthy. Give it only a brief
         // cooldown so one slow chunk can't disable the whole pool for 5 minutes.
@@ -879,10 +2032,7 @@ async function synthesizeSingleChunk(
 }
 
 // VoxCPM2 is stochastic and occasionally returns a near-silent chunk; a retry
-// usually produces usable audio. We retry, but never throw here: if a chunk
-// stays quiet after retries we keep the loudest attempt and continue, so one
-// unlucky sub-chunk cannot fail an entire long-text job. The caller validates
-// the final MERGED output instead.
+// usually produces usable audio. Never save a bad silent attempt after retries.
 async function synthesizeChunkWithSilenceRetry(
   params: {
     mode: GenerationMode;
@@ -895,39 +2045,148 @@ async function synthesizeChunkWithSilenceRetry(
   responseFormat: AudioResponseFormat,
   expectedContentType: string,
 ): Promise<Awaited<ReturnType<typeof synthesizeSingleChunk>>> {
+  // Two retries by default (3 total attempts). Analyzes raw upstream audio for
+  // silence AND buzzing/stuck-tonal/noise issues; passing audio is returned
+  // unchanged, failing audio is regenerated (with temperature escalation).
   const maxAttempts = Math.round(readNumericEnv("TTS_NEAR_SILENCE_RETRIES", 2, 0, 5)) + 1;
-  let best: Awaited<ReturnType<typeof synthesizeSingleChunk>> | null = null;
-  let bestPeak = -1;
+  let lastError: Error | null = null;
+  let lastSilenceIssue: string | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const result = await synthesizeSingleChunk(params, model, responseFormat, expectedContentType);
-    if (!isNearSilentGeneratedAudio(result.audioBytes, result.contentType)) {
-      return result;
-    }
-    // Track the loudest near-silent attempt as a fallback.
-    const stats = getWavPcm16Stats(result.audioBytes);
-    const peak = stats?.peak ?? 0;
-    if (peak > bestPeak) {
-      bestPeak = peak;
-      best = result;
-    }
-    if (attempt < maxAttempts) {
-      console.warn(
-        `[TTS] Near-silent chunk (attempt ${attempt}/${maxAttempts}), regenerating ${params.mode} chunk of ${Array.from(params.text).length} chars.`,
-      );
-    } else {
-      console.warn(
-        `[TTS] Chunk still near-silent after ${maxAttempts} attempts; keeping best attempt and continuing.`,
-      );
+    try {
+      const result = await synthesizeSingleChunk(params, model, responseFormat, expectedContentType, attempt - 1);
+      const analysis = await analyzeRawGeneratedAudioSilence(result.audioBytes, result.contentType);
+
+      if (!analysis.issue) {
+        return {
+          ...result,
+          durationSeconds: result.durationSeconds ?? analysis.durationSeconds,
+        };
+      }
+
+      lastSilenceIssue = analysis.issue;
+      if (attempt < maxAttempts) {
+        console.warn(
+          `[TTS] Silent upstream chunk (${analysis.issue}); regenerating attempt ${attempt}/${maxAttempts} for ${params.mode} chunk of ${Array.from(params.text).length} chars.`,
+        );
+      }
+    } catch (error) {
+      lastError = error as Error;
+      if (error instanceof TtsProviderError && [400, 401, 403, 422].includes(error.status)) {
+        throw error;
+      }
+      if (attempt < maxAttempts) {
+        console.warn(
+          `[TTS] Chunk synthesis or silence analysis failed (${error instanceof Error ? error.message : String(error)}); regenerating attempt ${attempt}/${maxAttempts}.`,
+        );
+      }
     }
   }
 
-  // All attempts were near-silent — return the best one rather than failing the
-  // whole job. The merged-output check decides if the overall result is unusable.
-  return best as Awaited<ReturnType<typeof synthesizeSingleChunk>>;
+  console.warn(
+    `[TTS] Chunk rejected after ${maxAttempts} attempts: ${lastSilenceIssue ?? lastError?.message ?? "unknown silent audio failure"}.`,
+  );
+  throw new TtsProviderError(nearSilentAudioMessage(), 502);
 }
 
-export async function synthesizeWithUpstream(params: {
+type ChunkSynthesisResult = Awaited<ReturnType<typeof synthesizeSingleChunk>>;
+
+function isRetryableGeneratedAudioFailure(error: unknown): boolean {
+  if (!(error instanceof TtsProviderError) || error.status !== 502) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message === nearSilentAudioMessage().toLowerCase() ||
+    message.includes("near-silent") ||
+    message.includes("became empty after silence cleanup") ||
+    message.includes("wav format is not supported") ||
+    message.includes("could not be normalized")
+  );
+}
+
+async function synthesizeChunkWithFallbackSplit(
+  params: {
+    mode: GenerationMode;
+    text: string;
+    voice: string;
+    model?: string;
+    cloneSample?: CloneSample;
+  },
+  model: string,
+  responseFormat: AudioResponseFormat,
+  expectedContentType: string,
+): Promise<ChunkSynthesisResult[]> {
+  try {
+    return [await synthesizeChunkWithSilenceRetry(params, model, responseFormat, expectedContentType)];
+  } catch (error) {
+    if (!isRetryableGeneratedAudioFailure(error)) {
+      throw error;
+    }
+
+    const inputChars = Array.from(params.text).length;
+    const nextSplitChars = nextFallbackSplitChars(inputChars);
+    if (!nextSplitChars) {
+      throw error;
+    }
+
+    const fallbackChunks = splitTextIntoChunks(params.text, nextSplitChars);
+    if (fallbackChunks.length <= 1) {
+      throw error;
+    }
+
+    console.warn(
+      `[TTS] Chunk of ${inputChars} chars failed audio validation; retrying as ${fallbackChunks.length} smaller chunks (${nextSplitChars} chars max).`,
+    );
+
+    const results: ChunkSynthesisResult[] = [];
+    for (const chunkText of fallbackChunks) {
+      results.push(...await synthesizeChunkWithFallbackSplit(
+        { ...params, text: chunkText },
+        model,
+        responseFormat,
+        expectedContentType,
+      ));
+    }
+    return results;
+  }
+}
+
+// Decodes the final delivered MP3 and runs the full quality gate at DELIVERY
+// loudness. The per-chunk gate analyzes raw upstream audio (quiet, ~-29 LUFS),
+// so a buzz sitting below the tonal RMS floor escapes it and then gets
+// amplified into an audible tone by normalizeOutputLoudness (~-16 LUFS). This
+// re-check catches that case on the audio the user actually receives.
+async function analyzeDeliveredAudio(
+  bytes: Uint8Array,
+): Promise<{ issue: string | null; longestTonalSeconds: number }> {
+  try {
+    const sampleRate = readCanonicalGeneratedSampleRate();
+    const pcmBytes = await runFfmpeg(
+      [
+        "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+        "-map", "0:a:0", "-vn", "-ac", "1", "-ar", String(sampleRate),
+        "-codec:a", "pcm_s16le", "-sample_fmt", "s16", "-f", "s16le", "pipe:1",
+      ],
+      bytes,
+    );
+    if (pcmBytes.byteLength < 2) return { issue: null, longestTonalSeconds: 0 };
+    const wav = createPcm16Wav(
+      Buffer.from(pcmBytes.buffer, pcmBytes.byteOffset, pcmBytes.byteLength),
+      1,
+      sampleRate,
+    );
+    const stats = getWavPcm16Stats(wav);
+    if (!stats) return { issue: null, longestTonalSeconds: 0 };
+    return {
+      issue: generatedAudioStatsIssue(stats),
+      longestTonalSeconds: stats.longestSteadyTonalSeconds,
+    };
+  } catch {
+    // Never fail delivery over the safeguard's own analysis.
+    return { issue: null, longestTonalSeconds: 0 };
+  }
+}
+
+async function synthesizeMergedAudio(params: {
   mode: GenerationMode;
   text: string;
   voice: string;
@@ -938,65 +2197,47 @@ export async function synthesizeWithUpstream(params: {
   const responseFormat = readAudioResponseFormat();
   const expectedContentType = contentTypeForResponseFormat(responseFormat);
 
-  // Split text into chunks to prevent upstream timeout on long text
-  const chunks = splitTextIntoChunks(params.text, 400);
+  // Split long text into roughly one-minute requests. Tiny text chunks made
+  // long-form speech sound clipped and inconsistent, so normal generation now
+  // keeps VoxCPM2 segments much larger and preserves the upstream audio.
+  const chunks = splitTextIntoChunks(params.text, upstreamChunkChars(params.mode));
 
-  if (chunks.length <= 1) {
-    // Single chunk logic (retries internally on near-silent output)
-    const single = await synthesizeChunkWithSilenceRetry(
-      params,
-      model,
-      responseFormat,
-      expectedContentType
-    );
-    // Single chunk has no other audio to carry it, so a silent result is fatal.
-    if (isNearSilentGeneratedAudio(single.audioBytes, single.contentType)) {
-      throw new TtsProviderError(nearSilentAudioMessage(), 502);
-    }
-    const publicAudio = await normalizeToPublicMp3(
-      single.audioBytes,
-      single.contentType,
-      single.durationSeconds ?? inferAudioDurationSeconds(single.audioBytes, single.contentType)
-    );
-
-    return {
-      audioBytes: publicAudio.bytes,
-      contentType: publicAudio.contentType,
-      model,
-      upstreamRequestId: single.upstreamRequestId,
-      outputSeconds: publicAudio.outputSeconds,
-    };
-  }
-
-  // Generate chunks sequentially so one long request keeps a steadier speaker
-  // profile. Each chunk retries internally if the model returns near-silent audio.
-  const chunkResults: Array<Awaited<ReturnType<typeof synthesizeSingleChunk>>> = [];
+  const chunkResults: ChunkSynthesisResult[] = [];
   for (const chunkText of chunks) {
     chunkResults.push(await synthesizeChunkWithSilenceRetry(
       { ...params, text: chunkText },
       model,
       responseFormat,
-      expectedContentType
+      expectedContentType,
     ));
   }
 
-  const normalizedContentType = normalizeContentType(chunkResults[0].contentType, expectedContentType);
-  const mergedBytes =
-    normalizedContentType.includes("mpeg") || chunkResults.every((result) => looksLikeMp3(result.audioBytes))
-      ? await concatMp3Buffers(chunkResults.map((result) => result.audioBytes))
-      : concatPcm16WavBuffers(chunkResults.map((result) => result.audioBytes));
+  // Independently generated chunks drift in volume, which makes long audio get
+  // louder/quieter over time. Align WAV chunks to one common loudness with a
+  // capped linear gain (volume only, no EQ/tone change) before encoding.
+  const leveledChunks = levelWavChunksToCommonLoudness(
+    chunkResults.map((result) => result.audioBytes),
+  );
 
-  // Only fail if the WHOLE merged result is near-silent. A single quiet sub-chunk
-  // is tolerated (the rest of the audio carries the generation).
-  if (isNearSilentGeneratedAudio(mergedBytes, normalizedContentType)) {
-    throw new TtsProviderError(nearSilentAudioMessage(), 502);
+  const publicSegments: Uint8Array[] = [];
+  let summedSeconds = 0;
+  let hasSummedSeconds = false;
+
+  for (let index = 0; index < chunkResults.length; index++) {
+    const result = chunkResults[index];
+    const chunkBytes = leveledChunks[index] ?? result.audioBytes;
+    const resultSeconds = result.durationSeconds ?? inferAudioDurationSeconds(chunkBytes, result.contentType);
+    const publicAudio = await normalizeToPublicMp3(chunkBytes, result.contentType, resultSeconds);
+    publicSegments.push(publicAudio.bytes);
+    if (typeof publicAudio.outputSeconds === "number" && Number.isFinite(publicAudio.outputSeconds) && publicAudio.outputSeconds > 0) {
+      summedSeconds += publicAudio.outputSeconds;
+      hasSummedSeconds = true;
+    }
   }
 
-  const publicAudio = await normalizeToPublicMp3(
-    mergedBytes,
-    normalizedContentType,
-    inferAudioDurationSeconds(mergedBytes, normalizedContentType)
-  );
+  const mergedBytes = await concatMp3Buffers(publicSegments);
+  const depausedBytes = await capLongPauses(mergedBytes);
+  const normalizedBytes = await normalizeOutputLoudness(depausedBytes);
 
   const upstreamRequestId = chunkResults
     .map((r) => r.upstreamRequestId)
@@ -1004,10 +2245,49 @@ export async function synthesizeWithUpstream(params: {
     .join(",");
 
   return {
-    audioBytes: publicAudio.bytes,
-    contentType: publicAudio.contentType,
+    audioBytes: normalizedBytes,
+    contentType: PUBLIC_AUDIO_CONTENT_TYPE,
     model,
     upstreamRequestId,
-    outputSeconds: publicAudio.outputSeconds,
+    outputSeconds: hasSummedSeconds ? summedSeconds : null,
   };
+}
+
+export async function synthesizeWithUpstream(params: {
+  mode: GenerationMode;
+  text: string;
+  voice: string;
+  model?: string;
+  cloneSample?: CloneSample;
+}): Promise<TtsSynthesisResult> {
+  // Bounded final-quality retry. The per-chunk gate analyzes raw (quiet)
+  // upstream audio, so a buzz that only becomes audible after the delivery-
+  // loudness boost can slip through. Re-check the delivered audio and, if it
+  // buzzes, regenerate the whole synthesis a small number of times. On
+  // exhaustion we deliver the least-buzzy attempt rather than failing a
+  // request that is otherwise fine. Disabled with TTS_FINAL_QUALITY_RETRIES=0.
+  const maxAttempts = Math.round(readNumericEnv("TTS_FINAL_QUALITY_RETRIES", 1, 0, 3)) + 1;
+  let best: { result: TtsSynthesisResult; tonalSeconds: number } | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const result = await synthesizeMergedAudio(params);
+    if (attempt >= maxAttempts && best === null) {
+      // Last attempt and nothing kept yet: skip the extra analysis pass.
+      return result;
+    }
+    const analysis = await analyzeDeliveredAudio(result.audioBytes);
+    if (!analysis.issue) {
+      return result;
+    }
+    if (best === null || analysis.longestTonalSeconds < best.tonalSeconds) {
+      best = { result, tonalSeconds: analysis.longestTonalSeconds };
+    }
+    if (attempt < maxAttempts) {
+      console.warn(
+        `[TTS] Delivered audio quality issue (${analysis.issue}); regenerating whole synthesis attempt ${attempt}/${maxAttempts} for ${params.mode} of ${Array.from(params.text).length} chars.`,
+      );
+    }
+  }
+
+  return best?.result ?? (await synthesizeMergedAudio(params));
 }

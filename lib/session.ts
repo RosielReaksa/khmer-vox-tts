@@ -10,6 +10,22 @@ type SessionPayload = {
   email: string;
 };
 
+function booleanEnv(name: string): boolean | null {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (!value) return null;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return null;
+}
+
+function shouldUseSecureSessionCookie(): boolean {
+  const sessionOverride = booleanEnv("SESSION_COOKIE_SECURE");
+  if (sessionOverride !== null) return sessionOverride;
+  const sharedOverride = booleanEnv("COOKIE_SECURE");
+  if (sharedOverride !== null) return sharedOverride;
+  return process.env.NODE_ENV === "production";
+}
+
 function getSessionSecret(): Uint8Array {
   const value = process.env.SESSION_SECRET?.trim();
   if (!value || value === "dev_only_change_me" || value === "replace-with-a-long-random-secret") {
@@ -53,7 +69,7 @@ export async function setSessionCookie(token: string): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureSessionCookie(),
     sameSite: "lax",
     path: "/",
     maxAge: SESSION_EXPIRES_IN_SECONDS,
@@ -64,10 +80,9 @@ export async function clearSessionCookie(): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE_NAME, "", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldUseSecureSessionCookie(),
     sameSite: "lax",
     path: "/",
     maxAge: 0,
   });
 }
-

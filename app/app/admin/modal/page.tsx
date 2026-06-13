@@ -180,7 +180,12 @@ export default function AdminModalPage() {
     });
 
     try {
-      const res = await fetch(`/api/admin/modal/deploy?label=${encodeURIComponent(account.label)}&profile=${encodeURIComponent(account.profile)}`, {
+      const search = new URLSearchParams({
+        label: account.label,
+        profile: account.profile,
+        url: account.url,
+      });
+      const res = await fetch(`/api/admin/modal/deploy?${search.toString()}`, {
         method: "DELETE"
       });
       const data = await res.json();
@@ -1210,4 +1215,3 @@ export default function AdminModalPage() {
     </section>
   );
 }
-

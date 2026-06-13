@@ -12,6 +12,7 @@ import {
   touchApiKeyLastUsed,
   updateGenerationRecord,
 } from "@/lib/store";
+import { buildAudioObjectKey, putAudioObject } from "@/lib/audio-storage";
 import { invalidateDashboardCountCache } from "@/lib/dashboard-count-cache";
 import { prepareTextForSpeech } from "@/lib/speech-text-sanitizer";
 import { type CloneSample, synthesizeWithUpstream, TtsProviderError } from "@/lib/tts-provider";
@@ -111,6 +112,8 @@ export async function runGenerationForUser(params: {
 }): Promise<{
   generationId: string;
   audioBase64: string;
+  audioObjectKey: string | null;
+  audioObjectUrl: string | null;
   contentType: string;
   creditsRequested: number;
   creditsCharged: number;
@@ -269,6 +272,16 @@ export async function runGenerationForUser(params: {
     }
     const creditsCharged = calculateCreditsForOutputSeconds(outputSeconds, effectiveMode, cloneCreditsPerSecond);
     const audioBase64 = Buffer.from(synthesized.audioBytes).toString("base64");
+    const storedAudio = await putAudioObject({
+      key: buildAudioObjectKey({
+        scope: "generation",
+        userId: params.userId,
+        id: generationId,
+        fileName: `${generationId}.mp3`,
+      }),
+      bytes: synthesized.audioBytes,
+      contentType: synthesized.contentType,
+    });
 
     // Defer partial refund until after all DB writes succeed.
     // Track the adjustment here, apply it after createGenerationRecord.
@@ -304,7 +317,9 @@ export async function runGenerationForUser(params: {
       creditsCharged,
       latencyMs,
       errorMessage: null,
-      audioBase64,
+      audioBase64: storedAudio ? null : audioBase64,
+      audioObjectKey: storedAudio?.key ?? null,
+      audioObjectUrl: storedAudio?.url ?? null,
       contentType: synthesized.contentType,
     });
     if (!generation) {
@@ -339,6 +354,8 @@ export async function runGenerationForUser(params: {
     return {
       generationId: generation.id,
       audioBase64,
+      audioObjectKey: storedAudio?.key ?? null,
+      audioObjectUrl: storedAudio?.url ?? null,
       contentType: synthesized.contentType,
       creditsRequested,
       creditsCharged,
@@ -380,6 +397,8 @@ export async function runGenerationForUser(params: {
         latencyMs,
         errorMessage: message,
         audioBase64: null,
+        audioObjectKey: null,
+        audioObjectUrl: null,
         contentType: null,
       });
     } else {

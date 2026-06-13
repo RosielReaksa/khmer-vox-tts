@@ -1,6 +1,6 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-06-11
+Last updated: 2026-06-13
 
 ## Purpose
 
@@ -217,12 +217,18 @@ Current defaults in `lib/tts-provider.ts`:
 
 - Reference filter:
   `highpass=f=70,lowpass=f=7600,loudnorm=I=-23:TP=-3:LRA=11`
-- Output filter:
-  `highpass=f=70,lowpass=f=13500,loudnorm=I=-18:TP=-2.5:LRA=9`
-- MP3 bitrate: 96 kbps
-- Clone temperature: 0.65
-- Long chunks generate sequentially for voice consistency
-- Final output is mastered and returned as MP3
+- Generated output is kept close to the upstream VoxCPM2 result.
+- WAV upstream responses are converted to MP3; MP3 upstream responses are
+  preserved.
+- No final EQ, loud-normalization, silence trimming, PCM remastering, or
+  stuck-tone quality repair is applied to passing generated audio.
+- MP3 bitrate default: 160 kbps.
+- Standard preset temperature default: 0.45.
+- Clone temperature default: 0.55.
+- Long chunks generate sequentially and target about one minute of audio per
+  provider request for voice consistency.
+- A narrow silence guard analyzes generated audio and retries near-silent
+  upstream output, but returns the original upstream bytes when audio passes.
 
 Clone prompts request the same speaker as the reference with natural, clear
 speech. Do not introduce scene-based voice or sound directions that can cause
@@ -340,6 +346,40 @@ Update on 2026-06-11:
   `npx tsc --noEmit` passed, `npm run build` passed, and local
   `http://localhost:3000/api/health` returned 200.
 
+Local performance follow-up on 2026-06-11:
+
+- Local development was much slower than production because `data/store.json`
+  had grown above 42 MB, mostly from stored base64 audio, and every batch poll
+  refreshed and rewrote the full file.
+- The local JSON store now caches normalized reads by file metadata, shares an
+  in-flight read, and writes compact JSON after atomic replacement.
+- Batch status polling no longer refreshes the full job rollup on every GET and
+  no longer returns item audio payloads or the stored clone sample.
+- Local inline worker kicks are deduplicated per job, including queued work
+  resumed from a stale `running` job after a dev-server restart.
+- File-backed local development defaults to one batch item at a time unless
+  `BATCH_ITEM_CONCURRENCY` is explicitly configured. Production with Postgres
+  keeps the existing higher default concurrency.
+- A real local 3-segment long-text job completed successfully with one running
+  item at a time. Warm status polls were usually 20-40 ms, and the merged result
+  returned a valid 2.4 MB `audio/mpeg` MP3 for about 204 seconds of audio.
+- Verification passed: `npm run lint` with existing warnings only,
+  `npx tsc --noEmit`, and `npm run build`.
+- These performance changes remain local-only and were not deployed.
+
+Dashboard long-form Standard TTS limit update on 2026-06-11:
+
+- Standard TTS on the dashboard now accepts up to 50,000 characters.
+- The 5,000-character limit remains the single-segment and direct API input
+  limit. Clone mode also keeps the 5,000-character dashboard input limit.
+- `/api/generate` accepts the 50,000-character dashboard Standard TTS payload
+  only because long text is immediately split into queued batch segments.
+- This avoids sending one huge request to Modal while allowing long-form user
+  text in the main Generate Speech page.
+- Verification passed locally: `npm run lint` with existing warnings only,
+  `npx tsc --noEmit`, and `npm run build`.
+- This limit update remains local-only and was not deployed.
+
 ### Local Auth And JSON Store Reliability
 
 Update on 2026-06-11:
@@ -451,16 +491,1205 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## Recent Local Audio Quality Work
+
+Update on 2026-06-11:
+
+- Generated audio now goes through shared silence cleanup before public MP3
+  delivery. This applies to dashboard, API, queued batch output, and merged
+  batch downloads.
+- Upstream chunks that are mostly quiet, have a long quiet tail, or contain a
+  long silent section are rejected and retried instead of being saved as a
+  silent or empty-sounding result.
+- Merged batch MP3 downloads are re-cleaned and mastered before returning to
+  the dashboard so old segment joins do not expose long silent tails.
+- Non-secret quality knobs were added to `.env.example` for silence filters,
+  low-window analysis, long-silence limits, and retry behavior.
+- Verification passed locally: `npm run lint` with existing warnings only,
+  `npx tsc --noEmit`, and `npm run build`.
+- This audio-quality work remains local-only and was not deployed.
+
+## Recent Modal Account Pool Fix
+
+Update on 2026-06-11:
+
+- Modal deployment now reuses an existing configured VoxCPM API key from the
+  active upstream pool when a new account is connected, so the connect flow no
+  longer fails when `VOXCPM_API_KEY` is absent from the local shell.
+- The upstream pool loader now merges the persisted `data/tts-upstream-pool.json`
+  entries with the env-backed pool instead of letting an empty or stale file
+  hide connected accounts.
+- Undeploy now removes only the selected endpoint by URL when available, then
+  rewrites both pool sources from the merged filtered list so one account no
+  longer clears the rest.
+- The admin Modal page now sends the selected endpoint URL with the undeploy
+  request to make account removal unambiguous.
+- Verification passed locally: `npm run lint` with existing warnings only,
+  `npx tsc --noEmit`, and `npm run build`.
+- This Modal account pool fix remains local-only and was not deployed.
+
+## Recent Security Fixes (SSRF + Command Injection)
+
+Update on 2026-06-11:
+
+Closed the two CRITICAL findings from `AUDIT_FINDINGS.md` (C1, C2).
+
+- C1 (SSRF via webhook URLs): added `lib/ssrf-guard.ts`. It blocks
+  cloud-metadata (`169.254.169.254`), loopback, RFC1918 private ranges, CGNAT
+  (100.64/10), multicast/reserved, IPv6 loopback/link-local/ULA and
+  IPv4-mapped addresses, and internal hostnames (`localhost`, dotless
+  service names like `web`/`postgres`, `*.svc.cluster.local`, `.internal`,
+  `.local`). It exposes `safeFetch`, which re-resolves DNS and re-validates
+  every redirect hop using `redirect: "manual"`.
+- Wired `safeFetch` into both outbound user-supplied webhook paths:
+  `lib/batch-service.ts` (batch job callback delivery) and
+  `lib/business-webhook-test.ts` (dashboard webhook test).
+- The guard is ON in production and OFF in local development by default so
+  localhost webhook testing keeps working. Override with the
+  `WEBHOOK_SSRF_GUARD` env name (`1`/`true`/`on` to force on, `0`/`false`/`off`
+  to force off). No new production env value is required; it is on automatically
+  when `NODE_ENV=production`.
+- C2 (command injection in Modal deployer): the admin deploy route
+  `app/api/admin/modal/deploy/route.ts` now validates `tokenId`, `tokenSecret`,
+  `profile`, and `modelFile` with strict charset regexes plus length caps.
+  `lib/modal-deployer.ts` also validates each user-influenced arg with
+  `assertSafeModalArg` before every `spawn`, which additionally covers the
+  undeploy path whose `label`/`profile` come from unvalidated query params.
+  `shell: true` was intentionally kept for cross-platform `modal`/`modal.cmd`
+  resolution; injection is closed by the input validation instead.
+- Verification passed locally: `npx tsc --noEmit` clean, `npm run lint`
+  0 errors (67 pre-existing warnings only), `npm run build` exit 0, and a
+  standalone SSRF predicate test passed all 25 block/allow cases (including
+  allowing the production host `voxtts.online`).
+- These security fixes remain local-only and were not deployed. C2's route-level
+  regex is a new input contract: confirm real Modal token IDs/secrets only use
+  `[A-Za-z0-9._:-]` before deploying, or relax the regex if a legitimate value
+  is rejected.
+
+## Recent V2 Generation Queue Work
+
+Update on 2026-06-11:
+
+- Started the V2 generation-system rebuild by making dashboard generation
+  queue-first. `/api/generate` and `/api/generate-clone` no longer call Modal
+  directly; they validate/auth/rate-limit the request, create a queued job,
+  kick the worker, and return a job id for the existing dashboard poller.
+- Added `lib/generation-queue.ts` as the shared dashboard enqueue gateway.
+  It prepares text once, auto-splits long text into worker-safe segments, keeps
+  each line under existing batch limits, and creates one dashboard job for the
+  full request.
+- Dashboard Clone Voice now accepts the same 50,000-character dashboard limit
+  as Standard TTS; the worker still processes it as smaller validated segments.
+- The existing dashboard UI is unchanged functionally: it already supports
+  queued jobs, progress polling, merged MP3 loading, balance refresh, and
+  partial-job warnings.
+- Public `/api/v1/audio/speech` remains synchronous for compatibility. The
+  existing batch API remains the async API path until a separate v2 public
+  async endpoint is introduced.
+- Verification passed locally: `npm run lint` with existing warnings only,
+  `npx tsc --noEmit`, and `npm run build`.
+- This V2 generation queue work remains local-only and was not deployed.
+
+## Recent V2 Async API And Worker Operations Work
+
+Update on 2026-06-12:
+
+- Added public async customer API endpoints for queued MP3 jobs:
+  `POST /api/v2/audio/jobs`, `POST /api/v2/audio/clone/jobs`,
+  `GET /api/v2/audio/jobs/[id]`, and
+  `GET /api/v2/audio/jobs/[id]/audio`.
+- V2 standard jobs accept long `input`, auto-clean and split text into worker
+  segments, enforce paid API-key access, enforce MP3-only output, apply queue
+  and token limits, and return `202 Accepted` with `job_id`, `status_url`,
+  `audio_url`, and `zip_url`.
+- V2 clone jobs use the same queue/status/download contract and require voice
+  consent plus a reference sample from multipart upload or JSON base64. Clone
+  reference samples are cleared from the job record after terminal processing.
+- Added `lib/v2-audio-jobs.ts` as the shared V2 input expansion and response
+  serializer. V2 status payloads intentionally expose `has_audio` and download
+  URLs, not audio base64.
+- Webhook payloads now include V2 status/audio URLs plus zip URLs so API users
+  can poll or download MP3 after completion without the admin dashboard.
+- The admin Jobs page now shows Modal account pool health, endpoint cooldowns,
+  request counts, success rate, and latency. Admins can reset Modal cooldowns
+  and force-process a selected queued job.
+- Modal failover now briefly cools down endpoints that return invalid or empty
+  generated audio, so retries can route to another configured account.
+- Added store-level audio lifecycle cleanup for both local JSON and Postgres:
+  `cleanupOldAudioStorage` clears old stored audio payloads and clone samples
+  after a retention window without deleting users, jobs, payments, API keys, or
+  saved voices. The admin Jobs page has dry-run and confirmed cleanup actions.
+- Added smoke helpers:
+  `npm run smoke:v2-audio-api` for async API submit/status/download checks
+  (requires an API key at runtime, never stored), and
+  `npm run smoke:audio-quality -- --file <mp3>` for ffmpeg-based silent-audio
+  detection.
+- Verification passed locally: `npm run smoke:v2-audio-api` skipped because no
+  API key was provided, `npm run smoke:audio-quality -- --file "D:\test result\download.mp3"`
+  passed, `npm run lint` passed with existing warnings only,
+  `npx tsc --noEmit` passed, and `npm run build` passed.
+- This V2 async API and worker-operations work remains local-only and was not
+  deployed.
+
+## Recent Spaces Audio Storage Work
+
+Update on 2026-06-12:
+
+- Added optional DigitalOcean Spaces/S3-compatible object storage for generated
+  MP3 audio. The app reads storage credentials only from environment variables;
+  no access key or secret value is stored in this repository or this memory
+  file.
+- Added `lib/audio-storage.ts` with signed S3-compatible PUT/GET/DELETE
+  helpers. It supports both regional endpoints such as
+  `https://sgp1.digitaloceanspaces.com` and bucket endpoints such as
+  `https://<bucket>.sgp1.digitaloceanspaces.com`.
+- Added generated-audio pointer fields to both local JSON and Postgres-backed
+  records: `audioObjectKey`/`audioObjectUrl` in app records and
+  `audio_object_key`/`audio_object_url` in Postgres. Existing legacy
+  `audioBase64` rows remain supported.
+- New single-generation output uploads to object storage when Spaces env vars
+  are configured, then persists the object key instead of large inline base64.
+  The synchronous dashboard/API response still returns audio bytes immediately
+  for compatibility.
+- Batch item records reuse the generation object's storage key, so batch job
+  details, ZIP downloads, merged previews, V1 downloads, V2 downloads, status
+  payloads, dashboard history, and dashboard live events all treat either
+  inline base64 or object storage as available audio.
+- Added `npm run smoke:spaces-storage`, which uploads/downloads/verifies/deletes
+  a tiny smoke object when Spaces env vars are present and skips cleanly when
+  they are absent.
+- Added `.env.example` placeholders for `SPACES_ENDPOINT`, `SPACES_BUCKET`,
+  `SPACES_REGION`, `SPACES_PUBLIC_BASE_URL`, `SPACES_ACCESS_KEY_ID`, and
+  `SPACES_SECRET_ACCESS_KEY`.
+- Verification passed locally: `npm run smoke:spaces-storage` skipped because
+  Spaces env vars were not configured in the shell, `npx tsc --noEmit` passed,
+  `npm run lint` passed with existing warnings only, and `npm run build`
+  passed.
+- This Spaces audio storage work remains local-only and was not deployed. To
+  test real uploads locally, set the Spaces env vars in the local runtime, then
+  restart the dev server before generating audio.
+
+## Recent Local Auth And Runtime Fix
+
+Update on 2026-06-12:
+
+- Fixed local sign-in on `http://localhost:3001` when running a production-built
+  server with `next start`. The root cause was secure-only CSRF/session cookies
+  being rejected on plain HTTP localhost.
+- `proxy.ts` now keeps CSRF cookies secure for non-local production traffic but
+  permits non-secure CSRF cookies for localhost or an explicit local cookie
+  override.
+- `lib/session.ts` now supports explicit local cookie security overrides for
+  production-built local testing. Keep these overrides disabled on the VPS.
+- `lib/store.ts` still requires Postgres in production by default, but can use
+  the local JSON store only when an explicit local-only env flag is enabled.
+- Added `.env.example` local-test placeholders for the JSON-store and cookie
+  overrides. No real secret values were added.
+- Restarted the local `3001` server with local-only flags, removed the stale
+  JSON store lock, and verified:
+  `curl http://localhost:3001/api/health` returned 200,
+  `curl http://localhost:3001/app/signin` returned 200, and a fake sign-in with
+  matching CSRF cookie returned 401 instead of 403/500.
+- Verification passed locally: `npx tsc --noEmit`, `npm run lint` with existing
+  warnings only, and `npm run build`.
+- This fix is local-only and was not deployed.
+
+## Recent Long Audio WAV Compatibility Fix
+
+Update on 2026-06-12:
+
+- Fixed a long-generation failure where a completed multi-segment job could
+  fail during final merge/MP3 conversion with:
+  `Upstream WAV format is not supported for MP3 conversion.`
+- Root cause: the app parser accepted only classic PCM-16 WAV headers. FFmpeg
+  and upstream services can emit valid WAVE_FORMAT_EXTENSIBLE PCM-16 WAV after
+  cleanup/streaming, especially in long multi-segment flows. The old strict
+  parser rejected that valid audio after chunk retries had already succeeded.
+- `lib/tts-provider.ts` now accepts both classic PCM WAV and
+  WAVE_FORMAT_EXTENSIBLE PCM-16 WAV with the PCM subformat GUID before merging
+  chunks or encoding final MP3 output.
+- Restarted the local `3001` server with the rebuilt code and verified:
+  `curl http://localhost:3001/api/health` returned 200 and
+  `curl http://localhost:3001/app/dashboard/history?mode=tts` returned 200.
+- Verification passed locally: `npx tsc --noEmit`, `npm run lint` with existing
+  warnings only, and `npm run build`.
+- This fix is local-only and was not deployed. Deploying to VPS will require a
+  Docker image rollout and will ship the current worktree state, not only this
+  single-file fix.
+
+## Recent Long Text Stability Fix
+
+Update on 2026-06-12:
+
+- Fixed another long-text dashboard failure path where 3,000-10,000 character
+  requests could still fail with
+  `Upstream WAV format is not supported for MP3 conversion.`
+- Root cause: dashboard generation was split into roughly 700-character batch
+  lines, then each line could split again inside the provider's 400-character
+  synthesis path. That nested provider merge could still hit WAV container
+  edge cases before the final MP3 conversion.
+- Dashboard queued generation now defaults to 360-character worker lines and
+  has a dashboard-only cap of 160 generated lines, allowing the existing
+  50,000-character dashboard limit to stay under the provider's safer
+  single-call size in normal use.
+- Public batch API limits remain unchanged at 100 lines. V2 async API input
+  expansion also defaults to 360-character generated segments for safer normal
+  long-form requests.
+- Generated-audio cleanup now forces one audio stream, no video, mono PCM-16,
+  and a canonical 24 kHz sample rate before chunk quality checks and MP3
+  conversion. It asks FFmpeg for raw `s16le` PCM and wraps that PCM with the
+  app's own WAV header, so streamed FFmpeg WAV headers can no longer trigger
+  `Upstream WAV format is not supported for MP3 conversion.`
+- The local JSON store now invalidates its read cache before every locked
+  mutation. This prevents a write from starting with a stale store snapshot and
+  losing a just-created processing generation record during long batch
+  finalization.
+- Completed batch rollups now clear stale `errorMessage`, `deadLetterReason`,
+  and `lastWorkerError` fields, and touching an already-terminal batch job
+  refreshes its rollup before returning. This keeps successful retries from
+  showing an old worker warning.
+- Retried the stuck local dashboard Standard TTS job
+  `31af3d1c-3217-488d-bed2-1cb982c9f3a1`: it completed with 10/10 successful
+  segments, all items had `audio/mpeg` MP3 output stored by object key, and the
+  final job had `errorMessage: null` and `lastWorkerError: null`.
+- Restarted the local `3001` server with the local-only JSON/cookie flags and
+  verified `http://localhost:3001/api/health` returned 200 and
+  `http://localhost:3001/app/dashboard/history?mode=tts` returned 200.
+- Verification passed locally: `npx tsc --noEmit`, `npm run lint` with
+  existing warnings only, and `npm run build`.
+- This fix is local-only and was not deployed.
+
+## New Staging VPS Deployment
+
+Update on 2026-06-12:
+
+- Deployed the current fixed worktree to the new staging VPS at
+  `http://178.128.103.120`.
+- Production `https://voxtts.online` was not rolled out or changed.
+- Installed K3s and added a 4 GiB swap file on the 2 vCPU / 4 GiB staging VPS.
+- Staging runs one Postgres pod, one web pod, and one worker pod in the
+  `khmer-vox` namespace with a hostless Traefik HTTP ingress.
+- Built and pushed the isolated image tag
+  `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260612-2`.
+- GHCR rejected the copied pull credential for the staging tag with HTTP 403,
+  so the same built image was imported directly into staging K3s containerd
+  and both deployments use `imagePullPolicy: IfNotPresent`.
+- Added an opt-in `DISABLE_HTTPS_REDIRECT` proxy setting for HTTP-only staging.
+  It defaults to disabled, so production HTTPS behavior is unchanged.
+- Staging web also sets `COOKIE_SECURE=false`,
+  `SESSION_COOKIE_SECURE=false`, and `CSRF_COOKIE_SECURE=false` so login can
+  work over the temporary HTTP IP endpoint.
+- Corrected `deploy/k3s-deployment.yml` worker routing from the nonexistent
+  `khmer-vox-web-svc` hostname to `http://web:3000`.
+- Initialized the staging Postgres schema with `node scripts/db.mjs setup`.
+- Verified staging:
+  - `/api/health` returned 200 with `store: postgres`.
+  - `/app/signin`, `/app/signup`, and `/app/dashboard/jobs` returned 200.
+  - `khmer-vox-postgres`, `khmer-vox-web`, and `khmer-vox-worker` were all
+    ready 1/1.
+  - Worker started cleanly with no service-DNS fetch errors.
+- Staging has a fresh database, but currently shares copied external service
+  credentials with production. Use it carefully for Modal, Telegram, and
+  payment tests until separate staging credentials are configured.
+- The first staging user account was not initially an admin because the
+  staging manifest still used the placeholder `owner@example.com`.
+  `ADMIN_EMAILS` is now set on the staging web and worker deployments to the
+  owner's staging account email. Production admin configuration was not
+  changed.
+
+## Recent Audio Join And Noise-Gate Fix
+
+Update on 2026-06-12:
+
+- Analyzed a reported bad MP3 output from `D:\ads testss\download.mp3`. The
+  file was a valid MP3 and was not clipped, but it contained many long quiet
+  gaps and one sustained non-speech/noise section. The issue was the generation
+  and merge pipeline, not object storage.
+- `lib/tts-provider.ts` now adds a stronger generated-audio quality gate:
+  sustained high zero-crossing sections are treated as non-speech noise,
+  rejected, and retried before they can be saved into a final MP3.
+- Bad generated chunks now briefly cool down the Modal endpoint that returned
+  them, allowing retries to route to another configured account when available.
+- Each generated chunk is normalized to canonical mono PCM, edge-trimmed,
+  faded at chunk boundaries, and joined with a short controlled pause before
+  final MP3 mastering.
+- The generated-audio silence filters now compact internal pauses longer than
+  about 1.25 seconds while preserving a short natural pause, reducing the
+  "one segment to the next is not smooth" behavior.
+- Standard TTS now keeps the preset voice hint alongside the fixed
+  reference sample instead of taking the generic clone branch that strips the
+  speaker label. Chunk joins now use crossfade blending by default, with zero
+  added join silence, so long-form audio should sound less cut and less radio-
+  like.
+- Added `mergePublicMp3SegmentsForDelivery()` and wired it into dashboard
+  merged batch downloads and V2 async audio downloads. These paths now decode
+  each successful segment, validate/trim/join it, and encode one final MP3
+  instead of byte-concatenating MP3 segments.
+- `scripts/audio-file-quality-check.mjs` now checks for sustained high
+  zero-crossing noise, excessive silence, and low volume. It rejected the
+  reported bad MP3 with a 2.75 second high-ZCR section and passed a known
+  normal 204 second MP3.
+- Deployed the fix to the fixer/staging VPS only as
+  `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260612-4`. Production
+  `https://voxtts.online` was not changed.
+- Verification passed: `npx tsc --noEmit`, `npm run lint` with existing
+  warnings only, `npm run build`, Docker build, staging rollout for web and
+  worker, staging `/api/health` 200, and staging `/app/dashboard/jobs` 200.
+- A real staging dashboard Standard TTS smoke with four queued segments
+  completed 4/4. The downloaded merged MP3 passed the audio quality gate:
+  duration about 29.98s, mean volume about -17.7 dB, high-ZCR 0.0%, longest
+  high-ZCR 0.00s, longest low-level section 0.25s, and ffmpeg found no silence
+  longer than 0.5s.
+- During smoke testing, Modal returned empty audio for one chunk; the new
+  cleanup retry/cooldown behavior rejected it, retried through the worker, and
+  the final job still completed successfully.
+
+Follow-up on 2026-06-12:
+
+- Fixed Standard TTS preset routing so the provider keeps the fixed male/female
+  speaker hint while still sending the preset reference WAV to VoxCPM2. This
+  keeps Standard TTS, normal API Standard TTS, V2 Standard jobs, and Standard
+  batch generation on the intended preset voice instead of falling into a
+  generic clone-style request that strips the speaker label.
+- Changed long-audio joins from per-chunk fade-out plus added silence to a
+  short PCM crossfade join with no default inserted silence. This reduces the
+  audible "cut cut" boundary between chunks and keeps long-form speech softer
+  and more continuous.
+- Added non-secret tuning knobs to `.env.example`:
+  `TTS_CHUNK_CROSSFADE_MS`, `TTS_PRESET_TEMPERATURE`, and
+  `TTS_PRESET_CFG_VALUE`. Default chunk edge fade and join silence are now `0`
+  so crossfade is the default smoothing behavior.
+- Verification passed locally: `npx tsc --noEmit`, `npm run lint` with existing
+  warnings only, `npm run build`, and the old reported bad MP3 still failed the
+  quality smoke as expected because it contains a sustained high-ZCR noise
+  block.
+- Deployed to the fixer/staging VPS only as
+  `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260612-5`. Production
+  `https://voxtts.online` was not changed.
+- Staging verification passed: `/api/health` 200, `/app/dashboard/jobs` 200,
+  and `khmer-vox-web`, `khmer-vox-worker`, and `khmer-vox-postgres` were all
+  ready 1/1.
+- Real staging V2 Standard TTS smoke with escaped Khmer long text completed
+  9/9 queued segments. The downloaded MP3 passed the audio quality gate:
+  duration about 110.81s, mean volume about -18.8 dB, max volume about -3.8 dB,
+  high-ZCR 0.2%, longest high-ZCR 0.25s, and longest low-level section 1.50s.
+- Disposable staging smoke users/API keys were deleted after the test.
+
+Follow-up on 2026-06-12:
+
+- Investigated the recurring `Upstream generated near-silent audio` failure.
+  Local stored evidence showed long dashboard jobs with 579-833 character
+  items where VoxCPM2 repeatedly returned near-silent or invalid WAV output.
+- Reduced queued dashboard and V2 async split defaults from 360 to 280
+  characters to make Khmer long-form generation less likely to hit upstream
+  failure cases.
+- Added provider-level chunk controls:
+  `TTS_UPSTREAM_CHUNK_CHARS` defaults to 320, and
+  `TTS_NEAR_SILENCE_FALLBACK_CHARS` defaults to 180.
+- `splitTextIntoChunks()` now trims empty chunks and enforces a hard maximum
+  character limit on every output chunk, including Khmer text with few spaces.
+- If a chunk still fails audio validation after normal retries, the provider
+  now retries that exact chunk as smaller fallback chunks before failing the
+  item. Retryable failures include near-silent audio, empty cleaned audio,
+  invalid WAV output, and failed PCM normalization.
+- Verified locally with `npx tsc --noEmit`, `npm run lint` with existing
+  warnings only, and `npm run build`.
+- Built and pushed `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260612-6`,
+  imported it into the fixer/staging VPS container runtime, and rolled out web
+  and worker there only. Production `https://voxtts.online` was not changed.
+- Staging verification passed: `http://178.128.103.120/api/health` returned
+  200, `http://178.128.103.120/app/dashboard/jobs` returned 200, and
+  `khmer-vox-web`, `khmer-vox-worker`, and `khmer-vox-postgres` were all ready
+  1/1.
+
+Follow-up on 2026-06-12:
+
+- Investigated `D:\ads testss\download (1).mp3`. The file was a valid,
+  non-silent MP3, but it contained loud sustained tonal/vowel artifacts around
+  9.75-16.5s and 117.5-121.75s, which sounded like stuck speech instead of
+  natural talking.
+- Added generated-audio quality detection for sustained stuck tonal sections in
+  `lib/tts-provider.ts`. Generated WAV chunks and final audio are now rejected
+  if they contain a long steady tonal section or too much stuck-tonal audio, so
+  the existing retry/fallback split path can regenerate the bad section instead
+  of saving it to the final MP3.
+- Added non-secret tuning knobs to `.env.example`:
+  `TTS_AUDIO_TONAL_GROUP_SECONDS`, `TTS_AUDIO_TONAL_MIN_DB`,
+  `TTS_AUDIO_TONAL_MAX_ENVELOPE_CV`, `TTS_AUDIO_TONAL_MIN_AVG_ZCR`,
+  `TTS_AUDIO_TONAL_MIN_PEAK_ZCR`, `TTS_AUDIO_MAX_STEADY_TONAL_SECONDS`, and
+  `TTS_AUDIO_MAX_STEADY_TONAL_RATIO`.
+- Updated `scripts/audio-file-quality-check.mjs` to report stuck-tonal ratio
+  and longest stuck-tonal section. The reported bad MP3 now fails with a 6.00s
+  stuck-tonal section, while known cleaner comparison MP3s still pass.
+- Verification passed locally: `npx tsc --noEmit`, `npm run lint` with existing
+  warnings only, `npm run build`, and focused audio quality checks against the
+  reported bad and known cleaner MP3 files.
+- Built and pushed `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260612-7`,
+  imported it into the fixer/staging VPS container runtime, and rolled out web
+  and worker there only. Production `https://voxtts.online` was not changed.
+- Staging verification passed: `http://178.128.103.120/api/health` returned
+  200, `http://178.128.103.120/app/dashboard/jobs` returned 200, and the
+  fixer/staging web and worker deployments were both running
+  `staging-20260612-7`.
+
+Follow-up on 2026-06-12:
+
+- Investigated repeated staging history failures showing
+  `Upstream generated near-silent audio`. The latest failed `generations`
+  rows were not real text failures: they had `input_chars = 1` and
+  `input_preview = "។"`, so the dashboard splitter had created standalone
+  punctuation-only TTS items. VoxCPM2 returned no speech for those items.
+- Added `hasSpeakableText()` in `lib/speech-text-sanitizer.ts`; text that
+  contains only punctuation/symbols now normalizes to empty text before
+  dashboard, batch, or API generation can queue it.
+- Hardened `splitTextIntoChunks()` in `lib/tts-provider.ts` so final
+  punctuation-only fragments are attached back to the previous spoken chunk
+  when they are just a tiny overflow, or dropped instead of sent to VoxCPM2.
+  The Khmer sentence splitter now uses explicit `\u17d4` matching for the
+  Khmer full stop.
+- Verified locally: Unicode-regex smoke for Khmer speakable text and Khmer
+  full-stop splitting, `npx tsc --noEmit`, `npm run lint` with existing
+  warnings only, and `npm run build`.
+- Built and pushed `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260612-8`,
+  imported it into the fixer/staging VPS container runtime, and rolled out web
+  and worker there only. Production `https://voxtts.online` was not changed.
+- Staging verification passed: `http://178.128.103.120/api/health` returned
+  200, `http://178.128.103.120/app/dashboard/jobs` returned 200, and
+  `khmer-vox-web` plus `khmer-vox-worker` were both running
+  `staging-20260612-8`. The old red punctuation-only history rows remain in
+  the staging database because they were created before this fix.
+
+Follow-up on 2026-06-12:
+
+- Investigated a new fixer/staging dashboard failure where a completed
+  Standard TTS job failed at final delivery with
+  `Audio segment 9 failed quality validation: contains a sustained stuck tonal
+  section (4.0s)`.
+- The latest staging job was already marked completed with all 15 items
+  successful. Segment 9 in the error was the 1-based delivery index for
+  `item_index = 8`, a 243-character, 16-second MP3 segment. A focused local
+  quality check against the extracted MP3 still detected a 3.75-second stuck
+  tonal section.
+- Reduced provider-level default chunk sizes so long Khmer text is less likely
+  to hit VoxCPM2 stuck-tone and near-silent failure modes:
+  `TTS_UPSTREAM_CHUNK_CHARS` now defaults to 180 and
+  `TTS_NEAR_SILENCE_FALLBACK_CHARS` now defaults to 120.
+- New generated chunks now pass a public MP3 round-trip validation before they
+  are accepted. This catches cases where the raw generated WAV looked usable
+  but the public MP3 would later be rejected by delivery validation.
+- Completed, already-stored audio segments with only a short stuck-tonal warning
+  are now served as delivery warnings instead of turning a completed dashboard
+  or V2 audio job into a 500 error. Severe issues such as empty audio, long
+  silence, high-frequency noise, and longer stuck tonal sections still fail.
+- Added non-secret tuning knobs to `.env.example`:
+  `TTS_AUDIO_DELIVERY_MAX_STEADY_TONAL_SECONDS` and
+  `TTS_VALIDATE_PUBLIC_MP3_ROUNDTRIP`.
+- Verification passed locally: `npx tsc --noEmit`, `npm run lint` with existing
+  warnings only, `npm run build`, Docker build, Docker push, and a focused
+  provider merge test using the extracted failing segment. The strict
+  standalone audio quality checker still fails the extracted segment as
+  expected, while the delivery merge path now returns MP3 and logs a warning.
+- Deployed to the fixer/staging VPS only as
+  `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260612-9`. Production
+  `https://voxtts.online` was not changed.
+- Staging verification passed: `http://178.128.103.120/api/health` returned
+  200, `http://178.128.103.120/app/dashboard/jobs` returned 200, and
+  `khmer-vox-web` plus `khmer-vox-worker` were both running
+  `staging-20260612-9`.
+
+## Recent Near-Silent Retry And Delivery Trust Fix
+
+Update on 2026-06-12:
+
+- Addressed the recurring dashboard failure
+  `Upstream generated near-silent audio...` and the download-time failure
+  `Audio segment N failed quality validation: contains a sustained stuck
+  tonal section`.
+- Root cause 1 (sticky retries): near-silence retries re-sent the identical
+  payload (same text, same fixed temperature, same endpoint) to a stochastic
+  model, so a failing generation tended to reproduce the same near-silent
+  result. `lib/tts-provider.ts` now raises sampling temperature on each
+  quality retry (`TTS_RETRY_TEMPERATURE_STEP`, default 0.15 per attempt,
+  capped by `TTS_RETRY_TEMPERATURE_MAX`, default 0.9) for both preset and
+  clone modes so retries explore a different model trajectory.
+- Root cause 2 (validate-twice): merged downloads re-validated stored
+  MP3 segments after an MP3->PCM re-decode, which can flip a borderline
+  verdict and block audio the user already paid for. Delivery paths
+  (`mergePublicMp3SegmentsForDelivery`, `cleanPublicMp3ForDelivery`) now
+  follow "validate at write time, trust at read time": stored segments are
+  cleaned, joined, and mastered, with quality issues logged as warnings but
+  never rejected. Quality gates remain fully enforced at synthesis time.
+  Removed the now-unused `shouldIgnoreStoredSegmentQualityIssue` partial
+  exception.
+- Confirmed the local upstream pool currently contains only ONE Modal
+  endpoint, so endpoint failover cannot help during upstream blips. Adding a
+  second Modal account to the pool remains the biggest reliability lever.
+- Added `.env.example` knobs: `TTS_RETRY_TEMPERATURE_STEP` and
+  `TTS_RETRY_TEMPERATURE_MAX`.
+- Verification passed locally: `npx tsc --noEmit`, `npm run lint` (0 errors,
+  65 pre-existing warnings), and `npm run build`.
+- This fix is local-only and was not deployed to staging or production.
+
+## Recent Recursive Small-Chunk Repair Fix
+
+Update on 2026-06-12:
+
+- Added a recursive small-chunk fallback in `lib/tts-provider.ts` for the
+  recurring `Upstream generated near-silent audio...` failure. If a chunk still
+  fails quality validation after normal retries, it now splits smaller again
+  instead of stopping when the chunk is already under
+  `TTS_NEAR_SILENCE_FALLBACK_CHARS`.
+- This directly targets the observed failure pattern where VoxCPM2 could still
+  return near-silent, empty, or stuck-tonal output for small 80-120 character
+  Khmer chunks. The fallback now keeps reducing stubborn chunks down to the
+  `TTS_NEAR_SILENCE_MIN_FALLBACK_CHARS` floor, default `24`, before allowing
+  the item-level worker retry to take over.
+- Added non-secret `.env.example` knob
+  `TTS_NEAR_SILENCE_MIN_FALLBACK_CHARS`. Smaller values are more aggressive
+  and can sound choppier; larger values preserve smoother phrase context but
+  may fail more often on bad upstream chunks.
+- Verification passed locally: `npx tsc --noEmit`, `npm run lint` with existing
+  warnings only, and `npm run build`. Focused quality-smoke checks still reject
+  the known bad MP3 samples, as expected, so the generated-audio quality gate
+  was not weakened.
+- Built and pushed
+  `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260612-10`, pulled it into the
+  fixer/staging K3s runtime, and rolled out both `khmer-vox-web` and
+  `khmer-vox-worker`.
+- Staging verification passed: `http://178.128.103.120/api/health` returned
+  200, `http://178.128.103.120/app/dashboard/jobs` returned 200, both
+  deployments were ready 1/1 on tag `staging-20260612-10`, and the new pods
+  had zero restarts with clean startup logs.
+- Production `https://voxtts.online` was not changed. A real long-text
+  generation should now be tested on the fixer/staging dashboard to confirm
+  the recursive repair against live VoxCPM2 output.
+
+## Recent Public MP3 Fidelity Fix
+
+Update on 2026-06-13:
+
+- Investigated a complaint that long-text generated audio sounds low quality
+  compared to other TTS platforms. Analyzed `D:\ads testss\download (2).mp3`:
+  it passed all quality gates (not silent, no noise, no stuck tones) but the
+  fidelity was poor. Root causes were all in the public MP3 mastering/encode
+  chain, not the model failing.
+- Key bug: the delivered MP3 was `48000 Hz @ 96 kb/s` even though the VoxCPM2
+  pipeline is canonical 24 kHz mono. `loudnorm`'s internal 192 kHz processing
+  rate was leaking into the encoder, so FFmpeg resampled up to 48 kHz and spent
+  the low 96k bitrate describing an empty 12-24 kHz band with no real audio.
+- Fixes in `lib/tts-provider.ts` `encodeWavToMp3`:
+  - Default MP3 bitrate raised 96k -> 160k (`TTS_PUBLIC_MP3_BITRATE`).
+  - Output sample rate is now pinned to the source WAV rate with `-ar`, so the
+    MP3 stays at the real 24 kHz instead of upsampling to 48 kHz.
+  - Final mastering EQ is now configurable: `TTS_PUBLIC_HIGHPASS_HZ` (70) and
+    `TTS_PUBLIC_LOWPASS_HZ` raised 13500 -> 16000 for less muffled output.
+  - Loudness is now two-pass `loudnorm` by default (`TTS_TWO_PASS_LOUDNORM`):
+    measure real loudness first, then apply clean linear gain, avoiding the
+    single-pass pumping artifact. Targets are `TTS_LOUDNORM_I/TP/LRA`.
+  - Setting the legacy `TTS_PUBLIC_AUDIO_FILTER` still fully overrides the new
+    chain (single-pass behavior), so existing deployments are unchanged.
+- `concatPcm16WavBuffers` now loudness-matches independently-generated chunks to
+  the median segment RMS before joining (`TTS_CHUNK_LOUDNESS_MATCH`, capped by
+  `TTS_CHUNK_LOUDNESS_MAX_GAIN_DB`, default 3 dB). This reduces the "uneven"
+  drift between segments in long-form audio.
+- Honest ceiling: VoxCPM2 appears to be ~24 kHz native, so the model itself
+  caps fidelity below 44.1 kHz platforms like ElevenLabs. These changes stop the
+  pipeline from degrading the audio further; they do not raise the model ceiling.
+  The upstream `/info` probe returned HTTP 403 with the current pool token, so
+  the exact native sample rate was inferred from the delivered audio (24 kHz
+  pipeline) rather than confirmed from the model. Confirm before any future
+  attempt to raise `TTS_CANONICAL_SAMPLE_RATE`.
+- Verified locally: a re-encode test of the reported file produced
+  `24000 Hz @ 160 kb/s` (was 48000 Hz @ 96 kb/s) and still passed the audio
+  quality checker. `npx tsc --noEmit`, `npm run lint` (0 errors, 65 pre-existing
+  warnings), and `npm run build` all passed. Temporary scratch probe/test
+  scripts were removed after use.
+- Added `.env.example` knobs: `TTS_PUBLIC_MP3_BITRATE`, `TTS_PUBLIC_HIGHPASS_HZ`,
+  `TTS_PUBLIC_LOWPASS_HZ`, `TTS_LOUDNORM_I/TP/LRA`, `TTS_TWO_PASS_LOUDNORM`,
+  `TTS_CHUNK_LOUDNESS_MATCH`, `TTS_CHUNK_LOUDNESS_MAX_GAIN_DB`.
+- This fidelity fix is local-only and was not deployed.
+
+## Recent Long-Audio Merge Smoothing Fix
+
+Update on 2026-06-13:
+
+- User reported merged long audio sounds "cut cut" / not smooth at chunk joins.
+  Root causes: aggressive edge trimming (-46 dB cut natural speech decay), zero
+  join silence (sentences glued together), and a confused merge path that both
+  overlap-crossfaded AND inserted silence (the crossfade consumed the start of
+  the next sentence, then a gap, then the sentence resumed mid-onset).
+- Changes in `lib/tts-provider.ts`:
+  - Edge trim threshold default `-46` -> `-52` dB (`TTS_AUDIO_EDGE_TRIM_DB`), so
+    only deeper silence is trimmed and natural decay/breath is kept.
+  - Chunk paddings raised: `TTS_CHUNK_START_PADDING_MS` 20 -> 35,
+    `TTS_CHUNK_END_PADDING_MS` 60 -> 110.
+  - `concatPcm16WavBuffers` join logic rewritten (`joinSegments`): two clean,
+    mutually exclusive modes. Pause mode (default, `TTS_CHUNK_JOIN_SILENCE_MS`
+    0 -> 130 ms) keeps each sentence whole, inserts a natural pause, and applies
+    a tiny declick fade (`TTS_CHUNK_JOIN_DECLICK_MS`, 6 ms) at boundaries.
+    Gapless mode (join silence set to 0) does the overlap equal-power crossfade,
+    default length raised 28 -> 45 ms (`TTS_CHUNK_CROSSFADE_MS`).
+- Verified: `npx tsc --noEmit` and `npm run build` pass. A scratch end-to-end
+  test through the real exported `mergePublicMp3SegmentsForDelivery` path
+  merged two tone MP3s into exactly seg1+seg2+130 ms (diff 0.07 s, within MP3
+  framing slack) with no errors; scratch files were removed after use.
+- `.env.example` updated with the new defaults and `TTS_CHUNK_JOIN_DECLICK_MS`.
+- This smoothing fix is local-only and was not deployed.
+
+## Recent Adaptive Seam Join Fix
+
+Update on 2026-06-13:
+
+- Refined the long-audio merge path again to reduce the "cut" feeling at
+  chunk boundaries without reintroducing glued-together speech.
+- `lib/tts-provider.ts` now chooses the join style from the audio itself:
+  - quiet-to-quiet edges get a short natural pause with a directional fade
+    only on the active seam;
+  - audible edges are overlap-crossfaded instead of forcing silence.
+- The previous pause-mode fade had been applied to both ends of the accumulated
+  buffer on every append; that was too blunt for long-form narration. It now
+  fades only the side currently entering the seam.
+- New non-secret tuning knobs were added to `.env.example`:
+  `TTS_CHUNK_JOIN_EDGE_WINDOW_MS` and `TTS_CHUNK_JOIN_QUIET_DB`.
+- Join defaults were tightened for smoother speech:
+  `TTS_CHUNK_JOIN_SILENCE_MS` now defaults to 70 ms and
+  `TTS_CHUNK_JOIN_DECLICK_MS` to 10 ms.
+- Verification passed locally: `npx tsc --noEmit`, `npm run lint` with the
+  existing 65 warnings only, and `npm run build`.
+- Built and pushed
+  `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260613-3`, imported it into
+  the fixer/staging K3s runtime, and rolled out both `khmer-vox-web` and
+  `khmer-vox-worker`.
+- Fixer verification passed: `http://178.128.103.120:30080/api/health` and
+  `http://178.128.103.120:30080/app/dashboard/jobs` returned 200, both
+  deployments were ready 1/1 on `staging-20260613-3`, pods had zero restarts,
+  and the worker could reach `http://web:3000/api/health`.
+- Production `https://voxtts.online` was not changed.
+
+## Recent Cursor Fixer VPS Redeploy
+
+Update on 2026-06-13:
+
+- Redeployed the current local worktree, including the latest Cursor audio
+  fidelity and long-audio merge smoothing changes, to the fixer/staging VPS
+  only.
+- Verification passed before deployment: `npm run lint` completed with 65
+  existing warnings and no errors, `npx tsc --noEmit` passed, and
+  `npm run build` passed.
+- Built and pushed
+  `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260613-1`, loaded it into the
+  fixer K3s runtime, and rolled out both `khmer-vox-web` and
+  `khmer-vox-worker`.
+- Staging verification passed: `http://178.128.103.120/api/health` and
+  `http://178.128.103.120/app/dashboard/jobs` returned 200, web and worker
+  were ready 1/1 on the new image, all pods had zero restarts, and startup
+  logs were clean.
+- Production `https://voxtts.online` was not changed.
+
+## Recent Stuck-Tonal Gate Fix (buzzing long audio)
+
+Update on 2026-06-13:
+
+- User reported `D:\ads testss\download (3).mp3` (generated on staging
+  `staging-20260613-1`, which already includes the fidelity and smoothing
+  fixes) still sounds bad. The file was 24 kHz @ 160 kbps with natural join
+  pauses, so the encode/merge fixes were live and working. Spectrogram
+  analysis showed the real problem: 15 short "stuck vowel" buzz sections
+  (sustained flat harmonic bands, 1.0-1.75s each, ~19s total of 180s),
+  heavily clustered in the first 26 seconds. This is the model generating
+  degenerate audio, not a mastering problem.
+- Root cause the gate missed them: two compounding issues in
+  `getSteadyTonalStats` / `generatedAudioQualityIssue` in `lib/tts-provider.ts`:
+  1. Duration under-count bug: `longestSeconds` counted consecutive group
+     starts only, under-reporting every burst by ~0.75s (groupSeconds minus
+     windowSeconds). A real ~3.25s buzz reported as 2.5s and passed.
+  2. Thresholds too loose for this failure shape: bursts are 1-2s each, but
+     rejection required >2.5s reported (so >3.25s real).
+- Fixes (local-only, not deployed):
+  - Corrected the burst duration math in `lib/tts-provider.ts` and mirrored it
+    in `scripts/audio-file-quality-check.mjs` so reported seconds are real
+    seconds.
+  - Tightened defaults: `TTS_AUDIO_MAX_STEADY_TONAL_SECONDS` 2.5 -> 1.5,
+    `TTS_AUDIO_MAX_STEADY_TONAL_RATIO` 0.25 -> 0.12. Chunks with buzz now get
+    rejected and regenerated through the existing retry path (temperature
+    escalation, endpoint cooldown, fallback split) instead of being saved.
+- Verified: the bad `download (3).mp3` now FAILS the checker (1.75s
+  stuck-tonal burst detected), known-bad `download.mp3` and
+  `download (1).mp3` still fail for their original reasons, and the clean
+  `download (2).reencoded.mp3` comparison still passes (longest burst exactly
+  1.50s, at the limit). `npx tsc --noEmit` and `npm run build` pass.
+- Watch after deploy: if retry rates or generation failures rise noticeably,
+  the 1.5s threshold may be too tight for natural drawn Khmer vowels; raise
+  `TTS_AUDIO_MAX_STEADY_TONAL_SECONDS` toward 2.0 via env instead of
+  reverting the duration-math fix.
+
+## Recent Stuck-Tonal Fixer VPS Redeploy
+
+Update on 2026-06-13:
+
+- Redeployed the current Cursor worktree, including the corrected stuck-tonal
+  duration calculation and stricter buzzing-audio rejection defaults, to the
+  fixer/staging VPS only.
+- Verification passed before deployment: `npm run lint` completed with 65
+  existing warnings and no errors, `npx tsc --noEmit` passed, and
+  `npm run build` passed.
+- Built and pushed
+  `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260613-2`, loaded it into the
+  fixer K3s runtime, and rolled out both `khmer-vox-web` and
+  `khmer-vox-worker`.
+- Staging verification passed: `http://178.128.103.120/api/health` and
+  `http://178.128.103.120/app/dashboard/jobs` returned 200, both deployments
+  were ready 1/1 on the new image, and all pods had zero restarts.
+- The worker logged one connection refusal while the new web pod was still
+  starting. A direct worker-pod request to `http://web:3000/api/health`
+  subsequently returned 200, confirming internal connectivity recovered.
+- Production `https://voxtts.online` was not changed.
+
+## Recent Fixer VPS Production-Image Rollback
+
+Update on 2026-06-13:
+
+- User reported the fixer/staging audio quality was still worse than the
+  production site and asked to redeploy the fixer VPS from the production
+  source/image baseline.
+- Production was inspected without printing secrets. The running production
+  image was
+  `ghcr.io/rosielreaksa/khmer-vox-tts@sha256:763044856ea0ad634bd6f6ae0ae4cbbeaa46296ac6a9f98e0fe2940a9185fc49`.
+- Directly setting the fixer deployments to that digest initially failed with
+  `ImagePullBackOff` because the fixer node could not pull that GHCR digest
+  (`403 Forbidden` from GHCR token fetch).
+- To keep the fixer on the exact production baseline, exported that image from
+  the production node's local K3s/containerd image store, transferred it to the
+  fixer node, imported it into the fixer K3s/containerd store, deleted the
+  failed new pods, and let the rollout continue.
+- Verification passed on fixer: `khmer-vox-web` and `khmer-vox-worker` rolled
+  out successfully, both are ready 1/1 with zero restarts, web logs show
+  Next.js ready, worker logs show the loop started, and the worker can reach
+  `http://web:3000/api/health` with HTTP 200.
+- Public fixer checks passed with HTTPS: `https://178.128.103.120/api/health`
+  and `https://178.128.103.120/app/dashboard/jobs` returned 200 with `-k`.
+  Plain HTTP dashboard routes redirect to HTTPS on this production image.
+- Production `https://voxtts.online` was not changed.
+
+## Recent Fixer VPS HTTP Test Proxy
+
+Update on 2026-06-13:
+
+- After rolling the fixer VPS back to the production image, the browser showed
+  a certificate privacy error on `https://178.128.103.120/app/dashboard`.
+  Root cause: the production image's older proxy code still forces external
+  HTTP dashboard traffic to HTTPS, and the fixer IP does not have a trusted
+  certificate.
+- Added a fixer-only Kubernetes Nginx proxy named `fixer-http-proxy` on
+  NodePort `30080`. It forwards to the existing `web` service, sends
+  `X-Forwarded-Proto: https` to prevent the old app proxy from redirecting,
+  hides HSTS, and strips `Secure` from cookies so browser login works over
+  HTTP on the test IP.
+- Removed the earlier raw `web-direct-http` NodePort service because direct
+  traffic still redirected.
+- Verification passed: `http://178.128.103.120:30080/api/health`,
+  `http://178.128.103.120:30080/app/signin`, and
+  `http://178.128.103.120:30080/app/dashboard` return 200 without HTTPS
+  certificate warnings.
+- Follow-up fix: dashboard generation POSTs initially failed with
+  `CSRF validation failed: invalid origin` because the Nginx proxy passed
+  `Host` using its internal port while the browser `Origin` used the external
+  `:30080` port. Updated the proxy to preserve `$http_host` for `Host` and
+  `X-Forwarded-Host`, restarted it, and verified a POST to `/api/generate`
+  with `Origin: http://178.128.103.120:30080` no longer fails CSRF. The test
+  returned `401 Unauthorized`, which is expected without a browser session.
+- This proxy is for the fixer VPS only. Production `https://voxtts.online` was
+  not changed.
+
+## Recent Raw VoxCPM2 Audio Path Restore
+
+Update on 2026-06-13:
+
+- User reported that the added audio cleanup/mastering/silence-repair pipeline
+  made generated audio sound worse than the original VoxCPM2 output.
+- Restored the active generation path in `lib/tts-provider.ts` to preserve
+  upstream VoxCPM2 audio: each segment is converted to MP3 only when the
+  upstream returns WAV, and MP3 segments are joined without extra EQ,
+  loud-normalization, silence trimming, recursive near-silence repair, or PCM
+  remastering.
+- Updated dashboard, v2 async API, and provider chunking defaults to target
+  about 60 seconds of audio per generated segment instead of the previous
+  tiny 180/280-character chunks. Legacy `*_CHUNK_CHARS` overrides below 600
+  characters are ignored so old local or VPS env values do not force tiny
+  chunks.
+- Updated `.env.example` to document the raw MP3 delivery behavior and the new
+  one-minute chunk target variables. No secrets were added.
+- Verification passed before deployment: `npm run lint` completed with
+  warnings only, `npx tsc --noEmit` passed, `npm run build` passed, Docker
+  build passed, and the image was pushed as
+  `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260613-4`.
+- Deployed to the fixer/staging VPS only. `khmer-vox-web` and
+  `khmer-vox-worker` are ready 1/1 on `staging-20260613-4`; public checks on
+  `http://178.128.103.120:30080/api/health` and
+  `http://178.128.103.120:30080/app/dashboard/jobs` returned 200; the worker
+  can reach `http://web:3000/api/health` with HTTP 200.
+- Production `https://voxtts.online` was not changed.
+
+## Recent Silent Output Guard Restore
+
+Update on 2026-06-13:
+
+- After restoring raw VoxCPM2 output, a dashboard generation could complete
+  successfully while the saved MP3 was silent because the active path bypassed
+  the old near-silence retry guard.
+- Added a narrow raw-output silence guard in `lib/tts-provider.ts`: generated
+  chunks are decoded only for analysis, retried when they are near-silent or
+  empty, and returned unchanged when they pass. This avoids saving silent MP3
+  results while still avoiding EQ, loud-normalization, trimming, and mastering.
+- The active long-form path now calls the silence-guarded chunk synthesizer
+  before converting/joining MP3 segments.
+- Verification passed: `npm run lint` completed with warnings only,
+  `npx tsc --noEmit` passed, `npm run build` passed, Docker build passed, and
+  the image was pushed as
+  `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260613-5`.
+- Deployed to the fixer/staging VPS only. `khmer-vox-web` and
+  `khmer-vox-worker` are ready 1/1 on `staging-20260613-5`; public checks on
+  `http://178.128.103.120:30080/api/health` and
+  `http://178.128.103.120:30080/app/dashboard/jobs` returned 200; the worker
+  can reach `http://web:3000/api/health` with HTTP 200.
+- Production `https://voxtts.online` was not changed.
+
+## Recent Loudnorm/EQ Dead-Code Cleanup
+
+Update on 2026-06-13:
+
+- After the raw VoxCPM2 path was restored (above), the two-pass loudnorm/EQ
+  helpers in `lib/tts-provider.ts` were left defined but never called:
+  `measureLoudnorm`, `readLoudnormTargets`, `readPublicEqFilter`,
+  `runFfmpegCollectStderr` (only used by `measureLoudnorm`), the
+  `LoudnormTargets` type, and the unused `DEFAULT_PUBLIC_AUDIO_FILTER`
+  constant. `encodeWavToMp3` already does a plain WAV->MP3 encode at
+  `TTS_PUBLIC_MP3_BITRATE` (160k) with no EQ, no loudnorm, and no resample, so
+  delivered audio is the model's native 48 kHz at its natural (quiet ~-29 LUFS)
+  level by design.
+- Context: user confirmed they want the original VoxCPM2 audio with no
+  mastering. `download (5).mp3` from staging :30080 measured 48 kHz / 160 kbps,
+  0.0% stuck-tonal (buzzing gate working), -29.7 LUFS (raw model loudness).
+  Quietness is expected raw-output behavior, not a bug.
+- Removed only the confirmed-unused symbols; verified each had no remaining
+  callers before deletion. Still-used helpers (`readPublicMp3Bitrate`,
+  `readAudioFilter`, `audioFilterArgs`, `runFfmpeg`,
+  `DEFAULT_REFERENCE_AUDIO_FILTER` for the reference-encode path) were kept.
+- `.env.example` already documents raw delivery and no longer lists the
+  loudnorm/highpass/lowpass knobs; no further env changes were needed.
+- Verified: `npx tsc --noEmit` and `npm run build` pass, no lint errors in the
+  edited file. This cleanup is local-only and not deployed; it is behavior-
+  neutral (removes dead code only) so it can ride the next deploy.
+- If louder output is ever wanted without changing tone, apply a single linear
+  gain (volume only, no EQ/compression) rather than re-adding the loudnorm
+  chain.
+
+## Recent Loudnorm-Cleanup Fixer VPS Deploy
+
+Update on 2026-06-13:
+
+- Deployed the current Cursor worktree (raw VoxCPM2 path plus the loudnorm/EQ
+  dead-code cleanup) to the fixer/staging VPS only as
+  `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260613-6`. Production
+  `https://voxtts.online` was not touched.
+- Deploy method (Windows host, no Docker on VPS, password SSH):
+  - `npx tsc --noEmit` and `npm run build` passed before building.
+  - Built the amd64/linux image locally with Docker Desktop, `docker save` to a
+    tar, uploaded via SFTP (paramiko), imported with `k3s ctr images import`,
+    then `kubectl -n khmer-vox set image` on web and worker.
+  - SSH uses `scripts/vps-ssh.py` (paramiko). It reads `VPS_HOST`/`VPS_USER`/
+    `VPS_PASS` from env so no credentials are written into the repo. The VPS
+    root password is NOT stored anywhere in the project; it is passed inline at
+    invocation time only.
+  - Both deployments already had `imagePullPolicy: IfNotPresent`, so the
+    locally-imported tag is used without a registry pull (GHCR pull creds were
+    rejected for staging tags in earlier sessions).
+- Verified after rollout: `khmer-vox-web` and `khmer-vox-worker` ready 1/1 on
+  `staging-20260613-6` with zero restarts, worker loop started clean,
+  `http://178.128.103.120:30080/api/health` returned 200 with `store: postgres`,
+  and `/app/dashboard/jobs` and `/app/signin` returned 200.
+- Cleaned up the uploaded tar and rollout script on the VPS and the local tar
+  after deploy.
+- Staging now serves raw VoxCPM2 audio (48 kHz, 160 kbps MP3, no EQ/loudnorm)
+  with the corrected stuck-tonal buzzing gate active. These changes remain
+  uncommitted in the local worktree (git still at `a2bf891`).
+
+## Recent Long-Audio Volume Drift Fix (chunk leveling)
+
+Update on 2026-06-13:
+
+- User reported long generated audio drifts in volume over time (e.g. first
+  ~1 minute loud, later quieter) and wants one consistent volume across the
+  whole file, short or long, while keeping raw VoxCPM2 sound (no mastering).
+- Root cause: `synthesizeWithUpstream` in `lib/tts-provider.ts` splits text
+  into ~60s chunks, generates each independently, then byte-concatenates the
+  per-chunk MP3s with NO loudness alignment. VoxCPM2 returns each chunk at a
+  slightly different level, so the level steps between chunks. The existing
+  loudness-match code (`concatPcm16WavBuffers`, `TTS_CHUNK_LOUDNESS_MATCH`) was
+  dead code never reached by the live path.
+- Fix (volume-only, no EQ/tone change): added `estimateWavSpeechRms` and
+  `levelWavChunksToCommonLoudness` in `lib/tts-provider.ts`. Before encoding,
+  each raw WAV chunk's spoken RMS is measured (50 ms windows, pauses below
+  `TTS_CHUNK_LEVEL_FLOOR_DB` excluded), then aligned to the median chunk level
+  with a capped linear gain (`TTS_CHUNK_LEVEL_MAX_GAIN_DB`, default +/-6 dB).
+  Wired into `synthesizeWithUpstream` so the live dashboard/API long-audio path
+  uses it. Single-chunk and non-WAV audio pass through unchanged.
+- New env knobs documented in `.env.example`: `TTS_CHUNK_LEVEL_MATCH` (default
+  true), `TTS_CHUNK_LEVEL_MAX_GAIN_DB` (6), `TTS_CHUNK_LEVEL_FLOOR_DB` (-45).
+- Verified: a standalone algorithm test with 3 chunks at -14.2/-20.3/-26.5 dB
+  collapsed the spread from 12.24 dB to 0.24 dB after leveling. `npx tsc
+  --noEmit` and `npm run build` pass; no lint errors. Scratch test removed.
+- Note: this only equalizes volume between chunks; it does not raise overall
+  loudness (still raw ~-29 LUFS by design). The V2/batch merged-download path
+  joins separately-stored per-item MP3s and is unchanged; if those ever drift,
+  the same leveling would need a PCM/MP3-decode step there too.
+- Local-only; not yet built/deployed.
+
+## Recent Volume-Leveling Fixer VPS Deploy
+
+Update on 2026-06-13:
+
+- Deployed the long-audio volume-drift fix (per-chunk linear-gain leveling) to
+  the fixer/staging VPS as
+  `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260613-7`. Production
+  `https://voxtts.online` was not touched.
+- Same method as staging-20260613-6: `tsc`+`build` passed, built amd64 image
+  with Docker Desktop (had to start the daemon first), `docker save` to tar,
+  SFTP upload via `scripts/vps-ssh.py`, `k3s ctr images import`, then
+  `kubectl set image` on web and worker. Both `imagePullPolicy: IfNotPresent`.
+- Connectivity note: SSH/SFTP to the VPS (port 22) was intermittently timing
+  out during this session even though TCP 22 tested open and the app on :30080
+  stayed up. Hardened `scripts/vps-ssh.py` with longer timeouts
+  (timeout/banner/auth 45s) and up to 6 connect retries with backoff; the
+  upload and rollout succeeded after automatic retries. Also fixed a Windows
+  cp1252 console crash by writing remote output as UTF-8 bytes.
+- Verified after rollout: web and worker ready 1/1 on `staging-20260613-7`,
+  zero restarts, worker loop started clean, web pod logs show Next.js ready.
+  `http://178.128.103.120:30080/api/health` returned 200. Page routes
+  (`/app/signin`, `/app/dashboard/jobs`) returned 000 from the local machine
+  (flaky external network path) but 200 when tested from INSIDE the VPS via
+  localhost, confirming the app itself is healthy.
+- Cleaned up the uploaded tar + rollout script on the VPS and the local tar.
+- Changes remain uncommitted in the local worktree (git still at `a2bf891`).
+
+## Recent Output Loudness Normalization (too-quiet fix)
+
+Update on 2026-06-13:
+
+- User reported delivered audio is too quiet and still fades quieter toward the
+  end of long files. Measured `voxtts-tts-400c2098...mp3` (generated on
+  staging-20260613-7): whole file -29.4 LUFS (raw VoxCPM2 level), and per-15s
+  speech level was ~-26 to -28 dB for the first ~2 min then dropped to -33 to
+  -36 dB in the final ~55s. The end-fade is a gradient INSIDE the final chunk,
+  which per-chunk leveling cannot smooth.
+- User explicitly chose full loudness normalization (over keep-raw). This is the
+  one intentional volume stage; still volume-only (no EQ/tone shaping).
+- Implemented `normalizeOutputLoudness` in `lib/tts-provider.ts`: two-pass
+  ffmpeg `loudnorm` (measure, then apply with measured values + `linear=true`
+  and a true-peak limiter) on the fully merged MP3, re-encoded at
+  `TTS_PUBLIC_MP3_BITRATE`. Re-added `runFfmpegCollectStderr` for pass 1.
+  Wired into both delivery paths: `synthesizeWithUpstream` (live) and
+  `mergePublicMp3SegmentsForDelivery` (V2/batch download). Fails safe: any error
+  returns the un-normalized audio rather than failing delivery.
+- New env knobs (defaults): `TTS_OUTPUT_LOUDNORM=true`, `TTS_OUTPUT_LOUDNORM_I=-16`,
+  `TTS_OUTPUT_LOUDNORM_TP=-1.5`, `TTS_OUTPUT_LOUDNORM_LRA=11`.
+- Verified on the real problem file: -29.4 -> -16.5 LUFS, true peak -1.9 dBTP
+  (no clipping); the quiet tail rose ~14 dB (from -33/-36 to -19/-20 dB) and the
+  start-to-end spread tightened from ~10 dB to 7.75 dB. To flatten the end
+  further, lower `TTS_OUTPUT_LOUDNORM_LRA` toward 6 (tradeoff: less natural
+  dynamics). `npx tsc --noEmit` and `npm run build` pass; scratch tests removed.
+- Local-only at time of writing; deploy as staging-20260613-8.
+
+## Recent Buzz Gate Not Wired Into Retry Path (root-cause fix)
+
+Update on 2026-06-13:
+
+- User reported `download (6).mp3` (generated on staging-20260613-8) still
+  buzzes. Measured: loudness is now great (-16.8 LUFS, LRA 4.4 - the output
+  loudnorm fix works), 48 kHz/160 kbps, BUT the quality checker FAILS it with a
+  12.25s longest stuck-tonal section. Located the buzz: ~11 stuck-tonal bursts
+  (1-2.5s each) clustered in the final ~50s (104-151s), i.e. the last chunk
+  degenerating.
+- ROOT CAUSE (the real system bug): the in-generation retry loop
+  `synthesizeChunkWithSilenceRetry` called `analyzeRawGeneratedAudioSilence`,
+  which only ran `generatedAudioSilenceIssue` (silence checks). The buzzing /
+  stuck-tonal / noise checks lived in a SEPARATE function
+  `generatedAudioQualityIssue` that the retry path never called. So the buzz
+  gate only ran AFTER delivery (post-hoc validation) and never triggered a
+  regenerate. Buzzing chunks passed all 3 attempts and were delivered.
+- FIX (`lib/tts-provider.ts`): extracted `generatedAudioStatsIssue(stats)` (the
+  full gate: silence + sustained noise + stuck-tonal, stats-based) and made BOTH
+  `generatedAudioQualityIssue` (post-decode) and the retry-path
+  `analyzeRawGeneratedAudioSilence` call it. Now a buzzing chunk fails analysis
+  during generation and is regenerated with temperature escalation
+  (`retryAdjustedTemperature`), then fallback-split if still bad - using the
+  existing retry machinery. Updated the stale "only analyzes silence" comment.
+- Verified: `npx tsc --noEmit` and `npm run build` pass; no lint errors.
+- Local-only; NOT yet deployed. NOTE: deploy is currently blocked - the VPS
+  port 30080 is unreachable from the internet (DigitalOcean cloud firewall;
+  app itself is healthy, SSH on 22 works). User is restoring the inbound 30080
+  rule in the DO panel. Deploy this as staging-20260613-9 once 30080 is back.
+
+## Buzz Gate Fix Deployed (staging-20260613-9)
+
+Update on 2026-06-13:
+
+- Deployed the buzz-gate retry fix (the `generatedAudioStatsIssue` refactor that
+  wires stuck-tonal/noise detection into the in-generation retry path) to the
+  fixer/staging VPS as `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260613-9`.
+  Production `voxtts.online` not touched. The DigitalOcean firewall on port
+  30080 was restored by the user, so external access works again.
+- Connectivity was very flaky this session: a 200MB SFTP upload died mid-stream
+  at 70% (EOFError). Hardened `scripts/vps-ssh.py` `put()` to be RESUMABLE -
+  it reconnects on drops and continues appending from the remote file's current
+  size (up to 40 attempts), and verifies final size == source size. The upload
+  then completed by resuming from ~141MB. This resumable helper is the standard
+  way to deploy now given the unstable link.
+- Verified after rollout: web + worker ready 1/1 on staging-20260613-9, zero
+  restarts; internal signin 200 and health ok; EXTERNAL
+  `http://178.128.103.120:30080/api/health` returns 200 (store: postgres).
+- Cleaned up local tar, remote tar, and remote rollout script.
+- Changes remain uncommitted in the local worktree (git still at `a2bf891`).
+- TEST NEEDED: generate a long Khmer audio on :30080 and confirm no buzzing
+  (the gate should now regenerate buzzing chunks during synthesis).
+
+## Choppy "cut cut" Pauses Fix (capLongPauses)
+
+Update on 2026-06-13:
+
+- User reported `download (7).mp3` (staging-20260613-9) sounds like "cut cut"
+  speech with gaps at spaces/symbols. Loudness/buzz were fine (-16.5 LUFS, gate
+  only flagged a 2.0s tonal). silencedetect revealed the real cause: VoxCPM2
+  inserts 1.5-2s DEAD-AIR pauses every few seconds at spaces/punctuation. Normal
+  pauses are 0.2-0.5s; these long ones = the choppy feel.
+- Same dead-code pattern as before: the silence-removal filter
+  (`DEFAULT_GENERATED_*_SILENCE_FILTER`, `cleanGeneratedAudioToWav`) existed but
+  was ONLY used by the post-hoc validator, never applied to delivered audio.
+- FIX: added `capLongPauses(bytes)` in `lib/tts-provider.ts`, wired into BOTH
+  delivery paths (synthesizeWithUpstream + mergePublicMp3SegmentsForDelivery)
+  right before `normalizeOutputLoudness`. First tried ffmpeg
+  `silenceremove stop_silence` but it left inconsistent ~1.16s residual gaps
+  (known ffmpeg quirk). Replaced with a DETERMINISTIC PCM capper: decode merged
+  audio to mono PCM16, find quiet runs (20ms windows below
+  TTS_OUTPUT_PAUSE_THRESHOLD_DB=-45) longer than TTS_OUTPUT_MAX_PAUSE_SECONDS
+  (0.7s), keep only TTS_OUTPUT_KEEP_PAUSE_SECONDS (0.4s) of each, re-encode.
+  Speech samples untouched; fails safe (returns original on any error).
+- Verified on the real file: 41 pauses capped, 205.2s -> 164.4s, ZERO remaining
+  gaps >0.7s. `npx tsc --noEmit` + `npm run build` pass; scratch tests removed.
+- New env knobs in .env.example: TTS_OUTPUT_PAUSE_CAP=true,
+  TTS_OUTPUT_MAX_PAUSE_SECONDS=0.7, TTS_OUTPUT_KEEP_PAUSE_SECONDS=0.4,
+  TTS_OUTPUT_PAUSE_THRESHOLD_DB=-45.
+- Local-only; deploy as staging-20260613-10. NOTE: VPS link is flaky - use the
+  resumable `scripts/vps-ssh.py` upload.
+
+## Voice Clone Broken: Consent Flag Not Forwarded (fix)
+
+Update on 2026-06-14:
+
+- User reported dashboard voice cloning not working; screenshot showed red
+  banner "Voice clone consent is required before uploading a reference voice"
+  even though the "I own this voice" box was checked and the checklist showed
+  "Permission Confirmed".
+- ROOT CAUSE: that exact error string lives only in `lib/batch-service.ts:309`,
+  thrown when `cloneConsentAccepted` is falsy for clone mode. Dashboard clone
+  now runs as a queued job: `app/api/generate-clone/route.ts` validated consent
+  itself (isVoiceCloneConsentAccepted at the API layer) but then called
+  `createQueuedDashboardGeneration(...)` WITHOUT passing `cloneConsentAccepted`.
+  It arrived as `undefined` at createQueuedBatchJob -> batch-service, which
+  always threw. So every dashboard clone failed regardless of the checkbox.
+- FIX (`app/api/generate-clone/route.ts`): track `cloneConsentAccepted` (true
+  for uploaded files that pass the consent check, and true for saved voices
+  which captured consent at save time) and forward it into
+  `createQueuedDashboardGeneration`. `generation-queue.ts` and batch-service
+  already thread the flag through; other clone routes (v1/v2 batch, batch-clone,
+  v2 clone jobs) already pass true. The TTS route `app/api/generate/route.ts`
+  doesn't need it (consent only checked for clone mode).
+- Separately noted in web logs: clone chunks often come back near-silent from
+  upstream on attempt 1 and get regenerated (attempt 1/3) - they recover, no
+  final rejections seen, so that's the retry path working, not a failure. Left
+  as-is for now.
+- Verified: `npx tsc --noEmit` + `npm run build` pass; no lint errors.
+- Local-only; deploy as staging-20260613-11 (use resumable vps-ssh.py upload;
+  VPS link still flaky).
+
+## API Tested End-to-End + Final-Merged Buzz Safeguard
+
+Update on 2026-06-14:
+
+- Tested both public APIs for real on staging (:30080) by seeding two ISOLATED
+  throwaway users directly in Postgres (ids prefixed `apitest-`, 500k tokens
+  each): one with an approved paid order (normal/Standard API access) and one
+  with an approved business_api_requests row (Business API + limits). Generated
+  the API keys locally (sha256 hash inserted; raw keys never stored). ALL test
+  fixtures were deleted afterward via cascade `delete from users where id like
+  'apitest-%'` (verified 0 remaining); temp SQL/scripts removed from pod+host.
+- RESULTS: Normal v1 sync `POST /api/v1/audio/speech` => 200, audio/mpeg, 14
+  credits charged, balance decremented, clean audio (-17.1 LUFS, PASS, longest
+  tonal 1.0s). Business v2 async `POST /api/v2/audio/jobs` => 202, split into 3
+  items, worker(HTTP)->web pipeline completed 3/3, 41 credits, downloadable via
+  audio_url. BUT merged output had a 4.25s BUZZ (stuck-tonal) that slipped the
+  gate. Loudness/pauses fine.
+- ROOT CAUSE of the escaped buzz: the per-chunk gate (`generatedAudioStatsIssue`
+  / `getSteadyTonalStats`) analyzes RAW upstream audio. Its tonal RMS floor is
+  TTS_AUDIO_TONAL_MIN_DB=-22dB, but VoxCPM2 raw output is ~-29 LUFS (quiet), so
+  a low-level buzz sits below the floor and isn't classified as tonal -> passes.
+  Then `normalizeOutputLoudness` lifts the delivered file to ~-16 LUFS (~+13dB),
+  amplifying that buzz into an audible 4.25s tone. Detection loudness != delivery
+  loudness, so the buzz hid in the gap. (Worker logs only showed SILENCE retries,
+  no tonal rejections, confirming the tonal gate never fired for this audio.)
+- FIX (`lib/tts-provider.ts`): split body into `synthesizeMergedAudio()` and
+  wrapped it in `synthesizeWithUpstream()` with a bounded FINAL-QUALITY retry.
+  New `analyzeDeliveredAudio()` decodes the final delivered MP3 back to PCM and
+  runs the SAME `generatedAudioStatsIssue` gate at DELIVERY loudness. If the
+  delivered audio still buzzes, regenerate the whole synthesis up to
+  TTS_FINAL_QUALITY_RETRIES (default 1 => 2 total attempts), keeping the
+  least-buzzy attempt on exhaustion (never hard-fails an otherwise-good request,
+  never fails delivery over its own analysis). Verified the discriminator is
+  safe: the clean normal file measured 1.0s tonal (< 1.5s threshold) so it would
+  NOT trigger a needless regen, while the 4.25s buzz does.
+- Verified: `npx tsc --noEmit` + `npm run build` pass, no lint errors.
+- Local-only; NOT yet deployed. Next deploy tag staging-20260613-12 (resumable
+  vps-ssh.py upload; VPS link still flaky). Still 6 uncommitted fixes in git
+  (worktree at a2bf891) + this 7th.
+
+## staging-20260613-12 DEPLOYED + Buzz Safeguard VERIFIED via API
+
+Update on 2026-06-14:
+
+- Deployed the final-merged buzz safeguard as
+  `ghmer... ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260613-12` to the
+  fixer/staging VPS (web + worker, production untouched). Rollout healthy; the
+  one-off SIGNIN 502 was just the new pod warming up (200 a few seconds later).
+- RE-TESTED both public APIs end-to-end against :30080 with fresh isolated
+  `apitest-` users (seeded in Postgres, deleted after via cascade; verified 0
+  remaining; all temp SQL/scripts removed from pod/VPS/local):
+  - Normal v1 sync `POST /api/v1/audio/speech`: 200, 23 credits charged, balance
+    decremented, PASS (-16.5 LUFS, longest stuck-tonal 1.50s).
+  - Business v2 async `POST /api/v2/audio/jobs`: queued -> 3 items -> completed
+    3/3, 58 credits, 38s, downloaded merged MP3. PASS (-16.5 LUFS, longest
+    stuck-tonal 1.50s, under the 1.5s gate). The 4.25s buzz from the previous
+    build (staging-...-11) is GONE.
+- PROOF the safeguard fired: web logs showed
+  "[TTS] Delivered audio quality issue (contains a sustained stuck tonal section
+  (2.0s)); regenerating whole synthesis attempt 1/2 ..." and another for
+  "too much stuck tonal audio (17% of windows)". So the delivery-loudness
+  re-check detected buzz on the merged output and regenerated, exactly as
+  designed.
+- Net: APIs work and buzz is fixed on the delivered audio. Tradeoff confirmed
+  acceptable: buzzy generations cost ~1 extra full regen.
+- STILL UNCOMMITTED: 7 fixes live as the staging image but git worktree remains
+  at a2bf891. Recommend committing the batch.
+
 ## Next Priorities
 
-1. Finish and verify current uncommitted KHQRcc changes.
-2. Improve webhook retry visibility and payment reconciliation.
-3. Improve batch history, per-line errors, downloads, and retries.
-4. Add admin force-process and selected-job recovery.
-5. Improve worker health and stuck-job visibility.
+1. Configure Spaces env vars locally and run a real upload/download smoke test.
+2. Deploy and live-test the V2 async API endpoints with a real paid API key.
+3. Add a scheduled webhook retry loop for failed API customer callbacks.
+4. Finish and verify current uncommitted KHQRcc changes.
+5. Improve batch history, per-line errors, downloads, and retries.
 6. Add database and uploaded-audio backup/restore operations.
 7. Polish business customer limits and launch review.
-8. Expand clone/batch API documentation.
+8. Expand clone/batch API examples with V2 async calls.
 9. Add regression tests for payment idempotency, queue recovery, text
    sanitization, and MP3 output.
 

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { authenticateApiKeyFromRequest } from "@/lib/api-key-auth";
 import { PUBLIC_AUDIO_OUTPUT_FORMAT } from "@/lib/audio-api";
+import { resolveAudioBytes } from "@/lib/audio-storage";
 import { corsHeaders, corsOptionsResponse } from "@/lib/cors";
 import { getBatchJobWithItems } from "@/lib/store";
 import { createZip } from "@/lib/zip";
@@ -61,12 +62,18 @@ export async function GET(request: Request, context: RouteContext) {
     return jsonWithCors({ error: "Batch job not found." }, { status: 404 });
   }
 
-  const files = result.items
-    .filter((item) => item.status === "success" && item.audioBase64)
-    .map((item) => ({
+  const files: Array<{ name: string; data: Buffer }> = [];
+  for (const item of result.items.filter((candidate) => candidate.status === "success" && (candidate.audioBase64 || candidate.audioObjectKey))) {
+    const bytes = await resolveAudioBytes({
+      audioBase64: item.audioBase64,
+      audioObjectKey: item.audioObjectKey,
+    });
+    if (!bytes?.byteLength) continue;
+    files.push({
       name: batchItemFileName(item.itemIndex, item.externalId, item.contentType),
-      data: Buffer.from(item.audioBase64 ?? "", "base64"),
-    }));
+      data: Buffer.from(bytes),
+    });
+  }
 
   if (files.length === 0) {
     return jsonWithCors({ error: "No generated audio files are available yet." }, { status: 404 });

@@ -105,6 +105,8 @@ export type GenerationRecord = {
   latencyMs: number;
   errorMessage: string | null;
   audioBase64?: string | null;
+  audioObjectKey?: string | null;
+  audioObjectUrl?: string | null;
   contentType?: string | null;
   hasAudio?: boolean;
   createdAt: string;
@@ -169,6 +171,8 @@ export type BatchJobItemRecord = {
   status: BatchJobItemStatus;
   generationId: string | null;
   audioBase64: string | null;
+  audioObjectKey: string | null;
+  audioObjectUrl: string | null;
   contentType: string | null;
   outputSeconds: number;
   creditsEstimated: number;

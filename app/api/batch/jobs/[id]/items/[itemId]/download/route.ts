@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { PUBLIC_AUDIO_CONTENT_TYPE, PUBLIC_AUDIO_OUTPUT_FORMAT } from "@/lib/audio-api";
+import { resolveAudioBytes } from "@/lib/audio-storage";
 import { getUserBatchJobWithItems } from "@/lib/store";
 import { readSessionFromCookie } from "@/lib/session";
 
@@ -41,11 +42,19 @@ export async function GET(_request: Request, context: RouteContext) {
   if (!item) {
     return NextResponse.json({ error: "Batch job item not found." }, { status: 404 });
   }
-  if (item.status !== "success" || !item.audioBase64) {
+  if (item.status !== "success" || (!item.audioBase64 && !item.audioObjectKey)) {
     return NextResponse.json({ error: "Audio is not available for this line yet." }, { status: 404 });
   }
 
-  const bytes = Buffer.from(item.audioBase64, "base64");
+  const resolvedBytes = await resolveAudioBytes({
+    audioBase64: item.audioBase64,
+    audioObjectKey: item.audioObjectKey,
+  });
+  if (!resolvedBytes?.byteLength) {
+    return NextResponse.json({ error: "Audio file could not be loaded for this line." }, { status: 404 });
+  }
+
+  const bytes = Buffer.from(resolvedBytes);
   const body = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(body).set(bytes);
   return new NextResponse(new Blob([body], { type: item.contentType ?? PUBLIC_AUDIO_CONTENT_TYPE }), {

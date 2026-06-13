@@ -54,6 +54,8 @@ next-env.d.ts
 # IDE
 .vscode/
 .idea/
+.cursor/
+.review/
 
 # OS
 .DS_Store

@@ -53,6 +53,31 @@ const ALLOWED_MULTIPART_API_ROUTES = new Set([
   "/api/generate-clone",
 ]);
 
+function booleanEnv(name: string): boolean | null {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (!value) return null;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return null;
+}
+
+function isLocalHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function shouldUseSecureCookie(request: NextRequest, hostname: string): boolean {
+  const csrfOverride = booleanEnv("CSRF_COOKIE_SECURE");
+  if (csrfOverride !== null) return csrfOverride;
+  const sharedOverride = booleanEnv("COOKIE_SECURE");
+  if (sharedOverride !== null) return sharedOverride;
+  if (isLocalHostname(hostname)) return false;
+
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  if (forwardedProto) return forwardedProto === "https";
+
+  return request.nextUrl.protocol === "https:" || process.env.NODE_ENV === "production";
+}
+
 function isRateLimited(ip: string, limit = 120, windowMs = 60000): boolean {
   const now = Date.now();
   const record = rateLimitMap.get(ip);
@@ -105,7 +130,9 @@ export async function proxy(request: NextRequest) {
 
   // 1. Force HTTPS redirect in production
   const xForwardedProto = request.headers.get("x-forwarded-proto");
+  const disableHttpsRedirect = booleanEnv("DISABLE_HTTPS_REDIRECT") === true;
   if (
+    !disableHttpsRedirect &&
     xForwardedProto === "http" &&
     !host.includes("localhost") &&
     !host.includes("127.0.0.1") &&
@@ -215,7 +242,7 @@ export async function proxy(request: NextRequest) {
   if (didGenerateCsrf && csrfToken) {
     response.cookies.set("csrf-token", csrfToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: shouldUseSecureCookie(request, hostname),
       sameSite: "lax",
       path: "/",
     });

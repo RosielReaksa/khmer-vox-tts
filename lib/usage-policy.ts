@@ -1,4 +1,5 @@
 export const MAX_TEXT_CHARS = 5_000;
+export const MAX_DASHBOARD_TTS_CHARS = 50_000;
 export const MAX_VOICE_CHARS = 120;
 export const MAX_MODEL_CHARS = 80;
 export const MAX_CLONE_SAMPLE_BYTES = 8 * 1024 * 1024;

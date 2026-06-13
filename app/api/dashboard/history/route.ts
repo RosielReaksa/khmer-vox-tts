@@ -64,7 +64,7 @@ export async function GET(request: Request) {
       outputSeconds: item.outputSeconds,
       creditsCharged: item.creditsCharged,
       errorMessage: item.errorMessage,
-      hasAudio: Boolean(item.hasAudio || item.audioBase64),
+      hasAudio: Boolean(item.hasAudio || item.audioBase64 || item.audioObjectKey),
       voice: item.voice,
       model: item.model,
     })),

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { resolveAudioBytes } from "@/lib/audio-storage";
 import { readSessionFromCookie } from "@/lib/session";
 import { getUserGenerationRecord } from "@/lib/store";
 
@@ -29,14 +30,22 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Generation not found." }, { status: 404 });
   }
 
-  if (generation.status !== "success" || !generation.audioBase64) {
+  if (generation.status !== "success" || (!generation.audioBase64 && !generation.audioObjectKey)) {
     return NextResponse.json({ error: "Generated audio is not available for this history item." }, { status: 404 });
   }
 
   const { searchParams } = new URL(_request.url);
   const isInline = searchParams.get("inline") === "true";
 
-  const bytes = Buffer.from(generation.audioBase64, "base64");
+  const resolvedBytes = await resolveAudioBytes({
+    audioBase64: generation.audioBase64,
+    audioObjectKey: generation.audioObjectKey,
+  });
+  if (!resolvedBytes?.byteLength) {
+    return NextResponse.json({ error: "Generated audio file could not be loaded." }, { status: 404 });
+  }
+
+  const bytes = Buffer.from(resolvedBytes);
   const body = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(body).set(bytes);
   const contentType = generation.contentType ?? "audio/wav";

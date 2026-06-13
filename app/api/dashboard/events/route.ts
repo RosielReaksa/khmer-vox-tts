@@ -123,7 +123,7 @@ async function buildSnapshot(userId: string, includeAdmin: boolean): Promise<Sna
         item.status,
         item.outputSeconds,
         item.creditsCharged,
-        Boolean(item.hasAudio || item.audioBase64),
+        Boolean(item.hasAudio || item.audioBase64 || item.audioObjectKey),
       ]),
     }),
     api: stableStringify({

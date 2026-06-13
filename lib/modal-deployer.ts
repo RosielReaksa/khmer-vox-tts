@@ -1,12 +1,23 @@
 import { spawn, type ChildProcess } from "child_process";
 import fs from "fs/promises";
 import path from "path";
-import { forceReloadEndpoints } from "./tts-endpoints";
+import { forceReloadEndpoints, getUpstreamEndpoints } from "./tts-endpoints";
 import { readAccountsConfig, writeAccountsConfig, clearModalBillingCache } from "./modal-accounts";
 
 function getModalSrcDir(): string {
   if (process.env.MODAL_SRC_DIR) return process.env.MODAL_SRC_DIR;
   return path.join(process.cwd(), "modal");
+}
+
+// Defense-in-depth against command injection: the Modal CLI is spawned with
+// shell:true (needed for cross-platform `modal`/`modal.cmd` resolution), so any
+// user-influenced argument must be free of shell metacharacters before spawn.
+const MODAL_SAFE_ARG = /^[A-Za-z0-9._:/-]+$/;
+
+function assertSafeModalArg(value: string, fieldName: string): void {
+  if (!MODAL_SAFE_ARG.test(value)) {
+    throw new Error(`${fieldName} contains characters that are not allowed.`);
+  }
 }
 
 export async function listModelFiles(): Promise<string[]> {
@@ -99,11 +110,24 @@ export async function resetDeployStatus(): Promise<void> {
   await persistStatusImmediate();
 }
 
-async function readApiKeyFromFile(): Promise<string> {
+async function readApiKeyFromConfiguredSources(): Promise<string> {
   const envKey = process.env.VOXCPM_API_KEY?.trim();
   if (envKey) {
     return envKey;
   }
+
+  const configuredEndpointKey = getUpstreamEndpoints()
+    .map((endpoint) => endpoint.token?.trim())
+    .find((token): token is string => Boolean(token));
+  if (configuredEndpointKey) {
+    return configuredEndpointKey;
+  }
+
+  const singleEndpointKey = process.env.TTS_UPSTREAM_TOKEN?.trim();
+  if (singleEndpointKey) {
+    return singleEndpointKey;
+  }
+
   const filePath = path.join(getModalSrcDir(), "NEW_VOXCPM_API_KEY.txt");
   try {
     const key = await fs.readFile(filePath, "utf-8");
@@ -111,7 +135,9 @@ async function readApiKeyFromFile(): Promise<string> {
     if (trimmed) return trimmed;
   } catch {}
 
-  throw new Error("VOXCPM_API_KEY is not defined. Please define the VOXCPM_API_KEY environment variable on the server or provide NEW_VOXCPM_API_KEY.txt.");
+  throw new Error(
+    "No VoxCPM API key is configured. Add VOXCPM_API_KEY or TTS_UPSTREAM_TOKEN to the server environment before connecting a Modal account.",
+  );
 }
 
 interface ModalPoolItem {
@@ -120,128 +146,151 @@ interface ModalPoolItem {
   label: string;
 }
 
+function parsePool(value: string): ModalPoolItem[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => {
+        const record = (item ?? {}) as Record<string, unknown>;
+        return {
+          url: String(record.url ?? "").trim(),
+          token: String(record.token ?? "").trim(),
+          label: String(record.label ?? "").trim(),
+        };
+      })
+      .filter((item) => item.url);
+  } catch {
+    return [];
+  }
+}
+
+function readPoolFromEnvContent(content: string): ModalPoolItem[] {
+  const match = content.match(/^TTS_UPSTREAM_POOL=(['"])(.*?)\1/m);
+  return match ? parsePool(match[2]) : [];
+}
+
+function normalizedEndpointUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "").toLowerCase();
+}
+
+function mergePoolItems(...pools: ModalPoolItem[][]): ModalPoolItem[] {
+  const merged = new Map<string, ModalPoolItem>();
+  for (const pool of pools) {
+    for (const item of pool) {
+      const key = normalizedEndpointUrl(item.url);
+      if (!key) continue;
+      const existing = merged.get(key);
+      merged.set(key, {
+        url: item.url,
+        token: item.token || existing?.token || "",
+        label: item.label || existing?.label || "",
+      });
+    }
+  }
+  return [...merged.values()];
+}
+
+async function readPoolFile(poolPath: string): Promise<ModalPoolItem[]> {
+  try {
+    return parsePool(await fs.readFile(poolPath, "utf-8"));
+  } catch {
+    return [];
+  }
+}
+
+function updatePoolInEnvContent(content: string, pool: ModalPoolItem[]): string {
+  const newPoolLine = `TTS_UPSTREAM_POOL='${JSON.stringify(pool)}'`;
+  const match = content.match(/^TTS_UPSTREAM_POOL=(['"])(.*?)\1/m);
+  if (match) {
+    return content.replace(/^TTS_UPSTREAM_POOL=(['"])(.*?)\1/m, newPoolLine);
+  }
+  return content.endsWith("\n")
+    ? `${content}${newPoolLine}\n`
+    : `${content}\n${newPoolLine}\n`;
+}
+
+async function writePoolFile(poolPath: string, pool: ModalPoolItem[]): Promise<void> {
+  await fs.mkdir(path.dirname(poolPath), { recursive: true });
+  await fs.writeFile(poolPath, JSON.stringify(pool, null, 2), "utf-8");
+}
+
 async function appendAccountToEnv(url: string, token: string, label: string): Promise<void> {
-  // 1. Write to persistent JSON pool
   const poolPath = path.join(process.cwd(), "data", "tts-upstream-pool.json");
-  try {
-    let poolList: ModalPoolItem[] = [];
-    try {
-      const content = await fs.readFile(poolPath, "utf-8");
-      poolList = JSON.parse(content) as ModalPoolItem[];
-    } catch {}
-
-    const existingIndex = poolList.findIndex(item => item.url === url || item.label === label);
-    if (existingIndex >= 0) {
-      poolList[existingIndex] = { url, token, label };
-    } else {
-      poolList.push({ url, token, label });
-    }
-
-    await fs.mkdir(path.dirname(poolPath), { recursive: true });
-    await fs.writeFile(poolPath, JSON.stringify(poolList, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Failed to write new account to tts-upstream-pool.json", err);
-  }
-
-  // 2. Fallback: Write to local .env
-  const envPath = path.join(process.cwd(), ".env");
-  const backupPath = path.join(process.cwd(), ".env.backup");
-  
-  try {
-    const content = await fs.readFile(envPath, "utf-8");
-    await fs.writeFile(backupPath, content, "utf-8"); // Backup first
-
-    const match = content.match(/^TTS_UPSTREAM_POOL=(['"])(.*?)\1/m);
-    let poolList: ModalPoolItem[] = [];
-    
-    if (match) {
-      try {
-        poolList = JSON.parse(match[2]) as ModalPoolItem[];
-      } catch (err) {
-        console.error("Failed to parse pool list from .env, initializing fresh pool", err);
-      }
-    }
-
-    const existingIndex = poolList.findIndex(item => item.url === url || item.label === label);
-    if (existingIndex >= 0) {
-      poolList[existingIndex] = { url, token, label };
-    } else {
-      poolList.push({ url, token, label });
-    }
-
-    const newPoolStr = JSON.stringify(poolList);
-    let updatedContent: string;
-    
-    if (match) {
-      updatedContent = content.replace(/^TTS_UPSTREAM_POOL=(['"]).*?\1/m, `TTS_UPSTREAM_POOL='${newPoolStr}'`);
-    } else {
-      updatedContent = content.endsWith("\n") 
-        ? content + `TTS_UPSTREAM_POOL='${newPoolStr}'\n`
-        : content + `\nTTS_UPSTREAM_POOL='${newPoolStr}'\n`;
-    }
-
-    await fs.writeFile(envPath, updatedContent, "utf-8");
-  } catch (err) {
-    console.warn("Could not write new account to local .env (this is expected in some production environments)", err);
-  }
-}
-
-async function removeAccountFromEnv(label: string): Promise<string | null> {
-  // 1. Remove from persistent JSON pool
-  const poolPath = path.join(process.cwd(), "data", "tts-upstream-pool.json");
-  let removedUrl: string | null = null;
-  try {
-    let poolList: ModalPoolItem[] = [];
-    try {
-      const content = await fs.readFile(poolPath, "utf-8");
-      poolList = JSON.parse(content) as ModalPoolItem[];
-    } catch {}
-
-    const item = poolList.find(i => i.label === label);
-    removedUrl = item ? item.url : null;
-
-    const filteredPool = poolList.filter(i => i.label !== label);
-    await fs.mkdir(path.dirname(poolPath), { recursive: true });
-    await fs.writeFile(poolPath, JSON.stringify(filteredPool, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Failed to remove account from tts-upstream-pool.json", err);
-  }
-
-  // 2. Fallback: Remove from local .env
   const envPath = path.join(process.cwd(), ".env");
   const backupPath = path.join(process.cwd(), ".env.backup");
 
+  let envContent = "";
   try {
-    const content = await fs.readFile(envPath, "utf-8");
-    await fs.writeFile(backupPath, content, "utf-8"); // Backup first
+    envContent = await fs.readFile(envPath, "utf-8");
+  } catch {}
 
-    const match = content.match(/^TTS_UPSTREAM_POOL=(['"])(.*?)\1/m);
-    if (!match) return removedUrl;
+  const existingPool = mergePoolItems(
+    readPoolFromEnvContent(envContent),
+    await readPoolFile(poolPath),
+  );
+  const nextPool = existingPool.filter(
+    (item) => normalizedEndpointUrl(item.url) !== normalizedEndpointUrl(url) && item.label !== label,
+  );
+  nextPool.push({ url, token, label });
 
-    let poolList: ModalPoolItem[] = [];
-    try {
-      poolList = JSON.parse(match[2]) as ModalPoolItem[];
-    } catch (err) {
-      console.error("Failed to parse pool list from .env, using empty list", err);
-    }
+  await writePoolFile(poolPath, nextPool);
 
-    const item = poolList.find(i => i.label === label);
-    if (item && !removedUrl) {
-      removedUrl = item.url;
-    }
-
-    const filteredPool = poolList.filter(i => i.label !== label);
-    const newPoolStr = JSON.stringify(filteredPool);
-    const updatedContent = content.replace(/^TTS_UPSTREAM_POOL=(['"]).*?\1/m, `TTS_UPSTREAM_POOL='${newPoolStr}'`);
-
-    await fs.writeFile(envPath, updatedContent, "utf-8");
-  } catch (err) {
-    console.warn("Could not remove account from local .env (this is expected in some production environments)", err);
+  if (!envContent) return;
+  try {
+    await fs.writeFile(backupPath, envContent, "utf-8");
+    await fs.writeFile(envPath, updatePoolInEnvContent(envContent, nextPool), "utf-8");
+  } catch (error) {
+    console.warn("Could not update the local environment pool.", error);
   }
-  return removedUrl;
 }
 
-export function startUndeploy(params: { label: string; profile: string }): void {
+async function removeAccountFromEnv(label: string, selectedUrl?: string): Promise<string | null> {
+  const poolPath = path.join(process.cwd(), "data", "tts-upstream-pool.json");
+  const envPath = path.join(process.cwd(), ".env");
+  const backupPath = path.join(process.cwd(), ".env.backup");
+
+  let envContent = "";
+  try {
+    envContent = await fs.readFile(envPath, "utf-8");
+  } catch {}
+
+  const currentPool = mergePoolItems(
+    readPoolFromEnvContent(envContent),
+    await readPoolFile(poolPath),
+  );
+  const selectedUrlKey = selectedUrl ? normalizedEndpointUrl(selectedUrl) : "";
+  const removedItem = currentPool.find((item) =>
+    selectedUrlKey
+      ? normalizedEndpointUrl(item.url) === selectedUrlKey
+      : item.label === label,
+  );
+  if (!removedItem) {
+    throw new Error(`Selected Modal account "${label}" was not found in the endpoint pool.`);
+  }
+
+  const nextPool = currentPool.filter((item) =>
+    selectedUrlKey
+      ? normalizedEndpointUrl(item.url) !== selectedUrlKey
+      : item.label !== label,
+  );
+  await writePoolFile(poolPath, nextPool);
+
+  if (envContent) {
+    try {
+      await fs.writeFile(backupPath, envContent, "utf-8");
+      await fs.writeFile(envPath, updatePoolInEnvContent(envContent, nextPool), "utf-8");
+    } catch (error) {
+      console.warn("Could not update the local environment pool.", error);
+    }
+  }
+
+  return removedItem.url;
+}
+
+export function startUndeploy(params: { label: string; profile: string; url?: string }): void {
+  assertSafeModalArg(params.profile, "Profile name");
+
   if (activeChildProcess) {
     try {
       activeChildProcess.kill();
@@ -284,7 +333,7 @@ export function startUndeploy(params: { label: string; profile: string }): void 
     persistStatusImmediate();
 
     try {
-      const removedUrl = await removeAccountFromEnv(params.label);
+      const removedUrl = await removeAccountFromEnv(params.label, params.url);
 
       const configMap = await readAccountsConfig();
       if (configMap[params.label]) {
@@ -327,7 +376,12 @@ export function startDeploy(params: {
   modelFile?: string;
 }): void {
   const modelFileToDeploy = params.modelFile || "modal_voxcpm_api.py";
-  
+
+  assertSafeModalArg(params.tokenId, "Token ID");
+  assertSafeModalArg(params.tokenSecret, "Token Secret");
+  assertSafeModalArg(params.profile, "Profile name");
+  assertSafeModalArg(modelFileToDeploy, "Model file");
+
   // If there is an active deployment process running, kill it
   if (activeChildProcess) {
     try {
@@ -388,7 +442,7 @@ export function startDeploy(params: {
 
     let apiKey: string;
     try {
-      apiKey = await readApiKeyFromFile();
+      apiKey = await readApiKeyFromConfiguredSources();
     } catch (err: unknown) {
       currentDeployStatus.status = "failed";
       currentDeployStatus.error = err instanceof Error ? err.message : "VOXCPM_API_KEY is missing.";

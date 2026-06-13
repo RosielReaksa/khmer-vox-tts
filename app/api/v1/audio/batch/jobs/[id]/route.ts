@@ -94,7 +94,7 @@ export async function GET(request: Request, context: RouteContext) {
       attempt_count: item.attemptCount,
       next_retry_at: item.nextRetryAt,
       error: item.errorMessage,
-      has_audio: Boolean(item.audioBase64),
+      has_audio: Boolean(item.audioBase64 || item.audioObjectKey),
     })),
   });
 }

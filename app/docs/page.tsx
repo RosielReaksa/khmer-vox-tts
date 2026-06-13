@@ -23,6 +23,7 @@ const errorRows = [
 const navItems = [
   ["Overview", "#overview"],
   ["Quickstart", "#quickstart"],
+  ["Async V2", "#async-v2"],
   ["Text to Speech", "#speech"],
   ["Clone Voice", "#clone"],
   ["Dubbing Setup", "#dubbing-setup"],
@@ -38,10 +39,20 @@ const navItems = [
 const platformStats = [
   ["Base URL", baseUrl],
   ["Authentication", "Bearer API key"],
-  ["Output", "MP3 audio + MP3 job ZIP"],
+  ["Output", "MP3 audio + async MP3/ZIP job downloads"],
 ];
 
 const endpointCards = [
+  {
+    title: "Async Speech V2",
+    path: "/api/v2/audio/jobs",
+    note: "Business-safe queued TTS: submit, poll status, download merged MP3.",
+  },
+  {
+    title: "Async Clone V2",
+    path: "/api/v2/audio/clone/jobs",
+    note: "Queued clone voice with reference audio, webhooks, and merged MP3 output.",
+  },
   {
     title: "Speech",
     path: "/api/v1/audio/speech",
@@ -140,7 +151,7 @@ export default function ApiDocsPage() {
                     <p className="text-xs font-headline font-black uppercase tracking-widest text-[#4a4a4a] border-b-2 border-outline pb-2 mb-4">Production path</p>
                     <div className="grid gap-4">
                       {endpointCards.map((card) => (
-                        <a key={card.path} href={card.path.includes("batch") ? "#batch" : card.path.includes("clone") ? "#clone" : "#speech"} className="block border-2 border-outline bg-white p-4 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-surface-container transition-all">
+                        <a key={card.path} href={card.path.includes("/v2/") ? "#async-v2" : card.path.includes("batch") ? "#batch" : card.path.includes("clone") ? "#clone" : "#speech"} className="block border-2 border-outline bg-white p-4 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-surface-container transition-all">
                           <div className="flex items-center justify-between gap-3">
                             <h2 className="font-headline font-bold uppercase text-xs text-primary">{card.title}</h2>
                             <span className="bg-[#def3e5] px-2 py-0.5 border border-outline font-mono text-[9px] font-black text-[#0f6a33]">POST</span>
@@ -178,7 +189,7 @@ export default function ApiDocsPage() {
                 <Step number={1} text="Create an account or sign in." />
                 <Step number={2} text="Buy Creator, Pro, or a paid token pack from Billing. Free accounts cannot create or use API keys." />
                 <Step number={3} text="Open Dashboard > API and create an API key. Daily and monthly limits are optional." />
-                <Step number={4} text="For dubbing tools, start with the multipart clone endpoint using sample, input, and voice_consent=true. Use batch clone with items for many segments." />
+                <Step number={4} text="For production apps, use the V2 async job API: submit text or clone jobs, poll status, then download the merged MP3." />
               </ol>
             </section>
 
@@ -200,13 +211,13 @@ export default function ApiDocsPage() {
               <div className="grid gap-4 lg:grid-cols-3">
                 <DubbingSetupCard
                   title="1. First live test"
-                  body="Call /api/v1/audio/clone with multipart/form-data. Send sample as a file, input as speech text, and voice_consent=true."
+                  body="Call /api/v2/audio/clone/jobs with multipart/form-data. Send sample as a file, input as speech text, and voice_consent=true."
                   code={`sample=@reference.wav\ninput=your text here\nvoice_consent=true`}
                 />
                 <DubbingSetupCard
                   title="2. Production segments"
-                  body="For many short lines, call /api/v1/audio/batch/clone with items. Put your segment ID in id or external_id so the ZIP filenames map back to video segments."
-                  code={`items[0].id=episode01_seg_0001\nitems[0].text=Khmer line text\noutput=MP3 ZIP`}
+                  body="For many short lines, call /api/v2/audio/clone/jobs with items. Put your segment ID in id or external_id so status payloads map back to your video segments."
+                  code={`items[0].id=episode01_seg_0001\nitems[0].text=Khmer line text\noutput=merged MP3 + ZIP`}
                 />
                 <DubbingSetupCard
                   title="3. Timing work"
@@ -220,6 +231,35 @@ export default function ApiDocsPage() {
             <ApiTestConsole baseUrl={baseUrl} />
 
             {/* Endpoints */}
+            <EndpointSection
+              id="async-v2"
+              method="POST"
+              path="/api/v2/audio/jobs"
+              title="Async Audio Jobs V2"
+              description="Recommended business path. Submit a job, poll status, then download one merged MP3. Long text is split into safe worker segments automatically."
+            >
+              <CodeBlock
+                title="Standard TTS job"
+                code={`curl -X POST "${baseUrl}/api/v2/audio/jobs" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  --data '{\n    "input": "long script text here",\n    "voice": "female",\n    "model": "voxcpm2",\n    "webhook_url": "https://your-app.com/tts-webhook",\n    "output_format": "mp3"\n  }'`}
+              />
+              <CodeBlock
+                title="Clone Voice job"
+                code={`curl -X POST "${baseUrl}/api/v2/audio/clone/jobs" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -F "sample=@reference.wav;type=audio/wav" \\\n  -F "input=long script text here" \\\n  -F "voice_consent=true" \\\n  -F "webhook_url=https://your-app.com/tts-webhook" \\\n  -F "output_format=mp3"`}
+              />
+              <CodeBlock
+                title="Poll and download"
+                code={`curl -H "Authorization: Bearer YOUR_API_KEY" \\\n  "${baseUrl}/api/v2/audio/jobs/JOB_ID"\n\ncurl -H "Authorization: Bearer YOUR_API_KEY" \\\n  --output result.mp3 \\\n  "${baseUrl}/api/v2/audio/jobs/JOB_ID/audio"`}
+              />
+              <FieldTable
+                rows={[
+                  ["input", "string or array", "Required. Long strings are automatically split into safe worker segments."],
+                  ["items", "JSON array", "Clone endpoint also accepts items for segment metadata and external IDs."],
+                  ["webhook_url", "string", "Optional. Completion callback includes status_url, audio_url, zip_url, and per-item status."],
+                  ["output_format", "string", "Optional. Only mp3 is supported."],
+                ]}
+              />
+            </EndpointSection>
+
             <EndpointSection
               id="speech"
               method="POST"

@@ -15,6 +15,35 @@ const disabledEndpoints = new Map<string, { disabledAt: number; reason: string }
 const DISABLE_DURATION_MS = 5 * 60 * 1000;
 let roundRobinCounter = 0;
 
+function parsePoolItems(value: unknown): UpstreamEndpoint[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item: unknown) => {
+      const obj = (item || {}) as Record<string, unknown>;
+      return {
+        url: String(obj.url ?? obj.endpoint ?? "").trim(),
+        token: String(obj.token ?? obj.key ?? obj.apiKey ?? "").trim(),
+        label: String(obj.label ?? obj.name ?? "").trim(),
+      };
+    })
+    .filter((ep) => ep.url);
+}
+
+function mergePoolItems(primary: UpstreamEndpoint[], fallback: UpstreamEndpoint[]): UpstreamEndpoint[] {
+  const merged = new Map<string, UpstreamEndpoint>();
+  for (const endpoint of [...fallback, ...primary]) {
+    const key = endpoint.url.trim().replace(/\/+$/, "").toLowerCase();
+    if (!key) continue;
+    const existing = merged.get(key);
+    merged.set(key, {
+      url: endpoint.url,
+      token: endpoint.token || existing?.token || "",
+      label: endpoint.label || existing?.label || "",
+    });
+  }
+  return [...merged.values()];
+}
+
 export function updateEndpointCredits(url: string, remaining: number): void {
   endpointCreditsMap.set(url, remaining);
 }
@@ -29,45 +58,40 @@ export function forceReloadEndpoints(): void {
 
 export function getUpstreamEndpoints(): UpstreamEndpoint[] {
   const poolPath = path.join(/*turbopackIgnore: true*/ process.cwd(), "data", "tts-upstream-pool.json");
+  let fileEndpoints: UpstreamEndpoint[] = [];
   try {
     if (existsSync(/*turbopackIgnore: true*/ poolPath)) {
       const content = readFileSync(/*turbopackIgnore: true*/ poolPath, "utf-8");
-      const parsed = JSON.parse(content);
-      if (Array.isArray(parsed)) {
-        return parsed
-          .map((item: unknown) => {
-            const obj = (item || {}) as Record<string, unknown>;
-            return {
-              url: String(obj.url ?? "").trim(),
-              token: String(obj.token ?? "").trim(),
-              label: String(obj.label ?? "").trim(),
-            };
-          })
-          .filter((ep) => ep.url);
-      }
+      fileEndpoints = parsePoolItems(JSON.parse(content));
     }
   } catch (err) {
     console.error("Error reading persistent pool from data/tts-upstream-pool.json:", err);
   }
 
   const poolStr = process.env.TTS_UPSTREAM_POOL?.trim();
+  if (fileEndpoints.length > 0) {
+    if (poolStr) {
+      try {
+        const parsed = JSON.parse(poolStr);
+        return mergePoolItems(fileEndpoints, parsePoolItems(parsed));
+      } catch (e) {
+        console.error("Failed to parse TTS_UPSTREAM_POOL environment variable as JSON:", e);
+        return fileEndpoints;
+      }
+    }
+    return fileEndpoints;
+  }
+
   if (cachedEndpoints) return cachedEndpoints;
 
   if (poolStr) {
     try {
       const parsed = JSON.parse(poolStr);
       if (Array.isArray(parsed)) {
-        cachedEndpoints = parsed
-          .map((item: unknown, index: number) => {
-            const obj = (item || {}) as Record<string, unknown>;
-            return {
-              url: String(obj.url ?? obj.endpoint ?? "").trim(),
-              token: String(obj.token ?? obj.key ?? obj.apiKey ?? "").trim(),
-              label: String(obj.label ?? obj.name ?? `Account ${index + 1}`).trim(),
-            };
-          })
-          .filter((ep) => ep.url);
-        return cachedEndpoints;
+        cachedEndpoints = parsePoolItems(parsed);
+        if (cachedEndpoints.length > 0) {
+          return cachedEndpoints;
+        }
       }
     } catch (e) {
       console.error("Failed to parse TTS_UPSTREAM_POOL environment variable as JSON:", e);

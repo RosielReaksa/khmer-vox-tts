@@ -84,17 +84,27 @@ type ActiveStore = typeof import("@/lib/json-store");
 
 let cachedStore: ActiveStore | null = null;
 let cachedStoreMode: "json" | "postgres" | null = null;
+let warnedLocalJsonStore = false;
 
 function usesPostgres(): boolean {
   const url = process.env.DATABASE_URL?.trim().replace(/^"|"$/g, "") ?? "";
   return url.startsWith("postgres://") || url.startsWith("postgresql://");
 }
 
+function allowsLocalJsonStore(): boolean {
+  const value = process.env.ALLOW_LOCAL_JSON_STORE?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
 async function activeStore(): Promise<ActiveStore> {
-  if (process.env.NODE_ENV === "production" && !usesPostgres()) {
+  if (process.env.NODE_ENV === "production" && !usesPostgres() && !allowsLocalJsonStore()) {
     throw new Error("Production requires DATABASE_URL to be a Postgres/Supabase connection string.");
   }
   const mode = usesPostgres() ? "postgres" : "json";
+  if (mode === "json" && process.env.NODE_ENV === "production" && !warnedLocalJsonStore) {
+    warnedLocalJsonStore = true;
+    console.warn("[store] Using local JSON store in production mode because ALLOW_LOCAL_JSON_STORE is enabled.");
+  }
   if (cachedStore && cachedStoreMode === mode) {
     return cachedStore;
   }
@@ -222,6 +232,8 @@ export async function updateGenerationRecord(input: {
   latencyMs?: number;
   errorMessage?: string | null;
   audioBase64?: string | null;
+  audioObjectKey?: string | null;
+  audioObjectUrl?: string | null;
   contentType?: string | null;
 }): Promise<GenerationRecord | null> {
   return (await activeStore()).updateGenerationRecord(input);
@@ -359,6 +371,8 @@ export async function updateBatchJobItem(input: {
   status: BatchJobItemRecord["status"];
   generationId?: string | null;
   audioBase64?: string | null;
+  audioObjectKey?: string | null;
+  audioObjectUrl?: string | null;
   contentType?: string | null;
   outputSeconds?: number;
   creditsCharged?: number;
@@ -527,6 +541,16 @@ export async function purgeQueuedBatchJobs(
   reason: string,
 ): Promise<number> {
   return (await activeStore()).purgeQueuedBatchJobs(adminUserId, reason);
+}
+
+export type AudioStorageCleanupResult = import("@/lib/json-store").AudioStorageCleanupResult;
+
+export async function cleanupOldAudioStorage(input?: {
+  retentionDays?: number;
+  dryRun?: boolean;
+  limit?: number;
+}): Promise<AudioStorageCleanupResult> {
+  return (await activeStore()).cleanupOldAudioStorage(input);
 }
 
 export async function approvePaymentOrder(input: {

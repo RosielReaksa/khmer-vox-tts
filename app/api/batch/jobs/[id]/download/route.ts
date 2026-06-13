@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { PUBLIC_AUDIO_OUTPUT_FORMAT } from "@/lib/audio-api";
+import { resolveAudioBytes } from "@/lib/audio-storage";
 import { getUserBatchJobWithItems } from "@/lib/store";
 import { readSessionFromCookie } from "@/lib/session";
 import { createZip } from "@/lib/zip";
@@ -30,12 +31,18 @@ export async function GET(
     return NextResponse.json({ error: "Batch job not found." }, { status: 404 });
   }
 
-  const files = result.items
-    .filter((item) => item.status === "success" && item.audioBase64)
-    .map((item) => ({
+  const files: Array<{ name: string; data: Buffer }> = [];
+  for (const item of result.items.filter((candidate) => candidate.status === "success" && (candidate.audioBase64 || candidate.audioObjectKey))) {
+    const bytes = await resolveAudioBytes({
+      audioBase64: item.audioBase64,
+      audioObjectKey: item.audioObjectKey,
+    });
+    if (!bytes?.byteLength) continue;
+    files.push({
       name: `${String(item.itemIndex + 1).padStart(3, "0")}.${extensionFor(item.contentType)}`,
-      data: Buffer.from(item.audioBase64 ?? "", "base64"),
-    }));
+      data: Buffer.from(bytes),
+    });
+  }
 
   if (files.length === 0) {
     return NextResponse.json({ error: "No generated audio files are available yet." }, { status: 404 });

@@ -8,14 +8,38 @@ import { getDeployStatus, startDeploy } from "@/lib/modal-deployer";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Modal CLI args are passed to a spawned process. Restrict to characters that
+// cannot break out of an argument or inject shell commands, even though the
+// deployer also validates defensively before spawning.
+const SAFE_TOKEN_ID = /^[A-Za-z0-9._:-]+$/;
+const SAFE_TOKEN_SECRET = /^[A-Za-z0-9._:-]+$/;
+const SAFE_PROFILE = /^[A-Za-z0-9._-]+$/;
+const SAFE_MODEL_FILE = /^[A-Za-z0-9._/-]+\.py$/;
+
 const deployRequestSchema = z.object({
-  label: z.string().min(1, "Account label is required"),
-  profile: z.string().min(1, "Profile name is required"),
-  tokenId: z.string().min(1, "Token ID is required"),
-  tokenSecret: z.string().min(1, "Token Secret is required"),
+  label: z.string().min(1, "Account label is required").max(120),
+  profile: z
+    .string()
+    .min(1, "Profile name is required")
+    .max(120)
+    .regex(SAFE_PROFILE, "Profile name contains invalid characters"),
+  tokenId: z
+    .string()
+    .min(1, "Token ID is required")
+    .max(200)
+    .regex(SAFE_TOKEN_ID, "Token ID contains invalid characters"),
+  tokenSecret: z
+    .string()
+    .min(1, "Token Secret is required")
+    .max(200)
+    .regex(SAFE_TOKEN_SECRET, "Token Secret contains invalid characters"),
   initialCredits: z.number().nonnegative("Initial credits must be a positive number"),
-  notes: z.string(),
-  modelFile: z.string().optional(),
+  notes: z.string().max(2_000),
+  modelFile: z
+    .string()
+    .max(200)
+    .regex(SAFE_MODEL_FILE, "Model file name is invalid")
+    .optional(),
 });
 
 async function requireAdmin() {
@@ -77,6 +101,7 @@ export async function DELETE(request: Request) {
   const urlObj = new URL(request.url);
   const label = urlObj.searchParams.get("label");
   const profile = urlObj.searchParams.get("profile");
+  const endpointUrl = urlObj.searchParams.get("url");
 
   if (label && profile) {
     const deployStatus = await getDeployStatus();
@@ -88,7 +113,7 @@ export async function DELETE(request: Request) {
     }
 
     const { startUndeploy } = await import("@/lib/modal-deployer");
-    startUndeploy({ label, profile });
+    startUndeploy({ label, profile, url: endpointUrl || undefined });
     return NextResponse.json({ ok: true, message: "Undeployment started" });
   }
 
@@ -96,4 +121,3 @@ export async function DELETE(request: Request) {
   await resetDeployStatus();
   return NextResponse.json({ ok: true });
 }
-

@@ -1,18 +1,19 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { runGenerationForUser, GenerationServiceError, countChars } from "@/lib/generation-service";
+import { BatchJobServiceError } from "@/lib/batch-service";
+import { createQueuedDashboardGeneration } from "@/lib/generation-queue";
 import { acquireUsageLimit, type UsageLimitResult } from "@/lib/rate-limit";
 import { isJsonRequestError, jsonRequestErrorBody, readJsonRequest } from "@/lib/request-json";
 import { getUsagePolicy } from "@/lib/server-usage-policy";
 import { readSessionFromCookie } from "@/lib/session";
-import { MAX_MODEL_CHARS, MAX_TEXT_CHARS, MAX_VOICE_CHARS } from "@/lib/usage-policy";
+import { MAX_DASHBOARD_TTS_CHARS, MAX_MODEL_CHARS, MAX_VOICE_CHARS } from "@/lib/usage-policy";
 import { DEFAULT_TTS_VOICE_PROMPT } from "@/lib/voice-defaults";
 
 export const runtime = "nodejs";
 
 const generateSchema = z.object({
-  text: z.string().min(1).max(MAX_TEXT_CHARS),
+  text: z.string().min(1).max(MAX_DASHBOARD_TTS_CHARS),
   voice: z.string().min(1).max(MAX_VOICE_CHARS).optional(),
   model: z.string().min(1).max(MAX_MODEL_CHARS).optional(),
 });
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
     const parsed = generateSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
-        { error: `Invalid generation payload. Text max is ${MAX_TEXT_CHARS.toLocaleString()} characters.` },
+        { error: `Invalid generation payload. Text max is ${MAX_DASHBOARD_TTS_CHARS.toLocaleString()} characters.` },
         { status: 400 },
       );
     }
@@ -42,34 +43,6 @@ export async function POST(request: Request) {
           { status: 400 },
         );
       }
-    }
-
-    const textChars = countChars(parsed.data.text);
-    const AUTO_QUEUE_THRESHOLD = 2000;
-    if (textChars >= AUTO_QUEUE_THRESHOLD) {
-      const { splitTextIntoChunks } = await import("@/lib/tts-provider");
-      const { createQueuedBatchJob, kickBatchWorker } = await import("@/lib/batch-service");
-
-      const chunks = splitTextIntoChunks(parsed.data.text, 1000);
-      const lines = chunks.map((chunk) => ({ text: chunk }));
-
-      const { job } = await createQueuedBatchJob({
-        userId: session.userId,
-        source: "dashboard",
-        mode: "tts",
-        title: `Auto-segmented TTS (${textChars} chars)`,
-        lines,
-        voice: parsed.data.voice ?? DEFAULT_TTS_VOICE_PROMPT,
-        model: parsed.data.model,
-      });
-
-      kickBatchWorker(job.id);
-
-      return NextResponse.json({
-        ok: true,
-        queued: true,
-        jobId: job.id,
-      });
     }
 
     const usageLimit = await acquireUsageLimit(
@@ -84,9 +57,8 @@ export async function POST(request: Request) {
     }
     limit = usageLimit;
 
-    const result = await runGenerationForUser({
+    const { job } = await createQueuedDashboardGeneration({
       userId: session.userId,
-      source: "dashboard",
       mode: "tts",
       text: parsed.data.text,
       voice: parsed.data.voice ?? DEFAULT_TTS_VOICE_PROMPT,
@@ -95,23 +67,21 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ok: true,
-      ...result,
+      queued: true,
+      jobId: job.id,
+      job: {
+        id: job.id,
+        status: job.status,
+        totalItems: job.totalItems,
+        creditsEstimated: job.creditsEstimated,
+      },
     }, {
+      status: 202,
       headers: limit.headers,
     });
   } catch (error) {
     if (isJsonRequestError(error)) {
       return NextResponse.json(jsonRequestErrorBody(error), { status: error.status, headers: limit?.headers });
-    }
-    if (error instanceof GenerationServiceError) {
-      return NextResponse.json(
-        {
-          error: error.message,
-          code: error.code,
-          remainingTokens: error.remainingTokens,
-        },
-        { status: error.status, headers: limit?.headers },
-      );
     }
     if (error instanceof BatchJobServiceError) {
       return NextResponse.json(

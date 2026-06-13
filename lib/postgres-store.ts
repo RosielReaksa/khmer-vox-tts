@@ -156,6 +156,8 @@ create table if not exists generations (
   latency_ms integer not null,
   error_message text,
   audio_base64 text,
+  audio_object_key text,
+  audio_object_url text,
   content_type text,
   created_at timestamptz not null default now()
 );
@@ -242,6 +244,8 @@ create table if not exists batch_job_items (
   status text not null check (status in ('queued', 'running', 'success', 'failed')),
   generation_id text references generations(id) on delete set null,
   audio_base64 text,
+  audio_object_key text,
+  audio_object_url text,
   content_type text,
   output_seconds integer not null default 0,
   credits_estimated integer not null default 0,
@@ -597,6 +601,8 @@ alter table api_keys add column if not exists max_concurrent_requests integer;
 alter table api_keys add column if not exists max_concurrent_jobs integer;
 alter table api_keys add column if not exists max_queued_jobs integer;
 alter table generations add column if not exists audio_base64 text;
+alter table generations add column if not exists audio_object_key text;
+alter table generations add column if not exists audio_object_url text;
 alter table generations add column if not exists content_type text;
 alter table batch_jobs add column if not exists clone_sample_base64 text;
 alter table batch_jobs add column if not exists clone_sample_mime_type text;
@@ -621,6 +627,8 @@ alter table batch_job_items add column if not exists speaker text;
 alter table batch_job_items add column if not exists start_ms integer;
 alter table batch_job_items add column if not exists end_ms integer;
 alter table batch_job_items add column if not exists metadata_json text;
+alter table batch_job_items add column if not exists audio_object_key text;
+alter table batch_job_items add column if not exists audio_object_url text;
 alter table batch_job_items add column if not exists attempt_count integer not null default 0;
 alter table batch_job_items add column if not exists last_attempt_at timestamptz;
 alter table batch_job_items add column if not exists next_retry_at timestamptz;
@@ -846,6 +854,8 @@ type GenerationRow = QueryResultRow & {
   latency_ms: number | string;
   error_message: string | null;
   audio_base64?: string | null;
+  audio_object_key?: string | null;
+  audio_object_url?: string | null;
   content_type?: string | null;
   has_audio?: boolean | string | null;
   created_at: Date | string;
@@ -910,6 +920,8 @@ type BatchJobItemRow = QueryResultRow & {
   status: BatchJobItemStatus;
   generation_id: string | null;
   audio_base64: string | null;
+  audio_object_key: string | null;
+  audio_object_url: string | null;
   content_type: string | null;
   output_seconds: number | string;
   credits_estimated: number | string;
@@ -1350,8 +1362,10 @@ function mapGeneration(row: GenerationRow): GenerationRecord {
     latencyMs: toNumber(row.latency_ms),
     errorMessage: row.error_message,
     audioBase64: row.audio_base64 ?? null,
+    audioObjectKey: row.audio_object_key ?? null,
+    audioObjectUrl: row.audio_object_url ?? null,
     contentType: row.content_type ?? null,
-    hasAudio: row.has_audio === true || row.has_audio === "true" || Boolean(row.audio_base64),
+    hasAudio: row.has_audio === true || row.has_audio === "true" || Boolean(row.audio_base64 || row.audio_object_key),
     createdAt: iso(row.created_at),
   };
 }
@@ -1418,6 +1432,8 @@ function mapBatchJobItem(row: BatchJobItemRow): BatchJobItemRecord {
     status: row.status,
     generationId: row.generation_id,
     audioBase64: row.audio_base64,
+    audioObjectKey: row.audio_object_key,
+    audioObjectUrl: row.audio_object_url,
     contentType: row.content_type,
     outputSeconds: toNumber(row.output_seconds),
     creditsEstimated: toNumber(row.credits_estimated),
@@ -2019,9 +2035,9 @@ export async function createGenerationRecord(
     insert into generations (
       id, user_id, api_key_id, mode, source, status, model, voice, input_chars,
       input_preview, output_seconds, credits_requested, credits_charged,
-      latency_ms, error_message, audio_base64, content_type, created_at
+      latency_ms, error_message, audio_base64, audio_object_key, audio_object_url, content_type, created_at
     )
-    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
     returning *
     `,
     [
@@ -2041,6 +2057,8 @@ export async function createGenerationRecord(
       input.latencyMs,
       input.errorMessage,
       input.audioBase64 ?? null,
+      input.audioObjectKey ?? null,
+      input.audioObjectUrl ?? null,
       input.contentType ?? null,
       input.createdAt ?? new Date().toISOString(),
     ],
@@ -2058,6 +2076,8 @@ export async function updateGenerationRecord(input: {
   latencyMs?: number;
   errorMessage?: string | null;
   audioBase64?: string | null;
+  audioObjectKey?: string | null;
+  audioObjectUrl?: string | null;
   contentType?: string | null;
 }): Promise<GenerationRecord | null> {
   const setParts = ["status = $1"];
@@ -2074,6 +2094,8 @@ export async function updateGenerationRecord(input: {
   if (input.latencyMs !== undefined) addSet("latency_ms", input.latencyMs);
   if (input.errorMessage !== undefined) addSet("error_message", input.errorMessage);
   if (input.audioBase64 !== undefined) addSet("audio_base64", input.audioBase64);
+  if (input.audioObjectKey !== undefined) addSet("audio_object_key", input.audioObjectKey);
+  if (input.audioObjectUrl !== undefined) addSet("audio_object_url", input.audioObjectUrl);
   if (input.contentType !== undefined) addSet("content_type", input.contentType);
 
   values.push(input.generationId, input.userId);
@@ -2134,8 +2156,9 @@ export async function listUserGenerations(
     `
     select id, user_id, api_key_id, mode, source, status, model, voice,
            input_chars, input_preview, output_seconds, credits_requested,
-           credits_charged, latency_ms, error_message, content_type,
-           (audio_base64 is not null) as has_audio, created_at
+           credits_charged, latency_ms, error_message, audio_base64,
+           audio_object_key, audio_object_url, content_type,
+           (audio_base64 is not null or audio_object_key is not null) as has_audio, created_at
     from generations
     where ${where.join(" and ")}
     order by created_at desc
@@ -2392,14 +2415,14 @@ export async function createBatchJob(input: {
         insert into batch_job_items (
           id, job_id, user_id, item_index, text, input_preview, voice, model,
           external_id, speaker, start_ms, end_ms, metadata_json,
-          status, generation_id, audio_base64, content_type, output_seconds,
+          status, generation_id, audio_base64, audio_object_key, audio_object_url, content_type, output_seconds,
           credits_estimated, credits_charged, latency_ms, error_message,
           created_at, updated_at
         )
         values (
           $1, $2, $3, $4, $5, $6, $7, $8,
           $9, $10, $11, $12, $13,
-          'queued', null, null, null, 0, $14, 0, 0, null, $15, $15
+          'queued', null, null, null, null, null, 0, $14, 0, 0, null, $15, $15
         )
         returning *
         `,
@@ -2649,6 +2672,8 @@ export async function updateBatchJobItem(input: {
   status: BatchJobItemRecord["status"];
   generationId?: string | null;
   audioBase64?: string | null;
+  audioObjectKey?: string | null;
+  audioObjectUrl?: string | null;
   contentType?: string | null;
   outputSeconds?: number;
   creditsCharged?: number;
@@ -2668,6 +2693,8 @@ export async function updateBatchJobItem(input: {
 
   if ("generationId" in input) addSet("generation_id", input.generationId ?? null);
   if ("audioBase64" in input) addSet("audio_base64", input.audioBase64 ?? null);
+  if ("audioObjectKey" in input) addSet("audio_object_key", input.audioObjectKey ?? null);
+  if ("audioObjectUrl" in input) addSet("audio_object_url", input.audioObjectUrl ?? null);
   if ("contentType" in input) addSet("content_type", input.contentType ?? null);
   if ("outputSeconds" in input) addSet("output_seconds", Math.max(0, Math.round(input.outputSeconds ?? 0)));
   if ("creditsCharged" in input) addSet("credits_charged", Math.max(0, Math.round(input.creditsCharged ?? 0)));
@@ -2757,12 +2784,16 @@ export async function refreshBatchJobRollup(jobId: string): Promise<BatchJobReco
     let nextRetryAt: string | null = nullableIso(jobRow.next_retry_at);
     let errorMessage = jobRow.error_message;
     let deadLetterReason = jobRow.dead_letter_reason;
+    let lastWorkerError = jobRow.last_worker_error;
 
     if (terminalItems >= totalItems) {
       if (failedItems === 0) {
         finalStatus = "completed";
         completedAt = nullableIso(jobRow.completed_at) ?? now;
         nextRetryAt = null;
+        errorMessage = null;
+        deadLetterReason = null;
+        lastWorkerError = null;
       } else if (retryableFailedItems > 0) {
         finalStatus = "queued";
         completedAt = null;
@@ -2802,8 +2833,9 @@ export async function refreshBatchJobRollup(jobId: string): Promise<BatchJobReco
         error_message = $7,
         next_retry_at = $8,
         dead_letter_reason = $9,
-        updated_at = $10
-      where id = $11
+        last_worker_error = $10,
+        updated_at = $11
+      where id = $12
       returning *
       `,
       [
@@ -2816,6 +2848,7 @@ export async function refreshBatchJobRollup(jobId: string): Promise<BatchJobReco
         errorMessage,
         nextRetryAt,
         deadLetterReason,
+        lastWorkerError,
         now,
         jobId,
       ],
@@ -3170,6 +3203,163 @@ export async function purgeQueuedBatchJobs(adminUserId: string, reason: string):
     }
 
     return jobIds.length;
+  });
+}
+
+export type AudioStorageCleanupResult = {
+  cutoffAt: string;
+  retentionDays: number;
+  dryRun: boolean;
+  limit: number;
+  batchItemsCleared: number;
+  generationsCleared: number;
+  cloneSamplesCleared: number;
+  estimatedBytesReleased: number;
+};
+
+function normalizeCleanupNumber(value: unknown): number {
+  const numeric = Number(value ?? 0);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+export async function cleanupOldAudioStorage(input?: {
+  retentionDays?: number;
+  dryRun?: boolean;
+  limit?: number;
+}): Promise<AudioStorageCleanupResult> {
+  const retentionDays = Math.max(1, Math.min(Math.round(input?.retentionDays ?? 30), 3650));
+  const limit = Math.max(1, Math.min(Math.round(input?.limit ?? 500), 5000));
+  const dryRun = Boolean(input?.dryRun);
+  const cutoffAt = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+
+  return withTransaction(async (client) => {
+    const targetBatchItems = await client.query<QueryResultRow & { count: number | string; bytes: number | string }>(
+      `
+      with target as (
+        select batch_job_items.id, length(batch_job_items.audio_base64)::bigint as bytes
+        from batch_job_items
+        join batch_jobs on batch_jobs.id = batch_job_items.job_id
+        where batch_job_items.audio_base64 is not null
+          and batch_jobs.status in ('completed', 'partial', 'failed', 'needs_review')
+          and coalesce(batch_jobs.completed_at, batch_jobs.updated_at, batch_jobs.created_at) < $1::timestamptz
+        order by coalesce(batch_jobs.completed_at, batch_jobs.updated_at, batch_jobs.created_at), batch_job_items.updated_at
+        limit $2
+      )
+      select count(*)::int as count, coalesce(sum(bytes), 0)::bigint as bytes from target
+      `,
+      [cutoffAt, limit],
+    );
+    const targetGenerations = await client.query<QueryResultRow & { count: number | string; bytes: number | string }>(
+      `
+      with target as (
+        select id, length(audio_base64)::bigint as bytes
+        from generations
+        where audio_base64 is not null
+          and status = 'success'
+          and created_at < $1::timestamptz
+        order by created_at
+        limit $2
+      )
+      select count(*)::int as count, coalesce(sum(bytes), 0)::bigint as bytes from target
+      `,
+      [cutoffAt, limit],
+    );
+    const targetCloneSamples = await client.query<QueryResultRow & { count: number | string; bytes: number | string }>(
+      `
+      with target as (
+        select id, length(clone_sample_base64)::bigint as bytes
+        from batch_jobs
+        where clone_sample_base64 is not null
+          and status in ('completed', 'partial', 'failed', 'needs_review')
+          and coalesce(completed_at, updated_at, created_at) < $1::timestamptz
+        order by coalesce(completed_at, updated_at, created_at)
+        limit $2
+      )
+      select count(*)::int as count, coalesce(sum(bytes), 0)::bigint as bytes from target
+      `,
+      [cutoffAt, limit],
+    );
+
+    const batchItemsCleared = normalizeCleanupNumber(targetBatchItems.rows[0]?.count);
+    const generationsCleared = normalizeCleanupNumber(targetGenerations.rows[0]?.count);
+    const cloneSamplesCleared = normalizeCleanupNumber(targetCloneSamples.rows[0]?.count);
+    const estimatedBytesReleased =
+      normalizeCleanupNumber(targetBatchItems.rows[0]?.bytes) +
+      normalizeCleanupNumber(targetGenerations.rows[0]?.bytes) +
+      normalizeCleanupNumber(targetCloneSamples.rows[0]?.bytes);
+
+    if (!dryRun) {
+      const now = new Date().toISOString();
+      await client.query(
+        `
+        with target as (
+          select batch_job_items.id
+          from batch_job_items
+          join batch_jobs on batch_jobs.id = batch_job_items.job_id
+          where batch_job_items.audio_base64 is not null
+            and batch_jobs.status in ('completed', 'partial', 'failed', 'needs_review')
+            and coalesce(batch_jobs.completed_at, batch_jobs.updated_at, batch_jobs.created_at) < $1::timestamptz
+          order by coalesce(batch_jobs.completed_at, batch_jobs.updated_at, batch_jobs.created_at), batch_job_items.updated_at
+          limit $2
+        )
+        update batch_job_items
+        set audio_base64 = null,
+          content_type = null,
+          updated_at = $3
+        where id in (select id from target)
+        `,
+        [cutoffAt, limit, now],
+      );
+      await client.query(
+        `
+        with target as (
+          select id
+          from generations
+          where audio_base64 is not null
+            and status = 'success'
+            and created_at < $1::timestamptz
+          order by created_at
+          limit $2
+        )
+        update generations
+        set audio_base64 = null,
+          content_type = null
+        where id in (select id from target)
+        `,
+        [cutoffAt, limit],
+      );
+      await client.query(
+        `
+        with target as (
+          select id
+          from batch_jobs
+          where clone_sample_base64 is not null
+            and status in ('completed', 'partial', 'failed', 'needs_review')
+            and coalesce(completed_at, updated_at, created_at) < $1::timestamptz
+          order by coalesce(completed_at, updated_at, created_at)
+          limit $2
+        )
+        update batch_jobs
+        set clone_sample_base64 = null,
+          clone_sample_mime_type = null,
+          clone_sample_file_name = null,
+          updated_at = $3
+        where id in (select id from target)
+        `,
+        [cutoffAt, limit, now],
+      );
+    }
+
+    return {
+      cutoffAt,
+      retentionDays,
+      dryRun,
+      limit,
+      batchItemsCleared,
+      generationsCleared,
+      cloneSamplesCleared,
+      estimatedBytesReleased,
+    };
   });
 }
 

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { concatMp3Buffers } from "@/lib/audio-merge";
+import { resolveAudioBytes } from "@/lib/audio-storage";
 import { getUserBatchJobWithItems, getUserTokenBalance } from "@/lib/store";
 import { readSessionFromCookie } from "@/lib/session";
+import { mergePublicMp3SegmentsForDelivery } from "@/lib/tts-provider";
 
 export const runtime = "nodejs";
 
@@ -28,7 +29,7 @@ export async function GET(
   }
 
   const successfulItems = items
-    .filter((item) => item.status === "success" && item.audioBase64)
+    .filter((item) => item.status === "success" && (item.audioBase64 || item.audioObjectKey))
     .sort((a, b) => a.itemIndex - b.itemIndex);
 
   if (successfulItems.length === 0) {
@@ -36,25 +37,30 @@ export async function GET(
   }
 
   try {
-    const buffers = successfulItems.map((item) => Buffer.from(item.audioBase64 ?? "", "base64"));
-    const mergedBuffer = await concatMp3Buffers(buffers);
-
-    if (mergedBuffer.length === 0) {
-      return NextResponse.json({ error: "Failed to concatenate audio segments." }, { status: 500 });
+    const buffers: Buffer[] = [];
+    for (const item of successfulItems) {
+      const bytes = await resolveAudioBytes({
+        audioBase64: item.audioBase64,
+        audioObjectKey: item.audioObjectKey,
+      });
+      if (bytes?.byteLength) buffers.push(Buffer.from(bytes));
     }
-
-    const audioBase64 = Buffer.from(mergedBuffer).toString("base64");
+    if (buffers.length === 0) {
+      return NextResponse.json({ error: "No successful audio segments found in this batch job." }, { status: 404 });
+    }
+    const cleanedAudio = await mergePublicMp3SegmentsForDelivery(buffers, job.outputSeconds);
+    const audioBase64 = Buffer.from(cleanedAudio.bytes).toString("base64");
     const remainingTokens = await getUserTokenBalance(session.userId);
 
     return NextResponse.json({
       ok: true,
       generationId: job.id,
       audioBase64,
-      contentType: "audio/mpeg",
+      contentType: cleanedAudio.contentType,
       creditsRequested: job.creditsEstimated,
       creditsCharged: job.creditsCharged,
       remainingTokens,
-      outputSeconds: job.outputSeconds,
+      outputSeconds: cleanedAudio.outputSeconds ?? job.outputSeconds,
       latencyMs: job.startedAt && job.completedAt
         ? new Date(job.completedAt).getTime() - new Date(job.startedAt).getTime()
         : 0,

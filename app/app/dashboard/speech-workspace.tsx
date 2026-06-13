@@ -7,7 +7,7 @@ import { useDashboardUser } from "@/app/app/dashboard/dashboard-user-context";
 import { VoxLoader } from "@/app/components/vox-loader";
 import { Portal } from "@/app/components/portal";
 
-import { MAX_TEXT_CHARS } from "@/lib/usage-policy";
+import { MAX_DASHBOARD_TTS_CHARS } from "@/lib/usage-policy";
 import {
   DASHBOARD_TTS_VOICE_PRESETS,
   DEFAULT_CLONE_VOICE_INSTRUCTION,
@@ -166,10 +166,11 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
   const activeRate = (isCloneMode || isCustomVoiceSelected) ? STANDARD_CLONE_CREDITS_PER_SECOND : TTS_CREDITS_PER_SECOND;
   const activeSeconds = (isCloneMode || isCustomVoiceSelected) ? cloneSeconds : standardSeconds;
   const activeCredits = activeSeconds * activeRate;
+  const maxInputChars = MAX_DASHBOARD_TTS_CHARS;
 
   const canGenerate =
     text.trim().length > 0 &&
-    text.length <= MAX_TEXT_CHARS &&
+    text.length <= maxInputChars &&
     (!isCloneMode || usingSavedVoice || (sampleFile !== null && voiceConsent));
   const historyHref = `/app/dashboard/history?mode=${isCloneMode ? "clone" : "tts"}`;
   const generateBlocker = getGenerateBlocker({
@@ -178,7 +179,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
     usingSavedVoice,
     sampleFile,
     voiceConsent,
-    maxChars: MAX_TEXT_CHARS,
+    maxChars: maxInputChars,
   });
   const updatedLabel = updatedAtLabel === "--:--:--" ? "Not generated yet" : `Updated ${updatedAtLabel}`;
 
@@ -738,14 +739,14 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
               <textarea
                 value={text}
                 onChange={(event) => setText(event.target.value)}
-                maxLength={MAX_TEXT_CHARS}
+                maxLength={maxInputChars}
                 placeholder="Paste text..."
                 className={`smooth-scroll-region w-full resize-y border-4 border-primary bg-white p-5 text-base leading-7 text-primary outline-none transition focus:bg-[#faf7f2] shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] ${
                   isCloneMode ? "min-h-[190px] xl:min-h-[210px]" : "min-h-[250px] xl:min-h-[280px]"
                 }`}
               />
               <span className="absolute bottom-4 right-5 border-2 border-primary bg-[#ffcc00] px-2 py-0.5 text-xs font-headline font-black uppercase text-primary shadow-[1px_1px_0px_0px_rgba(26,26,26,1)]">
-                {text.length.toLocaleString()} / {MAX_TEXT_CHARS.toLocaleString()}
+                {text.length.toLocaleString()} / {maxInputChars.toLocaleString()}
               </span>
             </div>
           </label>

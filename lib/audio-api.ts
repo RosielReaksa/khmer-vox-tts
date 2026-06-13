@@ -17,11 +17,19 @@ export function appPublicBaseUrl(): string | null {
 export function publicBatchJobUrls(jobId: string): {
   status_url: string | null;
   download_url: string | null;
+  audio_url: string | null;
+  zip_url: string | null;
+  v2_status_url: string | null;
+  v2_audio_url: string | null;
 } {
   const baseUrl = appPublicBaseUrl();
   return {
     status_url: baseUrl ? `${baseUrl}/api/v1/audio/batch/jobs/${jobId}` : null,
     download_url: baseUrl ? `${baseUrl}/api/v1/audio/batch/jobs/${jobId}/download` : null,
+    audio_url: baseUrl ? `${baseUrl}/api/v2/audio/jobs/${jobId}/audio` : null,
+    zip_url: baseUrl ? `${baseUrl}/api/v1/audio/batch/jobs/${jobId}/download` : null,
+    v2_status_url: baseUrl ? `${baseUrl}/api/v2/audio/jobs/${jobId}` : null,
+    v2_audio_url: baseUrl ? `${baseUrl}/api/v2/audio/jobs/${jobId}/audio` : null,
   };
 }
 

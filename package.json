@@ -18,6 +18,9 @@
     "smoke:telegram-payment": "node scripts/telegram-payment-smoke.mjs",
     "smoke:telegram-payment-action": "node scripts/telegram-payment-action-smoke.mjs",
     "telegram:payment-poll": "node scripts/telegram-payment-poll.mjs",
+    "smoke:spaces-storage": "node scripts/spaces-audio-storage-smoke.mjs",
+    "smoke:v2-audio-api": "node scripts/v2-audio-api-smoke.mjs",
+    "smoke:audio-quality": "node scripts/audio-file-quality-check.mjs",
     "smoke:final": "node scripts/final-local-flow.mjs"
   },
   "dependencies": {

@@ -64,7 +64,12 @@ export function sanitizeTextForSpeech(input: string): string {
     .trim();
 }
 
+export function hasSpeakableText(input: string): boolean {
+  return /[\p{L}\p{N}]/u.test(input);
+}
+
 export function prepareTextForSpeech(input: string): string {
   const normalized = normalizeText(input);
-  return sanitizeTextForSpeech(normalized);
+  const sanitized = sanitizeTextForSpeech(normalized);
+  return hasSpeakableText(sanitized) ? sanitized : "";
 }

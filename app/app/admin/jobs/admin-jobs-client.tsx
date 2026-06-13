@@ -19,7 +19,36 @@ type AdminJobsData = {
   webhookAttempts: BatchJobWebhookAttemptWithUser[];
   queueHealth: BatchQueueHealth;
   workerHeartbeats: WorkerHeartbeatRecord[];
+  modalPool: ModalPoolHealth;
   generatedAt: string;
+};
+
+type ModalPoolHealth = {
+  total: number;
+  available: number;
+  blocked: number;
+  endpoints: Array<{
+    label: string;
+    host: string;
+    blocked: boolean;
+    cooldown_reason: string | null;
+    cooldown_expires_at: string | null;
+    total_requests: number;
+    success_rate: number | null;
+    average_latency_ms: number | null;
+    failed_requests: number;
+  }>;
+};
+
+type AudioCleanupResult = {
+  cutoffAt: string;
+  retentionDays: number;
+  dryRun: boolean;
+  limit: number;
+  batchItemsCleared: number;
+  generationsCleared: number;
+  cloneSamplesCleared: number;
+  estimatedBytesReleased: number;
 };
 
 const statusOptions: Array<BatchJobStatus | "all"> = [
@@ -59,6 +88,7 @@ export function AdminJobsClient() {
   const webhookAttempts = data?.webhookAttempts ?? [];
   const queueHealth = data?.queueHealth ?? emptyHealth();
   const workerHeartbeats = data?.workerHeartbeats ?? [];
+  const modalPool = data?.modalPool ?? emptyModalPool();
   const queued = jobs.filter((job) => job.status === "queued").length;
   const active = jobs.filter((job) => job.status === "running").length;
   const completed = jobs.filter((job) => job.status === "completed").length;
@@ -68,8 +98,6 @@ export function AdminJobsClient() {
   const retryableJobs = jobs.filter(
     (job) => job.status === "failed" || job.status === "partial" || job.status === "needs_review",
   );
-  const webhookIssues = jobs.filter((job) => job.webhookCallbackUrl && job.webhookStatus === "failed").length;
-  const charged = jobs.reduce((sum, job) => sum + job.creditsCharged, 0);
   const files = jobs.reduce((sum, job) => sum + job.completedItems, 0);
 
   async function runAction(action: string, payload: Record<string, unknown> = {}) {
@@ -81,12 +109,17 @@ export function AdminJobsClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, ...payload }),
       });
-      const result = (await response.json()) as { error?: string; worker?: string; retried?: number };
+      const result = (await response.json()) as {
+        error?: string;
+        worker?: string;
+        retried?: number;
+        cleanup?: AudioCleanupResult;
+      };
       if (!response.ok) {
         setMessage(result.error ?? "Worker action failed.");
         return;
       }
-      setMessage(formatWorkerNotice(result.worker));
+      setMessage(formatWorkerNotice(result.worker, result.cleanup));
       await refresh();
     } catch {
       setMessage("Network error while running worker action.");
@@ -144,6 +177,25 @@ export function AdminJobsClient() {
         <WorkerHeartbeatTable heartbeats={workerHeartbeats} />
       </section>
 
+      <section className="grid gap-4 lg:grid-cols-[1fr_auto]">
+        <ModalPoolCard pool={modalPool} />
+        <div className="rounded-none border-3 border-primary bg-[#faf7f2] p-5 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
+          <h2 className="text-2xl font-headline font-black uppercase text-primary">Modal Pool Control</h2>
+          <p className="mt-1 max-w-[360px] text-sm font-body text-primary/70">
+            Clear temporary endpoint cooldowns after fixing a Modal account or adding credits.
+          </p>
+          <div className="mt-4">
+            <ActionButton
+              loading={actionLoading === "reset_modal_pool"}
+              variant="secondary"
+              onClick={() => void runAction("reset_modal_pool")}
+            >
+              Reset Modal Cooldowns
+            </ActionButton>
+          </div>
+        </div>
+      </section>
+
       <section className="grid gap-3 rounded-none border-3 border-primary bg-[#faf7f2] p-5 lg:grid-cols-[1fr_auto] shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
         <div>
           <h2 className="text-2xl font-headline font-black uppercase text-primary">Worker Queue Controls</h2>
@@ -168,6 +220,24 @@ export function AdminJobsClient() {
             onClick={() => void runAction("retry_jobs", { jobIds: retryableJobs.slice(0, 50).map((job) => job.id) })}
           >
             Retry Failed Visible
+          </ActionButton>
+          <ActionButton
+            loading={actionLoading === "cleanup_audio_storage"}
+            variant="secondary"
+            onClick={() => void runAction("cleanup_audio_storage", { dryRun: true, retentionDays: 30, limit: 500 })}
+          >
+            Audit Old Audio
+          </ActionButton>
+          <ActionButton
+            loading={actionLoading === "cleanup_audio_storage"}
+            variant="danger"
+            onClick={() => {
+              if (window.confirm("Clear stored audio payloads older than 30 days? Job records stay, but old audio downloads will be removed.")) {
+                void runAction("cleanup_audio_storage", { retentionDays: 30, limit: 500 });
+              }
+            }}
+          >
+            Clean Old Audio
           </ActionButton>
           <ActionButton
             disabled={queued === 0 && active === 0}
@@ -216,6 +286,7 @@ export function AdminJobsClient() {
             jobs={jobs}
             onRetry={(jobId) => void runAction("retry_job", { jobId })}
             onWebhookRetry={(jobId) => void runAction("retry_webhook", { jobId })}
+            onForceProcess={(jobId) => void runAction("process_job", { jobId })}
             onSelectJob={setSelectedJobId}
             actionLoading={actionLoading}
           />
@@ -341,16 +412,74 @@ function WorkerHeartbeatTable({ heartbeats }: { heartbeats: WorkerHeartbeatRecor
   );
 }
 
+function ModalPoolCard({ pool }: { pool: ModalPoolHealth }) {
+  return (
+    <article className="rounded-none border-3 border-primary bg-[#faf7f2] p-5 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-headline font-bold uppercase tracking-[0.12em] text-primary/70">Modal Account Pool</p>
+          <h2 className="mt-2 text-2xl font-headline font-black uppercase text-primary">
+            {pool.available.toLocaleString()} / {pool.total.toLocaleString()} endpoints available
+          </h2>
+          <p className="mt-1 text-xs font-body text-primary/60">
+            Round-robin routing skips endpoints in cooldown and prefers accounts with usable credits.
+          </p>
+        </div>
+        <StatusPill status={pool.blocked > 0 ? "cooldown" : pool.total > 0 ? "ok" : "missing"} />
+      </div>
+      <div className="mt-4 overflow-x-auto rounded-none border-2 border-primary bg-white">
+        <table className="w-full min-w-[860px] text-sm text-primary">
+          <thead className="bg-[#f2ede5] text-left text-primary border-b-2 border-primary font-headline">
+            <tr>
+              <th className="px-3 py-2 font-bold uppercase">Endpoint</th>
+              <th className="px-3 py-2 font-bold uppercase">Status</th>
+              <th className="px-3 py-2 font-bold uppercase">Requests</th>
+              <th className="px-3 py-2 font-bold uppercase">Success</th>
+              <th className="px-3 py-2 font-bold uppercase">Latency</th>
+              <th className="px-3 py-2 font-bold uppercase">Cooldown</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pool.endpoints.length === 0 ? (
+              <tr><td colSpan={6} className="px-3 py-8 text-center text-primary/60 font-body">No Modal endpoints configured.</td></tr>
+            ) : (
+              pool.endpoints.map((endpoint) => (
+                <tr key={`${endpoint.label}:${endpoint.host}`} className="border-t border-primary/20 hover:bg-[#fafbfe] text-primary">
+                  <td className="px-3 py-2 font-body">
+                    <p className="font-bold">{endpoint.label}</p>
+                    <p className="font-mono text-xs text-primary/60">{endpoint.host}</p>
+                  </td>
+                  <td className="px-3 py-2"><StatusPill status={endpoint.blocked ? "cooldown" : "ok"} /></td>
+                  <td className="px-3 py-2 font-body">{endpoint.total_requests.toLocaleString()}</td>
+                  <td className="px-3 py-2 font-body">{endpoint.success_rate === null ? "-" : `${endpoint.success_rate}%`}</td>
+                  <td className="px-3 py-2 font-body">{endpoint.average_latency_ms === null ? "-" : `${endpoint.average_latency_ms.toLocaleString()}ms`}</td>
+                  <td className="max-w-[260px] px-3 py-2 font-mono text-xs text-primary/60">
+                    {endpoint.cooldown_reason
+                      ? `${endpoint.cooldown_reason}${endpoint.cooldown_expires_at ? ` until ${formatDate(endpoint.cooldown_expires_at)}` : ""}`
+                      : "-"}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  );
+}
+
 function JobsTable({
   jobs,
   onRetry,
   onWebhookRetry,
+  onForceProcess,
   onSelectJob,
   actionLoading,
 }: {
   jobs: BatchJobWithUser[];
   onRetry: (jobId: string) => void;
   onWebhookRetry: (jobId: string) => void;
+  onForceProcess: (jobId: string) => void;
   onSelectJob: (jobId: string) => void;
   actionLoading: string;
 }) {
@@ -412,6 +541,11 @@ function JobsTable({
                   {job.status === "failed" || job.status === "partial" || job.status === "needs_review" ? (
                     <button type="button" disabled={Boolean(actionLoading)} onClick={() => onRetry(job.id)} className="rounded-none border-2 border-primary bg-white px-3 py-1.5 text-xs font-headline font-bold uppercase text-primary shadow-[1px_1px_0px_0px_rgba(26,26,26,1)] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none disabled:opacity-50 cursor-pointer">
                       Retry
+                    </button>
+                  ) : null}
+                  {job.status === "queued" ? (
+                    <button type="button" disabled={Boolean(actionLoading)} onClick={() => onForceProcess(job.id)} className="rounded-none border-2 border-primary bg-[#ffcc00] px-3 py-1.5 text-xs font-headline font-bold uppercase text-primary shadow-[1px_1px_0px_0px_rgba(26,26,26,1)] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none disabled:opacity-50 cursor-pointer">
+                      Process now
                     </button>
                   ) : null}
                   {job.webhookCallbackUrl && job.webhookStatus === "failed" ? (
@@ -506,12 +640,35 @@ function JobStatusPill({ status }: { status: BatchJobStatus }) {
   return <span className={`rounded-none border-2 px-2 py-0.5 text-xs font-headline font-bold uppercase tracking-wider ${className}`}>{status}</span>;
 }
 
-function formatWorkerNotice(state?: string | null): string {
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+}
+
+function formatAudioCleanup(cleanup: AudioCleanupResult): string {
+  const records =
+    cleanup.batchItemsCleared + cleanup.generationsCleared + cleanup.cloneSamplesCleared;
+  const action = cleanup.dryRun ? "would clear" : "cleared";
+  return `Audio storage cleanup ${action} ${records.toLocaleString()} old payload(s), about ${formatBytes(cleanup.estimatedBytesReleased)}, older than ${cleanup.retentionDays.toLocaleString()} day(s).`;
+}
+
+function formatWorkerNotice(state?: string | null, cleanup?: AudioCleanupResult): string {
   if (!state) return "";
   if (state === "processed") return "Worker processed one queued job.";
   if (state === "idle") return "No claimable queued job was available.";
   if (state === "webhook-retry") return "Webhook callback was retried.";
   if (state === "webhook-idle") return "Webhook callback could not be retried for that job.";
+  if (state === "processed-job") return "Selected queued job was processed.";
+  if (state === "modal-pool-reset") return "Modal endpoint cooldowns were cleared and the pool was reloaded.";
+  if ((state === "audio-cleanup" || state === "audio-cleanup-dry-run") && cleanup) return formatAudioCleanup(cleanup);
+  if (state === "job-idle") return "Selected job could not be claimed. It may already be running or finished.";
   if (state.startsWith("recovered-")) {
     const [, recoveredRaw, reviewRaw] = state.split("-");
     const recovered = Number(recoveredRaw);
@@ -523,6 +680,15 @@ function formatWorkerNotice(state?: string | null): string {
     return `Retried ${Number.isFinite(count) ? count.toLocaleString() : "0"} job(s).`;
   }
   return state;
+}
+
+function emptyModalPool(): ModalPoolHealth {
+  return {
+    total: 0,
+    available: 0,
+    blocked: 0,
+    endpoints: [],
+  };
 }
 
 function emptyHealth(): BatchQueueHealth {
