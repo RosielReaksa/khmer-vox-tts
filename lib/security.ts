@@ -3,8 +3,23 @@ import "server-only";
 
 import bcrypt from "bcryptjs";
 
+// bcrypt work factor. Configurable via env so we can tune CPU cost without a
+// code change. Default 10 is a current industry-standard cost and ~4x cheaper
+// per hash than 12, which matters a lot on small (2-core) nodes under
+// concurrent signups. Clamped to bcrypt's valid 4..15 range here.
+// IMPORTANT: this only affects NEWLY created hashes. bcrypt.compare reads the
+// cost from each stored hash, so existing users (hashed at cost 12) keep
+// working unchanged.
+function bcryptCost(): number {
+  const raw = Number(process.env.BCRYPT_COST);
+  if (!Number.isInteger(raw) || raw < 4 || raw > 15) {
+    return 10;
+  }
+  return raw;
+}
+
 export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, 12);
+  return bcrypt.hash(password, bcryptCost());
 }
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {

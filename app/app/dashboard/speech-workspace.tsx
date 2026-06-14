@@ -1,10 +1,9 @@
 "use client";
 
-import { type MouseEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type MouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { clearDashboardCache } from "@/app/app/dashboard/dashboard-data-cache";
 import { useDashboardUser } from "@/app/app/dashboard/dashboard-user-context";
-import { VoxLoader } from "@/app/components/vox-loader";
 import { Portal } from "@/app/components/portal";
 
 import { MAX_DASHBOARD_TTS_CHARS } from "@/lib/usage-policy";
@@ -97,6 +96,35 @@ function subscribeWorkspaceSnapshot(mode: "tts" | "clone", listener: () => void)
   return () => {
     workspaceListeners[mode].delete(listener);
   };
+}
+
+// Persist the in-flight background job id so a page refresh (or accidental
+// navigation) can reconnect to the still-running worker job instead of losing
+// the generating state.
+const activeJobStorageKey = (mode: "tts" | "clone") => `voxtts:activeJob:${mode}`;
+
+function persistActiveJob(mode: "tts" | "clone", jobId: string) {
+  try {
+    window.localStorage.setItem(activeJobStorageKey(mode), jobId);
+  } catch {
+    /* localStorage unavailable (private mode / SSR): non-fatal */
+  }
+}
+
+function clearActiveJob(mode: "tts" | "clone") {
+  try {
+    window.localStorage.removeItem(activeJobStorageKey(mode));
+  } catch {
+    /* non-fatal */
+  }
+}
+
+function readActiveJob(mode: "tts" | "clone"): string | null {
+  try {
+    return window.localStorage.getItem(activeJobStorageKey(mode));
+  } catch {
+    return null;
+  }
 }
 
 export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProps) {
@@ -236,6 +264,113 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
     showInstructions,
   ]);
 
+  // Polls a queued background job to completion, updating the shared snapshot.
+  // Extracted so both a fresh generate and a resume-after-refresh can share it.
+  const pollQueuedJob = useCallback(
+    async (jobId: string) => {
+      commitWorkspaceSnapshot(mode, { busy: true });
+      let completed = false;
+      let attempts = 0;
+      const maxAttempts = 150; // 5 minutes
+
+      while (!completed && attempts < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        try {
+          const pollRes = await fetch(`/api/batch/jobs/${jobId}`, { cache: "no-store" });
+          if (!pollRes.ok) {
+            const errBody = await pollRes.json().catch(() => ({}));
+            const reason = typeof errBody.error === "string"
+              ? errBody.error
+              : `Background job status returned HTTP ${pollRes.status}.`;
+            // 404 means the job no longer exists (e.g. cleared); stop quietly.
+            if (pollRes.status === 404) {
+              clearActiveJob(mode);
+              commitWorkspaceSnapshot(mode, { busy: false, error: "" });
+              return;
+            }
+            if ([408, 409, 425, 429, 500, 502, 503, 504].includes(pollRes.status)) {
+              commitWorkspaceSnapshot(mode, {
+                error: `Waiting for background job status: ${reason}`,
+              });
+              attempts++;
+              continue;
+            }
+            throw new Error(reason);
+          }
+          const pollData = await pollRes.json();
+          const job = pollData.job;
+
+          if (job.status === "completed" || job.status === "partial") {
+            completed = true;
+            const mergedRes = await fetch(`/api/batch/jobs/${jobId}/merged`);
+            if (!mergedRes.ok) {
+              const errBody = await mergedRes.json().catch(() => ({}));
+              throw new Error(errBody.error || "Failed to retrieve merged audio.");
+            }
+            const mergedData = await mergedRes.json();
+            const url = `data:${mergedData.contentType};base64,${mergedData.audioBase64}`;
+            clearActiveJob(mode);
+            commitWorkspaceSnapshot(mode, {
+              busy: false,
+              error: job.status === "partial"
+                ? `Generated ${job.completedItems} of ${job.totalItems} segments. Retry failed lines from Batch Jobs.`
+                : "",
+              result: mergedData,
+              audioUrl: url,
+              updatedAtLabel: new Date().toLocaleTimeString(),
+            });
+            dashboardUser.setTokenBalance(mergedData.remainingTokens);
+            clearDashboardCache("dashboard:history");
+            clearDashboardCache("dashboard:api");
+            clearDashboardCache("dashboard:billing");
+            break;
+          } else if (job.status === "failed" || job.status === "needs_review") {
+            clearActiveJob(mode);
+            throw new Error(job.errorMessage || "Background generation failed.");
+          } else {
+            const progressMsg = `Generating: Segment ${job.completedItems} of ${job.totalItems} completed...`;
+            commitWorkspaceSnapshot(mode, {
+              error: progressMsg,
+            });
+          }
+        } catch (pollErr: unknown) {
+          const err = pollErr as Error;
+          clearActiveJob(mode);
+          commitWorkspaceSnapshot(mode, {
+            busy: false,
+            error: err.message || "Failed during background generation polling.",
+          });
+          return;
+        }
+        attempts++;
+      }
+
+      if (!completed) {
+        // Don't clear the stored job: it may still finish. Leave it so a later
+        // refresh can reconnect. Just stop the local spinner with guidance.
+        commitWorkspaceSnapshot(mode, {
+          busy: false,
+          error: "Generation processing timed out. Please check the Batch Jobs or History tab.",
+        });
+      }
+    },
+    [mode, dashboardUser],
+  );
+
+  // On mount, if a background job was in flight before a refresh/navigation,
+  // reconnect to it and keep showing the generating UI until it finishes.
+  useEffect(() => {
+    const storedJobId = readActiveJob(mode);
+    if (!storedJobId) return;
+    // Avoid double-polling if this mode already shows a finished result.
+    if (workspaceSnapshots[mode].result) {
+      clearActiveJob(mode);
+      return;
+    }
+    commitWorkspaceSnapshot(mode, { busy: true, error: "", result: null, audioUrl: "" });
+    void pollQueuedJob(storedJobId);
+  }, [mode, pollQueuedJob]);
+
   async function onGenerate() {
     if (!canGenerate) return;
 
@@ -299,80 +434,8 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
       }
 
       if (data.queued && data.jobId) {
-        const jobId = data.jobId;
-        let completed = false;
-        let attempts = 0;
-        const maxAttempts = 150; // 5 minutes
-
-        while (!completed && attempts < maxAttempts) {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          try {
-            const pollRes = await fetch(`/api/batch/jobs/${jobId}`, { cache: "no-store" });
-            if (!pollRes.ok) {
-              const errBody = await pollRes.json().catch(() => ({}));
-              const reason = typeof errBody.error === "string"
-                ? errBody.error
-                : `Background job status returned HTTP ${pollRes.status}.`;
-              if ([408, 409, 425, 429, 500, 502, 503, 504].includes(pollRes.status)) {
-                commitWorkspaceSnapshot(mode, {
-                  error: `Waiting for background job status: ${reason}`,
-                });
-                attempts++;
-                continue;
-              }
-              throw new Error(reason);
-            }
-            const pollData = await pollRes.json();
-            const job = pollData.job;
-
-            if (job.status === "completed" || job.status === "partial") {
-              completed = true;
-              const mergedRes = await fetch(`/api/batch/jobs/${jobId}/merged`);
-              if (!mergedRes.ok) {
-                const errBody = await mergedRes.json().catch(() => ({}));
-                throw new Error(errBody.error || "Failed to retrieve merged audio.");
-              }
-              const mergedData = await mergedRes.json();
-              const url = `data:${mergedData.contentType};base64,${mergedData.audioBase64}`;
-              commitWorkspaceSnapshot(mode, {
-                busy: false,
-                error: job.status === "partial"
-                  ? `Generated ${job.completedItems} of ${job.totalItems} segments. Retry failed lines from Batch Jobs.`
-                  : "",
-                result: mergedData,
-                audioUrl: url,
-                updatedAtLabel: new Date().toLocaleTimeString(),
-              });
-              dashboardUser.setTokenBalance(mergedData.remainingTokens);
-              clearDashboardCache("dashboard:history");
-              clearDashboardCache("dashboard:api");
-              clearDashboardCache("dashboard:billing");
-              break;
-            } else if (job.status === "failed" || job.status === "needs_review") {
-              throw new Error(job.errorMessage || "Background generation failed.");
-            } else {
-              const progressMsg = `Generating: Segment ${job.completedItems} of ${job.totalItems} completed...`;
-              commitWorkspaceSnapshot(mode, {
-                error: progressMsg,
-              });
-            }
-          } catch (pollErr: unknown) {
-            const err = pollErr as Error;
-            commitWorkspaceSnapshot(mode, {
-              busy: false,
-              error: err.message || "Failed during background generation polling.",
-            });
-            return;
-          }
-          attempts++;
-        }
-
-        if (!completed) {
-          commitWorkspaceSnapshot(mode, {
-            busy: false,
-            error: "Generation processing timed out. Please check the Batch Jobs or History tab.",
-          });
-        }
+        persistActiveJob(mode, data.jobId);
+        await pollQueuedJob(data.jobId);
         return;
       }
 
@@ -1041,7 +1104,7 @@ function AudioResultPanel({
       </div>
 
       <div
-        className={`border-4 border-primary p-5 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] ${
+        className={`border-4 border-primary p-4 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] ${
           error
             ? "bg-[#ffdad6]"
             : result
@@ -1050,17 +1113,7 @@ function AudioResultPanel({
         }`}
       >
         {busy ? (
-          <div className="grid place-items-center gap-3 py-8 text-center">
-            <VoxLoader variant="compact" label="" />
-            <p className="font-headline font-black uppercase text-sm text-primary">Generating audio...</p>
-            {error && error.startsWith("Generating:") ? (
-              <p className="text-xs font-body font-semibold text-[#4a4a4a] bg-[#fbf9f4] border-2 border-primary/20 px-3 py-1.5 mt-1 rounded-sm shadow-[1px_1px_0px_0px_rgba(26,26,26,0.15)]">
-                {error}
-              </p>
-            ) : (
-              <p className="text-xs font-headline font-bold uppercase text-[#4a4a4a]">Your MP3 preview will appear here.</p>
-            )}
-          </div>
+          <GeneratingState progress={error && error.startsWith("Generating:") ? error : ""} />
         ) : error ? (
           <div className="grid gap-2 text-xs font-headline font-bold uppercase text-red-700">
             <p className="font-black text-sm">Needs attention</p>
@@ -1077,11 +1130,14 @@ function AudioResultPanel({
                 <p className="text-[10px] font-headline font-bold uppercase text-primary">{updatedLabel}</p>
               </div>
             </div>
-            <audio controls src={audioUrl} className="w-full border-2 border-primary" />
+            <WaveformPlayer
+              src={audioUrl}
+              downloadName={`voxtts-${mode}-${result.generationId}.${extensionFor(result.contentType)}`}
+            />
             <a
               href={audioUrl}
               download={`voxtts-${mode}-${result.generationId}.${extensionFor(result.contentType)}`}
-              className="inline-flex h-11 items-center justify-center border-4 border-primary bg-white text-xs font-headline uppercase font-black text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#eee9e0] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all cursor-pointer"
+              className="inline-flex h-11 items-center justify-center border-2 border-primary bg-white text-xs font-headline uppercase font-black text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#eee9e0] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all cursor-pointer"
             >
               Download audio
             </a>
@@ -1117,6 +1173,362 @@ function AudioResultPanel({
         </div>
       ) : null}
     </aside>
+  );
+}
+
+const WAVE_BARS = 64;
+
+function GeneratingState({ progress }: { progress: string }) {
+  // progress looks like "Generating: Segment 2 of 5 completed..."
+  const match = progress.match(/Segment\s+(\d+)\s+of\s+(\d+)/i);
+  const done = match ? Number(match[1]) : 0;
+  const total = match ? Number(match[2]) : 0;
+  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null;
+
+  return (
+    <div className="grid place-items-center gap-4 py-6 text-center">
+      {/* Animated equalizer */}
+      <div className="flex h-20 items-end justify-center gap-1.5 border-2 border-primary bg-[#1a1a1a] px-4 py-3 w-full max-w-[240px]">
+        {Array.from({ length: 9 }).map((_, i) => (
+          <span
+            key={i}
+            className="w-2 flex-1 rounded-full bg-[#ffcc00]"
+            style={{
+              animation: "voxeq 1s ease-in-out infinite",
+              animationDelay: `${i * 0.09}s`,
+            }}
+          />
+        ))}
+      </div>
+
+      <div>
+        <p className="font-headline font-black uppercase text-sm text-primary">Generating audio</p>
+        <p className="mt-1 text-[11px] font-headline font-bold uppercase text-[#4a4a4a]">
+          Crafting your voice...
+        </p>
+      </div>
+
+      {/* Progress bar */}
+      <div className="w-full max-w-[240px]">
+        <div className="h-3 w-full overflow-hidden border-2 border-primary bg-white">
+          <div
+            className={`h-full bg-[#ffcc00] transition-all duration-500 ${pct === null ? "animate-pulse" : ""}`}
+            style={{ width: pct === null ? "40%" : `${Math.max(6, pct)}%` }}
+          />
+        </div>
+        {pct !== null ? (
+          <p className="mt-1 text-right text-[10px] font-headline font-black tabular-nums text-primary">{pct}%</p>
+        ) : null}
+      </div>
+
+      <style>{`
+        @keyframes voxeq {
+          0%, 100% { height: 20%; }
+          50% { height: 100%; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+
+function formatClock(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const total = Math.floor(seconds);
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function WaveformPlayer({ src, downloadName }: { src: string; downloadName: string }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const [peaks, setPeaks] = useState<number[]>([]);
+  const [analyzing, setAnalyzing] = useState(true);
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [rate, setRate] = useState(1);
+  const [scrubbing, setScrubbing] = useState(false);
+
+  // Decode the audio into a fixed number of peak bars for the waveform.
+  useEffect(() => {
+    let cancelled = false;
+    setPeaks([]);
+    setAnalyzing(true);
+
+    async function buildPeaks() {
+      try {
+        const res = await fetch(src);
+        const buf = await res.arrayBuffer();
+        const Ctx =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!Ctx) throw new Error("no-audiocontext");
+        const ctx = new Ctx();
+        const decoded = await ctx.decodeAudioData(buf.slice(0));
+        const channel = decoded.getChannelData(0);
+        const blockSize = Math.floor(channel.length / WAVE_BARS) || 1;
+        const next: number[] = [];
+        let max = 0;
+        for (let i = 0; i < WAVE_BARS; i += 1) {
+          const start = i * blockSize;
+          let peak = 0;
+          for (let j = 0; j < blockSize; j += 1) {
+            const v = Math.abs(channel[start + j] || 0);
+            if (v > peak) peak = v;
+          }
+          next.push(peak);
+          if (peak > max) max = peak;
+        }
+        const normalized = next.map((v) => (max > 0 ? v / max : 0));
+        void ctx.close();
+        if (!cancelled) {
+          setPeaks(normalized);
+          setAnalyzing(false);
+        }
+      } catch {
+        // Fallback: a flat synthetic waveform so the UI still renders.
+        if (!cancelled) {
+          const fallback = Array.from({ length: WAVE_BARS }, (_, i) =>
+            0.35 + 0.4 * Math.abs(Math.sin(i / 4)),
+          );
+          setPeaks(fallback);
+          setAnalyzing(false);
+        }
+      }
+    }
+
+    void buildPeaks();
+    return () => {
+      cancelled = true;
+    };
+  }, [src]);
+
+  const progress = duration > 0 ? currentTime / duration : 0;
+
+  // Drive the playhead with requestAnimationFrame while playing so it moves at
+  // ~60fps instead of the browser's ~4Hz `timeupdate` event (which looks stuck).
+  const rafRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!playing) {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      return;
+    }
+    const tick = () => {
+      const audio = audioRef.current;
+      if (audio && !scrubbing) {
+        setCurrentTime(audio.currentTime);
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [playing, scrubbing]);
+
+  const seekToClientX = useCallback(
+    (clientX: number) => {
+      const track = trackRef.current;
+      const audio = audioRef.current;
+      if (!track || !audio || !Number.isFinite(audio.duration)) return;
+      const rect = track.getBoundingClientRect();
+      const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      audio.currentTime = ratio * audio.duration;
+      setCurrentTime(audio.currentTime);
+    },
+    [],
+  );
+
+  const handlePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      setScrubbing(true);
+      event.currentTarget.setPointerCapture(event.pointerId);
+      seekToClientX(event.clientX);
+    },
+    [seekToClientX],
+  );
+
+  const handlePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!scrubbing) return;
+      seekToClientX(event.clientX);
+    },
+    [scrubbing, seekToClientX],
+  );
+
+  const handlePointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!scrubbing) return;
+      setScrubbing(false);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    },
+    [scrubbing],
+  );
+
+  const togglePlay = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      void audio.play();
+    } else {
+      audio.pause();
+    }
+  }, []);
+
+  const cycleRate = useCallback(() => {
+    const order = [1, 1.25, 1.5, 0.75];
+    setRate((prev) => {
+      const idx = order.indexOf(prev);
+      const next = order[(idx + 1) % order.length];
+      if (audioRef.current) audioRef.current.playbackRate = next;
+      return next;
+    });
+  }, []);
+
+  const skipToStart = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = 0;
+    setCurrentTime(0);
+  }, []);
+
+  return (
+    <div className="border-2 border-primary bg-surface-bright p-3 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)}
+        onTimeUpdate={(event) => {
+          if (!scrubbing) setCurrentTime(event.currentTarget.currentTime);
+        }}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false);
+          setCurrentTime(0);
+        }}
+        className="hidden"
+      />
+
+      {/* Waveform panel */}
+      <div
+        ref={trackRef}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        className="relative flex h-16 sm:h-20 w-full cursor-pointer items-center justify-center gap-px overflow-hidden border-2 border-primary bg-[#1a1a1a] px-2 touch-none select-none"
+      >
+        {analyzing ? (
+          <span className="flex items-center gap-2 text-[9px] font-headline font-black uppercase tracking-widest text-[#ffcc00]">
+            <span className="h-2 w-2 animate-pulse bg-[#ffcc00]" />
+            Analyzing
+          </span>
+        ) : (
+          peaks.map((peak, index) => {
+            const played = index / peaks.length <= progress;
+            const height = Math.max(8, peak * 92);
+            return (
+              <span
+                key={index}
+                className={`min-w-[1px] flex-1 self-center rounded-full transition-colors duration-150 ${
+                  played ? "bg-[#ffcc00]" : "bg-[#8a8577]"
+                }`}
+                style={{ height: `${height}%` }}
+              />
+            );
+          })
+        )}
+        {!analyzing && duration > 0 ? (
+          <span
+            className="pointer-events-none absolute top-0 bottom-0 z-10 w-[2px] bg-white shadow-[0_0_8px_rgba(255,255,255,0.8)]"
+            style={{ left: `${Math.min(98.5, Math.max(1.5, progress * 100))}%` }}
+          >
+            <span className="absolute top-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rotate-45 bg-white" />
+            <span className="absolute bottom-1 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rotate-45 bg-white" />
+          </span>
+        ) : null}
+      </div>
+
+      {/* Controls row */}
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={togglePlay}
+          aria-label={playing ? "Pause" : "Play"}
+          className="flex h-10 w-10 shrink-0 items-center justify-center border-2 border-primary bg-[#ffcc00] text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#ffd633] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all cursor-pointer"
+        >
+          {playing ? <PauseIcon /> : <PlayIcon />}
+        </button>
+
+        <button
+          type="button"
+          onClick={skipToStart}
+          aria-label="Restart"
+          className="flex h-10 w-10 shrink-0 items-center justify-center border-2 border-primary bg-white text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#eee9e0] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all cursor-pointer"
+        >
+          <RestartIcon />
+        </button>
+
+        {/* Time readout */}
+        <div className="flex items-center gap-1 font-headline font-black tracking-tight tabular-nums text-[11px] text-primary">
+          <span>{formatClock(currentTime)}</span>
+          <span className="text-[#4a4a4a]">/</span>
+          <span className="text-[#4a4a4a]">{formatClock(duration)}</span>
+        </div>
+
+        <button
+          type="button"
+          onClick={cycleRate}
+          aria-label="Playback speed"
+          className="flex h-10 w-10 shrink-0 items-center justify-center border-2 border-primary bg-white text-[10px] font-headline font-black uppercase text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#eee9e0] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all cursor-pointer"
+        >
+          {rate}x
+        </button>
+      </div>
+      <span className="sr-only">{downloadName}</span>
+    </div>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor">
+      <path d="M8 5v14l11-7z" />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor">
+      <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+    </svg>
+  );
+}
+
+function RestartIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none">
+      <path
+        d="M5 12a7 7 0 1 0 2-4.9M5 4v3h3"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

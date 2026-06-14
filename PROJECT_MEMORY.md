@@ -1,6 +1,6 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 ## Purpose
 
@@ -262,6 +262,18 @@ Production worker command:
 `node scripts/job-worker.mjs --loop`
 
 ## Important Completed Fixes
+
+### Dashboard UI
+
+- Rebuilt the dashboard audio result player (2026-06-14, local-only, not yet
+  deployed). Replaced the basic `<audio controls>` tag in
+  `app/app/dashboard/speech-workspace.tsx` with a custom `WaveformPlayer`
+  component: decodes the MP3 via the Web Audio API into 96 peak bars, renders a
+  seekable waveform with a played/unplayed split and a red playhead, supports
+  click and pointer drag-to-seek, play/pause, a 0.75x-1.5x speed cycle button,
+  and a current/total time readout. Falls back to a synthetic waveform if
+  decoding fails. The separate "Download audio" button is unchanged. Verified
+  with `npm run build` (exit 0, no lint/TS errors).
 
 ### Batch And Deployment
 
@@ -1651,6 +1663,501 @@ Update on 2026-06-14:
 - Local-only; NOT yet deployed. Next deploy tag staging-20260613-12 (resumable
   vps-ssh.py upload; VPS link still flaky). Still 6 uncommitted fixes in git
   (worktree at a2bf891) + this 7th.
+
+## SIGNUP FIX 2026-06-14: bcrypt cost 12->10 (staging-tested)
+
+Acted on the load-test finding that signup was the bottleneck. Careful,
+backward-compatible fix.
+
+Change (`lib/security.ts`): made the bcrypt work factor env-configurable via
+`BCRYPT_COST` (clamped 4..15), default lowered 12 -> 10. Cost 10 is ~4x cheaper
+CPU per hash than 12, still industry-standard. Only affects NEWLY created
+hashes; `bcrypt.compare` reads cost from each stored hash, so existing users
+(hashed at 12) keep working. Verified on staging: signup ok, signin with correct
+pw ok, wrong pw -> 401.
+
+Deliberately did NOT switch to native `bcrypt`/`argon2` yet: the Dockerfile
+hand-copies `pg` + deps into the Next standalone runner, signalling native
+runtime modules are risky to bundle here. Cost reduction is the low-risk win
+first.
+
+Deploy mechanics (staging only): built+pushed
+`ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260614-1`
+(digest sha256:f0feefbbccc8d294d13fd42ff5a5ffde19a6654ec8ea96dc7bfc382e71bb6882).
+Staging K3s still gets GHCR 403 on pull, so saved image to tar, uploaded via
+scripts/vps-ssh.py, imported with `ctr -n k8s.io images import`, set
+`BCRYPT_COST=10` env, rollout restart. pullPolicy IfNotPresent. 0 restarts.
+
+Load test before/after (same web ramp 10->150 VUs, staging NodePort, per-VU
+spoofed XFF):
+- BEFORE (cost 12): signup_ok 62.6%, signup median ~39.7s, p95 60s (timeouts).
+- AFTER (cost 10): signup_ok 100% (2348/2348), signup median 9.64s, p95 30s,
+  http_req_failed 0%, page_ok 100%. Big improvement, no failures/timeouts.
+- Still elevated under sustained 150 VUS (median ~10s) because bcryptjs is
+  pure-JS/event-loop-blocking on 2 cores. Further wins would need native bcrypt
+  / argon2 / worker-thread hashing and/or more CPU + web replicas.
+
+Staging fully cleaned up (NodePort removed, image tar deleted local+remote).
+NOT deployed to production yet — awaiting user decision. Prod still on
+prod-20260614-16. `lib/security.ts` change is uncommitted in git with the rest
+of the day's work. New helper scripts: scripts/loadtest.js, smoke-staging.sh,
+verify-auth.sh.
+
+## LOAD TEST 2026-06-14: 100-user staging stress test
+
+User asked whether the system breaks under ~100 simultaneous users creating
+accounts + generating audio. Ran a controlled k6 load test against the ISOLATED
+fixer/staging VPS (178.128.103.120, 2 vCPU / 4 GiB + 4 GiB swap, no real users)
+to avoid risking production. k6 ran from the prod VPS (same SG region).
+
+Setup notes (all reverted after):
+- Temporarily pointed staging TTS at the production Modal pool (staging's pool
+  was a placeholder `[]`). REVERTED to `[]` after the test.
+- Created a temporary NodePort `web-loadtest` (32371) so per-VU
+  `X-Forwarded-For` reached Next.js directly. Traefik strips spoofed XFF, so
+  via the normal ingress the middleware limiter (proxy.ts isRateLimited, 120
+  req/min/IP) counted all load-gen traffic as ONE IP. NodePort DELETED after.
+- Test scripts: `scripts/loadtest.js` (k6), `scripts/smoke-staging.sh`. CSRF
+  seeded from uncached `/app/signin` (the `/signup` path is 404; real route is
+  `/app/signin`; `/api/health` skips CSRF; `/` is a cached prerender).
+
+Results:
+- Web/render tier (GET /app/signin, /app/dashboard, /app/dashboard/history):
+  100% OK (page_ok 2066/2066) even ramping to 150 concurrent VUs. Scales fine.
+- Signup (POST /api/auth/signup) is the BOTTLENECK. Web ramp: only 62.6% ok,
+  median signup 39.7s, p90/p95 = 60s timeout. e2e 100-user burst: 86% ok,
+  median 52s.
+- ROOT CAUSE: `lib/security.ts` `hashPassword` uses `bcryptjs` (pure-JS,
+  event-loop-blocking) at cost factor 12 (~300-500ms CPU/hash on this box).
+  Concurrent signups serialize on 2 cores and blow past the 60s request
+  timeout. NOT a crash — 0 pod restarts, memory steady ~170Mi, node CPU was
+  not even maxed in the snapshot (work was bursty/serialized in-process).
+- e2e generation: of 100 jobs, enqueue was 100% ok (queue accepts work fine),
+  but only 10 completed within the ~6m window; 76 failed/timed out. job_e2e
+  for the ones that finished: avg 209s, min 116s, max 307s. This is the Modal
+  GPU pool (3 endpoints) being the throughput ceiling + cold starts, plus
+  per-user dashboard concurrency limit (dashboardTts maxConcurrent 2) and a
+  single worker replica. Single-job baseline earlier was ~108s (cold start).
+
+Recommendations (not yet implemented):
+1. Replace `bcryptjs` with native `bcrypt` OR `argon2`, and/or lower cost to
+   10, and/or run hashing in a worker thread. Biggest single win for signup.
+2. Add HorizontalPodAutoscaler / more web replicas; current prod is 2 web
+   replicas on a 2-core node — CPU-bound auth will serialize.
+3. Scale the worker + Modal capacity (more warm containers / keep_warm) if real
+   concurrent generation demand approaches dozens; current realistic
+   throughput is a few concurrent generations, others queue 2-5 min.
+4. Consider raising the 60s request timeout for /api/auth/signup or making
+   signup hashing non-blocking.
+
+NOTE: This is local/ops testing only — no app code changed yet. Staging fully
+reverted (NodePort removed, TTS pool back to placeholder, 0 restarts). Prod
+untouched throughout. Earlier UI/OG/favicon prod deploys this day remain
+uncommitted in git.
+
+## PROD DEPLOY 2026-06-14: prod-20260614-16 (link-preview / Open Graph)
+
+User asked why pasting the site link in Telegram/Facebook/X shows just the bare
+URL while sites like itch.io show a rich card. Cause: the site exposed only
+`<title>` + `<meta name=description>` and NO Open Graph / Twitter tags and no
+preview image, so platforms had nothing to build a card from.
+
+Fix:
+- `app/layout.tsx` metadata: added `metadataBase`
+  (`https://voxtts.online`), `applicationName`, full `openGraph` (type,
+  siteName, url, title, description) and `twitter`
+  (`card: summary_large_image`, title, description) blocks.
+- `app/opengraph-image.tsx`: new auto-generated 1200x630 PNG via `next/og`
+  `ImageResponse` (Next 16). Neo-brutalist brand card: yellow logo tile with the
+  two-stroke "V" mark, "KHMER VOX TTS" + voxtts.online, big "KHMER TEXT TO
+  SPEECH API" headline, yellow tagline chip, and a yellow/green equalizer bar.
+  Next auto-attaches this as og:image + twitter:image site-wide.
+- Satori gotcha hit + fixed: any element with >1 child needs explicit
+  `display:flex`; the headline originally used a `<br/>` between text nodes and
+  failed prerender. Split into two stacked `display:flex` divs.
+
+Shipped as `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-16`
+(digest `sha256:87e0924b620807708b55aa634de0760976c39812b754d39001927260444988e8`),
+rollback target `prod-20260614-15`. Verified: lint clean, build OK
+(`/opengraph-image` static route), rollout healthy, `/api/health` 200,
+`https://voxtts.online/opengraph-image` returns 200 `image/png`, and homepage
+HTML contains og:image/og:title/og:description/og:url/twitter:card/twitter:image.
+All 3 app pods on new tag.
+
+NOTE for user: Telegram/Facebook/X cache link previews aggressively. Existing
+pasted links may still show the old bare preview until the cache expires; use
+each platform's debugger to force a refresh (FB Sharing Debugger; for Telegram,
+message @WebpageBot with the URL). Still uncommitted in git (same batch).
+
+## PROD DEPLOY 2026-06-14: prod-20260614-15 (brand favicon)
+
+The site had NO favicon, so browsers showed the generic gray globe in the tab,
+bookmarks, and search results. Added a brand favicon.
+
+`app/layout.tsx` metadata only set title/description and there was no
+`favicon.ico` / `app/icon.*` anywhere (public/ only had Next default svgs).
+
+Fix: added `app/icon.svg` (Next.js App Router auto-detects it and injects
+`<link rel="icon">` site-wide; build now emits the `/icon.svg` route). Design
+matches the existing brand mark from `app/app/dashboard/shell.tsx` `LogoIcon`:
+the stylized two-stroke "V" (dark `#1a1a1a` + green `#10b981`) on a brand-yellow
+`#ffcc00` rounded tile with a thick dark border (neo-brutalist style).
+
+Shipped as `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-15`
+(digest `sha256:9c91e7950ac178559a836028dd87bef1de93dd4eb62e65b788180cc8af2bc5d7`),
+rollback target `prod-20260614-14`. Verified: lint clean, build OK (`/icon.svg`
+route generated), rollout healthy, `/api/health` 200, `https://voxtts.online/icon.svg`
+returns 200 `image/svg+xml`, all 3 app pods on new tag. Still uncommitted in git.
+
+## PROD DEPLOY 2026-06-14: prod-20260614-14 (nested hard-shadow alignment)
+
+Fixed the broken/doubled-border look in the Audio Result panel at the narrow
+(~300px) sidebar width. Cause: deeply nested neo-brutalist hard-shadow boxes all
+casting the same down-right offset shadow competed with each other — outer
+`aside` (border-4 + 6px shadow) > green result box (border-4 + 4px shadow) >
+`WaveformPlayer` (border-4 + 4px shadow) > download button (border-4). The
+stacked offsets collided, producing the detached bottom line + double-border
+artifacts at bottom/right.
+
+Fix (`app/app/dashboard/speech-workspace.tsx`) — establish a clear shadow
+hierarchy so only the outer card has the heavy shadow and inner boxes step down:
+- Green result container: padding `p-5`->`p-4`, shadow `4px`->`2px`.
+- `WaveformPlayer`: border `4`->`2`, padding `p-3 sm:p-4`->`p-3`, shadow
+  `4px`->`2px`.
+- Download button: border `4`->`2` (shadow already 2px).
+
+Shipped as `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-14`
+(digest `sha256:0531c50b21a359be39318a2d4ab671205a75c2bd2c524e41cecb247f59e5b12c`),
+rollback target `prod-20260614-13`. Verified: lint clean, build OK, rollout
+healthy, `/api/health` 200, `/app/dashboard` 200, all 3 app pods on new tag
+(old -13 web pod finished terminating shortly after). Still uncommitted in git.
+
+## PROD DEPLOY 2026-06-14: prod-20260614-13 (time readout overlap fix)
+
+The prod-20260614-12 absolute-centered time readout overlapped the restart
+button in the narrow sidebar column (the `0:00` collided with the restart icon).
+
+Fix (`app/app/dashboard/speech-workspace.tsx`, `WaveformPlayer` controls row):
+reverted the absolute centering. Row is now a simple
+`flex items-center justify-between gap-2` with four in-flow items: play (10x10),
+restart (10x10, widened from w-9 for symmetry), the time readout as its own
+non-overlapping flex item, and the speed chip (10x10). `justify-between`
+distributes them evenly so nothing overlaps in the narrow column.
+
+Shipped as `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-13`
+(digest `sha256:70aedaa8dec0054579aa0c3dfd484ebe670d05d36c82971601e3e60d2604482e`),
+rollback target `prod-20260614-12`. Verified: lint clean, build OK, rollout
+healthy, `/api/health` 200, `/app/dashboard` 200, all 3 app pods on new tag.
+Still uncommitted in git (same batch).
+
+## PROD DEPLOY 2026-06-14: prod-20260614-12 (centered time readout)
+
+The `0:00 / 0:04` time readout in the player control row sat right-of-center.
+Cause: it used `flex-1 justify-center`, which centers within the LEFTOVER space
+between the left cluster (play + restart, ~80px wide) and the right cluster
+(speed chip, ~40px). Since the left cluster is wider, the leftover-space center
+is pushed right of the bar's true center.
+
+Fix (`app/app/dashboard/speech-workspace.tsx`, `WaveformPlayer` controls row):
+made the row `relative justify-between`, grouped play+restart in a left flex
+div and the speed chip on the right, and positioned the time readout
+`absolute left-1/2 -translate-x-1/2` (with `-translate-y-1/2 top-1/2`,
+`pointer-events-none`) so it's dead-center relative to the whole bar regardless
+of the differing left/right cluster widths.
+
+Shipped as `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-12`
+(digest `sha256:0a16f2f703c8633be545701c647e960b1a77dd943c1d28f6b9d8dd5de05be804`),
+rollback target `prod-20260614-11`. Verified: lint clean, build OK, rollout
+healthy, `/api/health` 200, `/app/dashboard` 200, all 3 app pods on new tag.
+Still uncommitted in git (same batch).
+
+## PROD DEPLOY 2026-06-14: prod-20260614-11 (brighter idle waveform)
+
+The waveform looked empty/dull at rest (0:00 before playing) because unplayed
+bars used `#4a4a4a`, too close to the `#1a1a1a` panel background. Brightened
+unplayed bars to `#8a8577` (warm gray) so the full waveform shape is clearly
+visible before/while playing; played bars stay brand-yellow `#ffcc00`.
+
+Single-line change in `app/app/dashboard/speech-workspace.tsx` (`WaveformPlayer`
+unplayed bar color). Shipped as
+`ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-11`
+(digest `sha256:a589b5076acf26fbcfbc39be58510848edcd693e8a5dcb09eeeaaa441603316a`),
+rollback target `prod-20260614-10`. Verified: lint clean, build OK, rollout
+healthy, `/api/health` 200, `/app/dashboard` 200, all 3 app pods on new tag.
+GHCR push hit one transient EOF and succeeded on retry. Still uncommitted in git.
+
+## PROD DEPLOY 2026-06-14: prod-20260614-10 (playhead containment / clean panel)
+
+Polish fix for the waveform panel: near the end of playback the white playhead
+line + its single diamond cap pushed into the top-right corner and poked
+outside the panel, making the Audio Result box look misaligned/"not centered".
+
+Fix (`app/app/dashboard/speech-workspace.tsx`, `WaveformPlayer`):
+- Playhead vertical span changed from `top-1 bottom-1` to `top-0 bottom-0` and
+  the cap moved INSIDE the panel (a small diamond at top and bottom, `top-1` /
+  `bottom-1`) instead of a single cap at `-top-1` (which sat above the border).
+- Playhead horizontal position clamped to `1.5%..98.5%` (was `..99.5%`) so the
+  line never collides with the rounded border corners.
+- Bars: `self-center`, height factor 92% (was 100%) with min 8% so the
+  waveform is vertically centered with clean top/bottom padding and never
+  touches the panel edges.
+- Panel horizontal padding `px-1.5` -> `px-2` for symmetric insets.
+
+Shipped as `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-10`
+(digest `sha256:ac243a6057a36ce9bb04b17868dfa4bfc37702924ccefd6283f25c35df74a854`),
+rollback target `prod-20260614-9`. Verified: lint clean, `npm run build` OK,
+rollout healthy, `/api/health` 200, `/app/dashboard` 200, all 3 app pods
+(web x2 + worker) confirmed on the new tag (the old -9 web pod finished
+terminating shortly after). Still uncommitted in git (same batch).
+
+## PROD DEPLOY 2026-06-14: prod-20260614-9 (smooth playhead motion)
+
+Fixed: the waveform playhead/progress line moved in jerky ~0.25s steps and
+looked "stuck" while playing. Cause: the player updated `currentTime` only from
+the HTMLAudioElement `timeupdate` event, which browsers fire ~4 times/second.
+
+Fix (`app/app/dashboard/speech-workspace.tsx`, `WaveformPlayer`): added a
+`requestAnimationFrame` loop that runs while `playing` and reads
+`audio.currentTime` each frame (~60fps), so the playhead/played-bars animate
+smoothly. The rAF loop is cancelled on pause/unmount and skips updates while
+the user is actively scrubbing (so seek stays authoritative). `timeupdate` is
+still wired as a fallback.
+
+Shipped as `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-9`
+(digest `sha256:5cb8171ef90b58b0717096aa775725b3af64f3516b548cc92cfe5928e160f8ac`),
+rollback target `prod-20260614-8`. Verified: lint clean, `npm run build` OK,
+rollout healthy (web x2 + worker on new tag), `/api/health` 200,
+`/app/dashboard` 200. Still uncommitted in git (same batch).
+
+NOTE: during this deploy Docker Desktop's Linux engine had stopped (npipe
+dockerDesktopLinuxEngine not found); relaunched `Docker Desktop.exe` and waited
+for `docker info` to succeed before building. No code impact.
+
+## PROD DEPLOY 2026-06-14: prod-20260614-8 (resume generating after refresh)
+
+Fixed: dashboard "generating audio" state was lost on page refresh/navigation
+even though the background worker job kept running, so users saw an empty page
+while work continued invisibly. Applies to both standard and clone pages.
+
+Root cause (`app/app/dashboard/speech-workspace.tsx`): generation state lived
+only in an in-memory module object (`workspaceSnapshots`) and the polling loop
+ran inside `onGenerate`. A refresh tears down the React tree + module state, so
+the in-flight `jobId` and the poll loop were lost; the queued job on the worker
+was unaffected and finished in the background with nothing watching.
+
+Fix:
+- Persist the in-flight queued `jobId` to `localStorage`
+  (`voxtts:activeJob:<mode>`) the moment a job is queued.
+- Extracted the poll loop into a `pollQueuedJob(jobId)` `useCallback` shared by
+  fresh generate and resume.
+- Added a mount effect: if a stored jobId exists and there's no finished result,
+  re-show the generating UI and resume polling to completion.
+- Clear the stored jobId on completed/partial/failed/needs_review/404 and on
+  poll errors. On client-side timeout the id is intentionally kept so a later
+  refresh can still reconnect.
+
+Shipped as `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-8`
+(digest `sha256:56fe95ff491978d10cb4fee108bfa23e6d4e2a36fb883b5e7248bd5411173bf8`),
+rollback target `prod-20260614-7`. Verified: lint clean, `npm run build` OK,
+rollout healthy (web x2 + worker on new tag), `/api/health` 200,
+`/app/dashboard` 200. NOTE: only queued (background) generations persist across
+refresh; a purely synchronous generation that hasn't been queued still can't be
+resumed (no job id exists yet). Still uncommitted in git (same batch).
+
+## PROD DEPLOY 2026-06-14: prod-20260614-6 (new generating/loading UI)
+
+Redesigned the dashboard "generating audio" state (the old robot-mascot
+`VoxLoader` block) into a modern TTS-style loader. Applies to both standard and
+clone voice pages (shared `AudioResultPanel`).
+
+Change (`app/app/dashboard/speech-workspace.tsx`):
+- New `GeneratingState` component replaces the `VoxLoader` busy block.
+- Animated 9-bar equalizer (CSS `@keyframes voxeq`, staggered delays) on a dark
+  panel, brand-yellow bars.
+- Parses the existing progress string ("Generating: Segment X of Y
+  completed...") into a real progress bar + percentage + "Segment X of Y"
+  label. Falls back to an indeterminate pulsing bar + "Warming up the voice
+  engine..." when no segment data yet.
+- Removed the now-unused `VoxLoader` import (component file left in place; not
+  referenced here anymore).
+
+Shipped as `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-6`
+(digest `sha256:ce0a26535ca10a8318b01641c0e6ca03343f14a894eda9db7e35aab75393d667`),
+rollback target `prod-20260614-5`. Verified: lint clean, `npm run build` OK,
+rollout healthy (web x2 + worker on new tag), `/api/health` 200,
+`/app/dashboard` 200. Still uncommitted in git (same batch).
+
+## PROD HOTFIX 2026-06-14: prod-20260614-5 (narrow-column waveform fix)
+
+The prod-20260614-4 "responsive" attempt still looked broken in the dashboard's
+narrow right sidebar (~230px): the waveform rendered as an empty black box and
+the controls stacked across 3 rows.
+
+Real root cause (not a breakpoint issue): the waveform used 120 bars each with
+`w-full flex-1` plus 2px gaps. In a ~230px column the inter-bar gaps alone
+(~240px) exceeded the container width, so every bar collapsed to ~0 width =
+invisible. The control row also used `flex-wrap`, so it wrapped into 3 lines.
+
+Fix (`app/app/dashboard/speech-workspace.tsx`):
+- Bar count 120 -> 64; bars now `min-w-[1px] flex-1` with `gap-px` (1px) so they
+  always have real width and fill any column.
+- Waveform height simplified to `h-16 sm:h-20`.
+- Controls are now a single non-wrapping row (removed `flex-wrap`): compact
+  play (10x10), restart (h10/w9), inline plain-text time readout (no boxed
+  pill), and a 10x10 speed chip. Fits the narrow sidebar without stacking.
+
+Shipped as `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-5`
+(digest `sha256:95f94084ea2b2ca053e6d73d43ec41ef05d3ddd1d37400ebcc58eab4215753ec`),
+rollback target `prod-20260614-4`. Verified: lint clean, `npm run build` OK,
+rollout healthy (web x2 + worker on new tag), `/api/health` 200,
+`/app/dashboard` 200. Applies to both standard and clone voice pages (shared
+component). Still uncommitted in git (same batch).
+
+## PROD HOTFIX 2026-06-14: prod-20260614-4 (responsive player fix)
+
+Fixed the dashboard audio player layout break on narrow/mobile screens (affected
+both standard voice and clone voice pages because both use
+`AudioResultPanel` -> `WaveformPlayer` in
+`app/app/dashboard/speech-workspace.tsx`).
+
+Root issue: the redesigned player controls were too dense for small widths,
+causing cramped/overflow-like behavior and poor readability.
+
+Hotfix shipped as `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-4`
+(digest `sha256:27c676651be1603c8ba06acf7bf00a8171643a6d2ae84c5ed0c3d72ff0aac4a6`),
+rollback target `prod-20260614-3`.
+
+UI changes:
+- Container padding scales by breakpoint (`p-3 sm:p-4`).
+- Waveform height scales (`h-16 sm:h-20 md:h-24`) and tighter side padding on
+  mobile.
+- Controls row now wraps (`flex-wrap`) with better gaps.
+- Play button scales down on small screens (`h/w 10` mobile, `12` desktop).
+- Time readout moves to its own row on mobile (`basis-full`) and keeps inline
+  on larger screens.
+- Font/width tweaks for time and speed chip to prevent cramped layout.
+
+Verification: local lint clean + `npm run build` success; production rollout
+healthy (web + worker), `/api/health` 200 and `/app/dashboard` 200. Pods on
+`prod-20260614-4` are running.
+
+## PROD DEPLOY 2026-06-14: prod-20260614-3 (waveform player visual redesign)
+
+Redesigned the dashboard `WaveformPlayer` (the prior prod-20260614-2 version
+looked too plain/invisible: faint gray bars on cream). Deployed to prod as
+`ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-3`
+(digest sha256:4e9b39ad8a5f3c83d324ab8dbcb5e61f7751c2b0d8259167c28f5c87fa91cbb4).
+Rollback target = `prod-20260614-2`.
+
+Change (frontend only, `app/app/dashboard/speech-workspace.tsx`): dark
+(`#1a1a1a`) waveform panel with 120 center-aligned bars, bright brand-yellow
+(`#ffcc00`) played bars vs `#4a4a4a` unplayed (high contrast, clearly visible
+at 0:00), a white glowing playhead with a diamond cap, an "Analyzing audio"
+pulse state, a larger play/pause button, a new restart button, time pills
+(current / total), and the speed toggle. Click/drag seek unchanged. No
+backend/audio-pipeline change.
+
+Verified: build OK (npm run build exit 0, no lint/TS errors), rollout healthy
+(web x2 + worker), `/api/health` 200, `/app/dashboard` 200, all 3 app pods on
+the new tag. Still uncommitted in git (same batch as before).
+
+## PROD DEPLOY 2026-06-14: prod-20260614-2 (waveform audio player UI)
+
+Deployed the rebuilt dashboard audio result player to prod (`voxtts.online`,
+`152.42.203.77`, ns `khmer-vox`) as immutable tag
+`ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-2`
+(digest sha256:e839eb2591fba5f97c07f5c493bd72e1a4c09fa224979105aafb643903ec2542).
+Rollback target = prior prod image `prod-20260614-1`.
+
+Change (frontend only): `app/app/dashboard/speech-workspace.tsx` replaces the
+plain `<audio controls>` with a custom `WaveformPlayer` (Web Audio API decode
+-> 96 peak bars, click/drag seek, red playhead, play/pause, 0.75-1.5x speed,
+time readout, synthetic-waveform fallback). No backend/audio-pipeline change.
+The temperature env override (PRESET/CLONE 0.8) and 5k char limit from earlier
+deploys are unaffected (env lives in the deployment spec; same code path).
+
+Deploy steps: `docker build/push` the tag to GHCR, then over SSH
+`kubectl -n khmer-vox set image` on web + worker and `rollout status` (both
+healthy, zero downtime). Verified: `/api/health` 200, `/app/dashboard` 200,
+all 3 app pods (web x2 + worker) running the new tag. Build passed locally
+(`npm run build` exit 0, no lint/TS errors).
+
+STILL UNCOMMITTED: git worktree carries this + the prior 7 fixes; the running
+prod image is ahead of the committed tree. Recommend committing the batch.
+
+## PROD FIX 2026-06-14: prod-20260614-1 (bearer failover + 5k char limit)
+
+Two fixes deployed to prod (`voxtts.online`) as image
+`ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260614-1` (digest 9c2161b5...).
+Rollback target = prior prod image `prod-20260613-1`. Temp env (PRESET/CLONE
+0.8) persists across the image change (it lives in the deployment spec).
+
+1. Bearer-token failover (lib/tts-provider.ts synthesizeSingleChunk loop):
+   - BUG: a 401/403 (and previously also 400/422) from ONE pool endpoint threw
+     immediately with NO failover, so a single account's token hiccup surfaced
+     to users as "FAILED: INVALID BEARER TOKEN" (seen in dashboard history img).
+   - Root cause of the observed failure was transient (happened during the
+     temp-fix rollout window; all 3 account tokens + single fallback verified
+     200 afterward). But the no-failover behavior was a real weakness.
+   - FIX: only 400/422 (payload errors) short-circuit now. 401/403/402/429/5xx
+     disable that endpoint and fail over to the next pool account. Adjusted both
+     the inner !response.ok block and the outer catch (avoid double-disable).
+
+2. Dashboard TTS char limit 50,000 -> 5,000:
+   - lib/usage-policy.ts: MAX_DASHBOARD_TTS_CHARS changed 50_000 -> 5_000.
+     (MAX_TEXT_CHARS was already 5_000; MAX_BATCH_TOTAL_CHARS=50_000 is a
+     separate batch-total cap, left unchanged.)
+   - Affects dashboard generate route + speech-workspace UI counter + docs.
+
+Verified live on voxtts.online: build OK, rollout OK (web x2 + worker healthy),
+v1 sync generation 200 + clean audio (12 credits), docs now show "1 to 5,000
+characters", and a 6,000-char request returns 400. Test user seeded + deleted,
+all temp files removed (prod + local).
+
+## PRODUCTION LAUNCH 2026-06-14: prod-20260613-1 deployed + temperature fix
+
+Production (`voxtts.online`) is a SEPARATE server from staging:
+- Prod: `152.42.203.77`, K3s ns `khmer-vox`, cert-manager TLS, web x2 + worker x1
+  + postgres, pulls images from GHCR (`ghcr-secret`), ingress hosts
+  `voxtts.online` + `www.voxtts.online`. Box: 2 vCPU / 4 GB (modest).
+- Staging/fixer: `178.128.103.120`, NodePort 30080, imports images from local
+  containerd. ALL earlier conversation work happened on STAGING only.
+- NOTE: prod + staging currently share the same root password. Recommend
+  rotating prod to a distinct secret post-launch.
+
+What was deployed to prod:
+- Built/verified image promoted to GHCR as immutable tag
+  `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260613-1` (digest 4e5fe590...),
+  replacing the old floating `:latest`. Rollback target = prior live digest
+  `sha256:763044856ea0...` (the old `:latest`).
+- Rolled out to web + worker, zero downtime. Health/pages/auth/TLS all good.
+
+CRITICAL prod-only bug found + fixed (temperature):
+- After deploy, live audio generation FAILED: prod Modal returned near-silent
+  audio (rms ~ -55 dB) and the delivery safeguard correctly rejected it
+  (fail-closed -> user got UPSTREAM_ERROR).
+- Root cause isolated by direct Modal probes (read-only, all 3 pool accounts
+  reaksabbb3 / reaksa1234op / reaksaaaa4 return clean audio on basic requests):
+  prod's VoxCPM model collapses toward SILENCE at low temperature. Bisect on
+  the exact app payload: temp 0.45 -> ~-30 to -55 dB (silent), 0.7 -> -22 dB,
+  1.0 -> -16 dB (clean). `max_generate_length` was innocent.
+- Could NOT confirm why staging tolerates 0.45 but prod doesn't (all accounts'
+  /info identical; model lib pinned nano-vllm-voxcpm==2.0.1). Did NOT redeploy
+  Modal (would likely be a no-op + missing local token for reaksaaaa4).
+- FIX (cheap, reversible, no rebuild): set prod env on web + worker
+  `TTS_PRESET_TEMPERATURE=0.8` and `TTS_CLONE_TEMPERATURE=0.8` via
+  `kubectl set env` + rollout. Previously unset (code defaults 0.45 / 0.55).
+- VERIFIED end-to-end on live voxtts.online: v1 sync 200, 17 credits, audio
+  PASS (-16.5 LUFS, no buzz, longest stuck-tonal 1.50s). Test user seeded +
+  deleted, all temp files removed (prod box + local).
+
+Launch status / still open:
+- Prod audio now works for real users. Scaling/concurrency bumps were
+  deliberately NOT applied (untested on the 2vCPU/4GB box). Payments were
+  reported already live-tested; not re-tested (no real money spent).
+- Consider: investigate the true staging-vs-prod Modal difference later;
+  rotate prod root password; raise worker/batch/policy concurrency only after
+  load-testing.
 
 ## staging-20260613-12 DEPLOYED + Buzz Safeguard VERIFIED via API
 

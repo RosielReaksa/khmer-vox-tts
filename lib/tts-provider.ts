@@ -1923,12 +1923,17 @@ async function synthesizeSingleChunk(
 
         recordMetric(endpoint.url, params.text.length, Date.now() - startTime, false);
 
-        // If it's a client parameter error, throw immediately
-        if (response.status === 400 || response.status === 401 || response.status === 403 || response.status === 422) {
+        // If it's a client parameter error, throw immediately. A 400/422 is a
+        // payload problem that will fail identically on every endpoint, so
+        // failing over wastes time and credits.
+        if (response.status === 400 || response.status === 422) {
           throw new TtsProviderError(message, response.status);
         }
 
-        // Otherwise (402, 429, 5xx), disable endpoint and retry
+        // 401/403 are endpoint-specific auth problems (one account's token is
+        // wrong/expired), and 402/429/5xx are endpoint-specific availability
+        // problems. Disable this endpoint and fail over to the next account in
+        // the pool instead of failing the whole request.
         disableEndpoint(endpoint.url, `HTTP ${response.status}: ${message}`);
         throw new TtsProviderError(message, response.status);
       }
@@ -2002,14 +2007,19 @@ async function synthesizeSingleChunk(
       recordMetric(endpoint.url, params.text.length, Date.now() - startTime, false);
       lastError = err as Error;
       if (err instanceof TtsProviderError) {
-        if (err.status === 400 || err.status === 401 || err.status === 403 || err.status === 422) {
+        if (err.status === 400 || err.status === 422) {
+          // Payload errors fail identically on every endpoint; do not fail over.
           throw err;
         }
-        disableEndpoint(
-          endpoint.url,
-          `Synthesis Error ${err.status}: ${err.message}`,
-          err.status === 502 ? 15000 : undefined,
-        );
+        // 401/403/402/429/5xx are endpoint-specific. The inner block already
+        // disabled the endpoint where applicable; continue to the next account.
+        if (err.status !== 401 && err.status !== 403) {
+          disableEndpoint(
+            endpoint.url,
+            `Synthesis Error ${err.status}: ${err.message}`,
+            err.status === 502 ? 15000 : undefined,
+          );
+        }
       } else {
         // A timeout/abort is request-specific (slow GPU cold start or long
         // generation), not proof the endpoint is unhealthy. Give it only a brief

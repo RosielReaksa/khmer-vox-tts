@@ -20,9 +20,25 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://voxtts.online"),
   title: "Khmer Vox TTS",
   description:
     "Khmer Vox TTS is a Khmer text-to-speech API with temporary clone voice batch generation.",
+  applicationName: "Khmer Vox TTS",
+  openGraph: {
+    type: "website",
+    siteName: "Khmer Vox TTS",
+    url: "https://voxtts.online",
+    title: "Khmer Vox TTS — Khmer Text-to-Speech API",
+    description:
+      "Natural Khmer voices, voice cloning, and batch generation. Convert text to natural speech with a simple API.",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Khmer Vox TTS — Khmer Text-to-Speech API",
+    description:
+      "Natural Khmer voices, voice cloning, and batch generation. Convert text to natural speech with a simple API.",
+  },
 };
 
 export default function RootLayout({
