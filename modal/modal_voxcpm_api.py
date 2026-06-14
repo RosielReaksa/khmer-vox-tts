@@ -18,10 +18,13 @@ PUBLIC_BASE_URL = os.environ.get(
 
 GPU_TYPE = os.environ.get("VOXCPM_GPU", "L40S")
 # How long a GPU container stays warm after its last request before scaling to
-# zero. The old 60s caused frequent cold-start timeouts for customers arriving
-# more than a minute apart. 600s (10 min) keeps it warm across nearby requests
-# while still scaling down when truly idle.
-SCALEDOWN_WINDOW = int(os.environ.get("VOXCPM_SCALEDOWN_WINDOW", "600"))
+# zero. You pay for every second a container is warm, even when idle, so this is
+# the main idle-cost lever. 60s was too aggressive (frequent cold-start timeouts
+# for users arriving a minute apart); 600s (10 min) kept far too many idle GPUs
+# warm and wasted credit. 120s (2 min) is the cost/UX balance: it bridges users
+# who arrive within ~2 minutes of each other while scaling to zero quickly when
+# truly idle. Raise toward 180-300 if cold starts feel too frequent for users.
+SCALEDOWN_WINDOW = int(os.environ.get("VOXCPM_SCALEDOWN_WINDOW", "120"))
 MAX_NUM_SEQS = int(os.environ.get("VOXCPM_MAX_NUM_SEQS", "16"))
 MAX_NUM_BATCHED_TOKENS = int(os.environ.get("VOXCPM_MAX_NUM_BATCHED_TOKENS", "8192"))
 MAX_MODEL_LEN = int(os.environ.get("VOXCPM_MAX_MODEL_LEN", "4096"))

@@ -9,6 +9,30 @@ function getModalSrcDir(): string {
   return path.join(process.cwd(), "modal");
 }
 
+// Idle-cost control applied to every Modal deploy the website performs.
+// The Modal app (modal_voxcpm_api.py) reads VOXCPM_SCALEDOWN_WINDOW at deploy
+// time and bakes it into the GPU container's scaledown_window, i.e. how many
+// seconds a GPU stays warm (and billed) after its last request before scaling
+// to zero. Injecting it here means every account connected through the admin
+// page -- now and in the future -- automatically gets the same warm window
+// without any per-account manual step. Override with the env var if needed.
+const DEPLOY_SCALEDOWN_WINDOW = (process.env.VOXCPM_SCALEDOWN_WINDOW || "120").trim();
+
+// Builds the environment passed to every spawned `modal` CLI call so deploy
+// settings (like the scaledown window) are applied consistently.
+function buildModalEnv(profile: string): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PYTHONIOENCODING: "utf-8",
+    MODAL_CONFIG_PATH:
+      process.env.MODAL_CONFIG_PATH || path.join(process.cwd(), "data", ".modal.toml"),
+    MODAL_PROFILE: profile,
+    // Force the cost-saving warm window into the deploy regardless of the
+    // value baked into the Python default, so all accounts stay consistent.
+    VOXCPM_SCALEDOWN_WINDOW: DEPLOY_SCALEDOWN_WINDOW,
+  };
+}
+
 // Defense-in-depth against command injection: the Modal CLI is spawned with
 // shell:true (needed for cross-platform `modal`/`modal.cmd` resolution), so any
 // user-influenced argument must be free of shell metacharacters before spawn.
@@ -302,12 +326,7 @@ export function startUndeploy(params: { label: string; profile: string; url?: st
   currentDeployStatus.progress = `[1/2] Initiating undeployment of App 'voxcpm2-nanovllm-tts-api' on profile '${params.profile}'...\n`;
   persistStatusImmediate();
 
-  const env = {
-    ...process.env,
-    PYTHONIOENCODING: "utf-8",
-    MODAL_CONFIG_PATH: process.env.MODAL_CONFIG_PATH || path.join(process.cwd(), "data", ".modal.toml"),
-    MODAL_PROFILE: params.profile,
-  };
+  const env = buildModalEnv(params.profile);
 
   const stopProcess = spawn(
     "modal",
@@ -397,12 +416,7 @@ export function startDeploy(params: {
   persistStatusImmediate();
 
   // Start CLI execution
-  const env = {
-    ...process.env,
-    PYTHONIOENCODING: "utf-8",
-    MODAL_CONFIG_PATH: process.env.MODAL_CONFIG_PATH || path.join(process.cwd(), "data", ".modal.toml"),
-    MODAL_PROFILE: params.profile,
-  };
+  const env = buildModalEnv(params.profile);
 
   // Run token set
   const tokenProcess = spawn(
