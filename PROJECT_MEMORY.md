@@ -1664,6 +1664,54 @@ Update on 2026-06-14:
   vps-ssh.py upload; VPS link still flaky). Still 6 uncommitted fixes in git
   (worktree at a2bf891) + this 7th.
 
+## THROUGHPUT FIX 2026-06-14: worker concurrency 1->4 (config only)
+
+Follow-up to the load test: tackled audio-generation throughput (the second
+bottleneck). Investigation showed the worker was the limiter, NOT the app or
+Modal:
+- `scripts/job-worker.mjs` runs `JOB_WORKER_CONCURRENCY` poll loops (default 1),
+  so prod drained jobs serially (~108s each, cold start) -> only ~10/100 done in
+  6 min during the earlier e2e test.
+- Job claiming is race-safe for parallel loops: postgres-store.ts
+  `claimNextQueuedBatchJob` uses `for update ... skip locked`.
+- Per-user item cap (`dashboardTts.maxConcurrent=2`) is PER-USER, so 100 distinct
+  users don't throttle each other.
+- Modal side scales: `modal/modal_voxcpm_api.py` MAX_NUM_SEQS=16 per container,
+  3 endpoints in the pool, SCALEDOWN_WINDOW=600 keeps containers warm.
+=> Fix is a deployment env var, no code change.
+
+Chose JOB_WORKER_CONCURRENCY=4 (conservative; safe on the 2-core worker box).
+Validated on staging first (re-pointed staging TTS at prod Modal pool + temp
+NodePort, set concurrency 4, ran the 100-user e2e test):
+- BEFORE (concurrency 1): 10/100 jobs completed in 6 min.
+- AFTER (concurrency 4): 79/100 completed; the other 21 were still draining at
+  the 6-min test cap (hit 91% right at cutoff), not real failures. signup 100%,
+  job_e2e median ~189s.
+
+Applied to PRODUCTION worker: `kubectl -n khmer-vox set env
+deploy/khmer-vox-worker JOB_WORKER_CONCURRENCY=4`. Confirmed worker log shows
+"concurrency level: 4" with 4 loops, pod Running 0 restarts, /api/health 200.
+This is an env-only change (no new image); rollback = set back to 1 or unset.
+Staging fully reverted (NodePort removed, TTS pool back to `[]`; concurrency 4
+left on staging worker but harmless with empty pool).
+
+Remaining future levers if demand grows: raise concurrency further (watch GPU
+cost + worker CPU), add worker replicas, more warm Modal containers. Not done.
+
+### Manifest sync 2026-06-14 (persisted both fixes into /root/voxtts-populated.yaml)
+The live `JOB_WORKER_CONCURRENCY=4` was only set via `kubectl set env` (lived on
+cluster, not in the manifest template). Persisted it into
+`/root/voxtts-populated.yaml` so a future `kubectl apply` keeps it. Also updated
+both `image:` tags in that file from `:latest` to `:prod-20260614-17` so a
+future apply does NOT revert the running image. Backups on host:
+`voxtts-populated.yaml.bak-20260614` and `.bak2-20260614`. Edits were done with
+a small remote python script (NOT a PowerShell `>` redirect — that corrupted the
+file with UTF-16 control chars on the first attempt; caught via
+`kubectl apply --dry-run=client` and restored from backup). Manifest now passes
+dry-run. NOTE: manifest was NOT applied; live cluster already correct. The
+manifest is still a partial template (secrets are placeholder values in-file),
+so review before ever doing a full apply.
+
 ## SIGNUP FIX 2026-06-14: bcrypt cost 12->10 (staging-tested)
 
 Acted on the load-test finding that signup was the bottleneck. Careful,
