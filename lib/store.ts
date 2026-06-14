@@ -131,6 +131,28 @@ export async function createUserWithSignupBonus(email: string, passwordHash: str
   return (await activeStore()).createUserWithSignupBonus(email, passwordHash);
 }
 
+export async function findUserByGoogleId(googleId: string): Promise<UserRecord | null> {
+  return (await activeStore()).findUserByGoogleId(googleId);
+}
+
+export async function linkGoogleAccount(input: {
+  userId: string;
+  googleId: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+}): Promise<UserRecord | null> {
+  return (await activeStore()).linkGoogleAccount(input);
+}
+
+export async function createGoogleUserWithSignupBonus(input: {
+  email: string;
+  googleId: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+}): Promise<UserRecord> {
+  return (await activeStore()).createGoogleUserWithSignupBonus(input);
+}
+
 export async function getUserTokenBalance(userId: string): Promise<number> {
   return (await activeStore()).getUserTokenBalance(userId);
 }

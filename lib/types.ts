@@ -55,7 +55,10 @@ export type TelegramPaymentActionStatus =
 export type UserRecord = {
   id: string;
   email: string;
-  passwordHash: string;
+  passwordHash: string | null;
+  googleId: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
   suspendedAt: string | null;
   suspendedReason: string | null;
   suspendedByUserId: string | null;

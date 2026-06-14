@@ -95,7 +95,10 @@ const SCHEMA_SQL = `
 create table if not exists users (
   id text primary key,
   email text not null unique,
-  password_hash text not null,
+  password_hash text,
+  google_id text unique,
+  display_name text,
+  avatar_url text,
   suspended_at timestamptz,
   suspended_reason text,
   suspended_by_user_id text references users(id) on delete set null,
@@ -656,6 +659,11 @@ alter table users add column if not exists suspended_at timestamptz;
 alter table users add column if not exists suspended_reason text;
 alter table users add column if not exists suspended_by_user_id text references users(id) on delete set null;
 create index if not exists users_suspended_at_idx on users(suspended_at);
+alter table users add column if not exists google_id text;
+alter table users add column if not exists display_name text;
+alter table users add column if not exists avatar_url text;
+alter table users alter column password_hash drop not null;
+create unique index if not exists users_google_id_key on users(google_id) where google_id is not null;
 alter table business_api_requests add column if not exists applied_daily_token_limit integer;
 alter table business_api_requests add column if not exists applied_monthly_token_limit integer;
 alter table business_api_requests add column if not exists applied_max_concurrent_requests integer;
@@ -804,7 +812,10 @@ insert into system_settings (key, value) values ('admin_active', 'true') on conf
 type UserRow = QueryResultRow & {
   id: string;
   email: string;
-  password_hash: string;
+  password_hash: string | null;
+  google_id: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
   suspended_at: Date | string | null;
   suspended_reason: string | null;
   suspended_by_user_id: string | null;
@@ -1307,6 +1318,9 @@ function mapUser(row: UserRow): UserRecord {
     id: row.id,
     email: row.email,
     passwordHash: row.password_hash,
+    googleId: row.google_id,
+    displayName: row.display_name,
+    avatarUrl: row.avatar_url,
     suspendedAt: nullableIso(row.suspended_at),
     suspendedReason: row.suspended_reason,
     suspendedByUserId: row.suspended_by_user_id,
@@ -1781,6 +1795,78 @@ export async function createUserWithSignupBonus(email: string, passwordHash: str
         returning *
         `,
         [userId, normalized, passwordHash, now],
+      );
+
+      await client.query(
+        `
+        insert into token_transactions (id, user_id, amount, type, note, created_at)
+        values ($1, $2, $3, $4, $5, $6)
+        `,
+        [randomUUID(), userId, 100, "signup_bonus", "Free signup tokens", now],
+      );
+
+      return mapUser(userRows.rows[0]);
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new Error("EMAIL_EXISTS");
+    }
+    throw error;
+  }
+}
+
+export async function findUserByGoogleId(googleId: string): Promise<UserRecord | null> {
+  const rows = await queryRows<UserRow>("select * from users where google_id = $1 limit 1", [googleId]);
+  return rows[0] ? mapUser(rows[0]) : null;
+}
+
+export async function linkGoogleAccount(input: {
+  userId: string;
+  googleId: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+}): Promise<UserRecord | null> {
+  const now = new Date().toISOString();
+  try {
+    const rows = await queryRows<UserRow>(
+      `
+      update users
+      set google_id = $2,
+        display_name = coalesce(display_name, $3),
+        avatar_url = coalesce($4, avatar_url),
+        updated_at = $5
+      where id = $1
+      returning *
+      `,
+      [input.userId, input.googleId, input.displayName ?? null, input.avatarUrl ?? null, now],
+    );
+    return rows[0] ? mapUser(rows[0]) : null;
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new Error("GOOGLE_ID_LINKED");
+    }
+    throw error;
+  }
+}
+
+export async function createGoogleUserWithSignupBonus(input: {
+  email: string;
+  googleId: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+}): Promise<UserRecord> {
+  const normalized = normalizeEmail(input.email);
+  try {
+    return await withTransaction(async (client) => {
+      const now = new Date().toISOString();
+      const userId = randomUUID();
+      const userRows = await client.query<UserRow>(
+        `
+        insert into users (id, email, password_hash, google_id, display_name, avatar_url, created_at, updated_at)
+        values ($1, $2, null, $3, $4, $5, $6, $6)
+        returning *
+        `,
+        [userId, normalized, input.googleId, input.displayName ?? null, input.avatarUrl ?? null, now],
       );
 
       await client.query(

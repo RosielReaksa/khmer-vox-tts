@@ -48,6 +48,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid email or password." }, { status: 401 });
     }
 
+    if (!user.passwordHash) {
+      return NextResponse.json(
+        { error: "This account uses Google sign-in. Please continue with Google." },
+        { status: 409 },
+      );
+    }
+
     const validPassword = await verifyPassword(parsed.data.password, user.passwordHash);
     if (!validPassword) {
       return NextResponse.json({ error: "Invalid email or password." }, { status: 401 });

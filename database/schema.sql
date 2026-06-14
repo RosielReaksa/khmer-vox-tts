@@ -4,7 +4,10 @@
 create table if not exists users (
   id text primary key,
   email text not null unique,
-  password_hash text not null,
+  password_hash text,
+  google_id text unique,
+  display_name text,
+  avatar_url text,
   suspended_at timestamptz,
   suspended_reason text,
   suspended_by_user_id text references users(id) on delete set null,

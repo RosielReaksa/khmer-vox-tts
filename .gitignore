@@ -75,3 +75,6 @@ modal/NEW_VOXCPM_API_KEY.txt
 data/tts-upstream-pool.json
 deploy/k3s/voxtts-populated.yaml
 **/.modal.toml
+# Google OAuth client secret files (downloaded from Google Cloud Console)
+client_secret_*.json
+*.apps.googleusercontent.com.json

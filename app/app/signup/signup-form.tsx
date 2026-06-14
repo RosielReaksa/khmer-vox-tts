@@ -4,12 +4,22 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-export function SignupForm({ csrfToken = "" }: { csrfToken?: string }) {
+import { GoogleAuthButton, authErrorMessage } from "@/app/app/google-auth-button";
+
+export function SignupForm({
+  csrfToken = "",
+  googleEnabled = false,
+  errorCode = null,
+}: {
+  csrfToken?: string;
+  googleEnabled?: boolean;
+  errorCode?: string | null;
+}) {
   const router = useRouter();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(authErrorMessage(errorCode) ?? "");
   const [loading, setLoading] = useState(false);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -199,7 +209,20 @@ export function SignupForm({ csrfToken = "" }: { csrfToken?: string }) {
               </button>
             </div>
           </form>
-          
+
+          {googleEnabled && (
+            <div className="mt-8">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="flex-grow h-1 bg-[#1a1a1a]" />
+                <span className="font-label font-bold text-xs uppercase tracking-widest text-[#4a4a4a]">
+                  Or
+                </span>
+                <div className="flex-grow h-1 bg-[#1a1a1a]" />
+              </div>
+              <GoogleAuthButton label="Sign up with Google" />
+            </div>
+          )}
+
           {/* Footer Links */}
           <div className="mt-12 text-center border-t-4 border-[#1a1a1a] pt-8">
             <p className="font-body font-bold text-[#4a4a4a]">

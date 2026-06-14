@@ -522,6 +522,80 @@ export async function createUserWithSignupBonus(email: string, passwordHash: str
       id: randomUUID(),
       email: normalized,
       passwordHash,
+      googleId: null,
+      displayName: null,
+      avatarUrl: null,
+      suspendedAt: null,
+      suspendedReason: null,
+      suspendedByUserId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.users.push(user);
+
+    const signupBonus: TokenTransactionRecord = {
+      id: randomUUID(),
+      userId: user.id,
+      amount: 100,
+      type: "signup_bonus",
+      note: "Free signup tokens",
+      createdAt: now,
+    };
+    store.tokenTransactions.push(signupBonus);
+
+    return user;
+  });
+}
+
+export async function findUserByGoogleId(googleId: string): Promise<UserRecord | null> {
+  const store = await readStore();
+  return store.users.find((user) => user.googleId === googleId) ?? null;
+}
+
+export async function linkGoogleAccount(input: {
+  userId: string;
+  googleId: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+}): Promise<UserRecord | null> {
+  return updateStore((store) => {
+    const conflict = store.users.find(
+      (user) => user.googleId === input.googleId && user.id !== input.userId,
+    );
+    if (conflict) {
+      throw new Error("GOOGLE_ID_LINKED");
+    }
+    const user = store.users.find((u) => u.id === input.userId);
+    if (!user) return null;
+    user.googleId = input.googleId;
+    user.displayName = user.displayName ?? input.displayName ?? null;
+    user.avatarUrl = input.avatarUrl ?? user.avatarUrl ?? null;
+    user.updatedAt = new Date().toISOString();
+    return user;
+  });
+}
+
+export async function createGoogleUserWithSignupBonus(input: {
+  email: string;
+  googleId: string;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+}): Promise<UserRecord> {
+  const normalized = normalizeEmail(input.email);
+  return updateStore((store) => {
+    const existing = store.users.find((user) => user.email === normalized);
+    if (existing) {
+      throw new Error("EMAIL_EXISTS");
+    }
+
+    const now = new Date().toISOString();
+    const user: UserRecord = {
+      id: randomUUID(),
+      email: normalized,
+      passwordHash: null,
+      googleId: input.googleId,
+      displayName: input.displayName ?? null,
+      avatarUrl: input.avatarUrl ?? null,
       suspendedAt: null,
       suspendedReason: null,
       suspendedByUserId: null,
