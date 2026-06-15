@@ -15,6 +15,14 @@ import {
   STANDARD_CLONE_CREDITS_PER_SECOND,
   TTS_CREDITS_PER_SECOND,
 } from "@/lib/credit-rates";
+import {
+  clearActiveJob,
+  clearResult,
+  persistActiveJob,
+  persistResult,
+  readActiveJob,
+  readResult,
+} from "@/app/app/dashboard/workspace-persistence";
 
 type SpeechWorkspaceProps = {
   mode: "tts" | "clone";
@@ -100,32 +108,10 @@ function subscribeWorkspaceSnapshot(mode: "tts" | "clone", listener: () => void)
 
 // Persist the in-flight background job id so a page refresh (or accidental
 // navigation) can reconnect to the still-running worker job instead of losing
-// the generating state.
-const activeJobStorageKey = (mode: "tts" | "clone") => `voxtts:activeJob:${mode}`;
-
-function persistActiveJob(mode: "tts" | "clone", jobId: string) {
-  try {
-    window.localStorage.setItem(activeJobStorageKey(mode), jobId);
-  } catch {
-    /* localStorage unavailable (private mode / SSR): non-fatal */
-  }
-}
-
-function clearActiveJob(mode: "tts" | "clone") {
-  try {
-    window.localStorage.removeItem(activeJobStorageKey(mode));
-  } catch {
-    /* non-fatal */
-  }
-}
-
-function readActiveJob(mode: "tts" | "clone"): string | null {
-  try {
-    return window.localStorage.getItem(activeJobStorageKey(mode));
-  } catch {
-    return null;
-  }
-}
+// the generating state. The COMPLETED result is persisted too, so a full
+// refresh restores the audio instead of resetting to "No audio yet".
+// These helpers live in ./workspace-persistence so they can be unit-tested
+// without a full DOM/React stack.
 
 export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProps) {
   const isCloneMode = mode === "clone";
@@ -310,6 +296,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
             const mergedData = await mergedRes.json();
             const url = `data:${mergedData.contentType};base64,${mergedData.audioBase64}`;
             clearActiveJob(mode);
+            const updatedAtLabel = new Date().toLocaleTimeString();
             commitWorkspaceSnapshot(mode, {
               busy: false,
               error: job.status === "partial"
@@ -317,8 +304,9 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                 : "",
               result: mergedData,
               audioUrl: url,
-              updatedAtLabel: new Date().toLocaleTimeString(),
+              updatedAtLabel,
             });
+            persistResult(mode, { result: mergedData, updatedAtLabel });
             dashboardUser.setTokenBalance(mergedData.remainingTokens);
             clearDashboardCache("dashboard:history");
             clearDashboardCache("dashboard:api");
@@ -357,23 +345,47 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
     [mode, dashboardUser],
   );
 
-  // On mount, if a background job was in flight before a refresh/navigation,
-  // reconnect to it and keep showing the generating UI until it finishes.
+  // On mount, restore state that a full page refresh would otherwise wipe
+  // (the in-memory workspaceSnapshots is cleared on reload):
+  //   1. If a background job was in flight, reconnect and keep polling.
+  //   2. Otherwise, if a completed result was persisted, restore the audio so
+  //      the panel shows the previous generation instead of "No audio yet".
   useEffect(() => {
     const storedJobId = readActiveJob(mode);
-    if (!storedJobId) return;
-    // Avoid double-polling if this mode already shows a finished result.
-    if (workspaceSnapshots[mode].result) {
-      clearActiveJob(mode);
+    if (storedJobId) {
+      // Avoid double-polling if this mode already shows a finished result.
+      if (workspaceSnapshots[mode].result) {
+        clearActiveJob(mode);
+        return;
+      }
+      commitWorkspaceSnapshot(mode, { busy: true, error: "", result: null, audioUrl: "" });
+      void pollQueuedJob(storedJobId);
       return;
     }
-    commitWorkspaceSnapshot(mode, { busy: true, error: "", result: null, audioUrl: "" });
-    void pollQueuedJob(storedJobId);
+
+    // No in-flight job: restore a previously completed result if present and
+    // the live snapshot doesn't already hold one (e.g. after a hard refresh).
+    if (!workspaceSnapshots[mode].result) {
+      const stored = readResult(mode);
+      if (stored) {
+        const url = `data:${stored.result.contentType};base64,${stored.result.audioBase64}`;
+        commitWorkspaceSnapshot(mode, {
+          busy: false,
+          error: "",
+          result: stored.result,
+          audioUrl: url,
+          updatedAtLabel: stored.updatedAtLabel,
+        });
+      }
+    }
   }, [mode, pollQueuedJob]);
 
   async function onGenerate() {
     if (!canGenerate) return;
 
+    // Starting fresh: drop any previously persisted result so a refresh during
+    // this run can't restore stale audio as if it were the new generation.
+    clearResult(mode);
     commitWorkspaceSnapshot(mode, {
       busy: true,
       error: "",
@@ -441,13 +453,15 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
 
       const success = data as GenerationResponse;
       const url = `data:${success.contentType};base64,${success.audioBase64}`;
+      const updatedAtLabel = new Date().toLocaleTimeString();
       commitWorkspaceSnapshot(mode, {
         busy: false,
         error: "",
         result: success,
         audioUrl: url,
-        updatedAtLabel: new Date().toLocaleTimeString(),
+        updatedAtLabel,
       });
+      persistResult(mode, { result: success, updatedAtLabel });
       dashboardUser.setTokenBalance(success.remainingTokens);
       clearDashboardCache("dashboard:history");
       clearDashboardCache("dashboard:api");
