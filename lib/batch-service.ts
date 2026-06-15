@@ -3,11 +3,17 @@ import "server-only";
 
 import {
   calculateGenerationUsage,
+  buildInputPreview,
   GenerationServiceError,
   resolveGenerationCloneCreditRate,
   runGenerationForUser,
 } from "@/lib/generation-service";
 import { PUBLIC_AUDIO_OUTPUT_FORMAT, publicBatchJobUrls } from "@/lib/audio-api";
+import {
+  buildAudioObjectKey,
+  putAudioObject,
+  resolveAudioBytes,
+} from "@/lib/audio-storage";
 import { acquireUsageLimit, type UsageLimitResult } from "@/lib/rate-limit";
 import { getUsagePolicy } from "@/lib/server-usage-policy";
 import { prepareTextForSpeech } from "@/lib/speech-text-sanitizer";
@@ -18,9 +24,11 @@ import {
   clearBatchJobCloneSample,
   createBatchJob,
   createBatchJobWebhookAttempt,
+  createGenerationRecord,
   findUserById,
   getBatchJobWithItems,
   getStoreMode,
+  getUserGenerationRecord,
   recordWorkerHeartbeat,
   recoverStuckBatchJobs,
   getUserTokenBalance,
@@ -30,7 +38,10 @@ import {
   updateBatchJobItem,
   updateBatchJobStatus,
 } from "@/lib/store";
+import { mergePublicMp3SegmentsForDelivery } from "@/lib/tts-provider";
 import type { CloneSample } from "@/lib/tts-provider";
+import { invalidateDashboardCountCache } from "@/lib/dashboard-count-cache";
+import { isDashboardMergeJob } from "@/lib/batch-merge-marker";
 import type {
   BatchJobItemRecord,
   BatchJobRecord,
@@ -63,6 +74,14 @@ export const MAX_WEBHOOK_URL_CHARS = 2_048;
 export const MAX_EXTERNAL_ID_CHARS = 160;
 export const MAX_BATCH_SPEAKER_CHARS = 120;
 export const MAX_BATCH_METADATA_JSON_CHARS = 4_096;
+
+// Re-exported from a dependency-free module so the marker logic is unit-testable
+// without the server-only import chain. See lib/batch-merge-marker.ts.
+export {
+  DASHBOARD_MERGE_JOB_KIND,
+  dashboardMergeMetadataJson,
+  isDashboardMergeJob,
+} from "@/lib/batch-merge-marker";
 
 export type BatchLineInput = {
   text: string;
@@ -447,6 +466,92 @@ function retryAfterHeaderMs(headers: Record<string, string>, fallbackMs: number)
 
 function terminalBatchStatus(status: BatchJobRecord["status"]): boolean {
   return status === "completed" || status === "partial" || status === "failed" || status === "needs_review";
+}
+
+// For a dashboard auto-chunked generation, merge the successful chunk audio
+// into one file and save a SINGLE full-audio history record (id = job.id, so it
+// is idempotent across worker retries). The per-chunk segment records stay in
+// the database for the merged endpoint but are hidden from History because they
+// carry segment_of_job_id. Failure here is non-fatal: the job still completes
+// and the merged endpoint can rebuild audio on demand.
+async function saveMergedDashboardHistory(
+  job: BatchJobRecord,
+  items: BatchJobItemRecord[],
+): Promise<void> {
+  try {
+    // Idempotency: if the merged record already exists, do nothing.
+    const existing = await getUserGenerationRecord(job.userId, job.id);
+    if (existing) return;
+
+    const successfulItems = items
+      .filter((item) => item.status === "success" && (item.audioBase64 || item.audioObjectKey))
+      .sort((a, b) => a.itemIndex - b.itemIndex);
+    if (successfulItems.length === 0) return;
+
+    const buffers: Uint8Array[] = [];
+    let combinedText = "";
+    let totalOutputSeconds = 0;
+    let totalCreditsCharged = 0;
+    for (const item of successfulItems) {
+      const bytes = await resolveAudioBytes({
+        audioBase64: item.audioBase64,
+        audioObjectKey: item.audioObjectKey,
+      });
+      if (bytes?.byteLength) {
+        buffers.push(bytes);
+        combinedText = combinedText ? `${combinedText} ${item.text}` : item.text;
+        totalOutputSeconds += item.outputSeconds ?? 0;
+        totalCreditsCharged += item.creditsCharged ?? 0;
+      }
+    }
+    if (buffers.length === 0) return;
+
+    const merged = await mergePublicMp3SegmentsForDelivery(buffers, job.outputSeconds);
+    const mergedBytes = merged.bytes;
+    const outputSeconds = Math.max(1, Math.round(merged.outputSeconds ?? totalOutputSeconds ?? job.outputSeconds));
+    const inputChars = Array.from(combinedText).length;
+
+    // Store the merged audio in object storage when configured, else inline.
+    const stored = await putAudioObject({
+      key: buildAudioObjectKey({
+        scope: "merged",
+        userId: job.userId,
+        id: job.id,
+        fileName: `${job.id}.mp3`,
+      }),
+      bytes: mergedBytes,
+      contentType: merged.contentType,
+    });
+
+    await createGenerationRecord({
+      id: job.id,
+      userId: job.userId,
+      apiKeyId: job.apiKeyId ?? null,
+      mode: job.mode,
+      source: job.source,
+      status: "success",
+      model: job.model,
+      voice: job.voice,
+      inputChars,
+      inputPreview: buildInputPreview(combinedText),
+      outputSeconds,
+      creditsRequested: job.creditsEstimated,
+      creditsCharged: totalCreditsCharged || job.creditsCharged,
+      latencyMs: job.startedAt && job.completedAt
+        ? new Date(job.completedAt).getTime() - new Date(job.startedAt).getTime()
+        : 0,
+      errorMessage: null,
+      audioBase64: stored ? null : Buffer.from(mergedBytes).toString("base64"),
+      audioObjectKey: stored?.key ?? null,
+      audioObjectUrl: stored?.url ?? null,
+      contentType: merged.contentType,
+      segmentOfJobId: null,
+    });
+
+    await invalidateDashboardCountCache(job.userId, ["history", "billing", "api"]);
+  } catch (error) {
+    console.error(`[batch-worker] Failed to save merged history for job ${job.id}:`, error);
+  }
 }
 
 function cleanEnv(name: string): string {
@@ -867,6 +972,7 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
   }
 
   const cloneSample = job.mode === "clone" ? (storedCloneSample(job) ?? undefined) : undefined;
+  const mergeJob = isDashboardMergeJob(job);
   if (job.mode === "clone" && !cloneSample) {
     await failRemainingItems(
       job.id,
@@ -941,6 +1047,10 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
             voice: runningItem.voice,
             model: runningItem.model,
             cloneSample,
+            // For dashboard auto-chunked jobs, tag each chunk's generation
+            // record so it is hidden from History; the merged full-audio
+            // record is saved once when the job completes.
+            segmentOfJobId: mergeJob ? job.id : null,
           });
 
           await updateBatchJobItem({
@@ -1022,6 +1132,9 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
   const fresh = await getBatchJobWithItems(job.id);
   const finalJob = completed ?? fresh?.job ?? job;
   if (terminalBatchStatus(finalJob.status)) {
+    if (mergeJob && (finalJob.status === "completed" || finalJob.status === "partial")) {
+      await saveMergedDashboardHistory(finalJob, fresh?.items ?? loaded.items);
+    }
     await clearBatchJobCloneSample(finalJob.id);
     await deliverBatchJobWebhookIfNeeded(finalJob.id);
   }

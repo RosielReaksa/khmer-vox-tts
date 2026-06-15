@@ -75,6 +75,7 @@ const requiredColumns = {
     "audio_object_key",
     "audio_object_url",
     "content_type",
+    "segment_of_job_id",
     "created_at",
   ],
   batch_jobs: [

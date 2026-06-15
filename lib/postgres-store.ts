@@ -607,6 +607,11 @@ alter table generations add column if not exists audio_base64 text;
 alter table generations add column if not exists audio_object_key text;
 alter table generations add column if not exists audio_object_url text;
 alter table generations add column if not exists content_type text;
+-- Links per-chunk segment records to their parent dashboard job so they can be
+-- hidden from History in favour of a single merged full-audio record.
+alter table generations add column if not exists segment_of_job_id text;
+create index if not exists generations_segment_of_job_idx
+  on generations(segment_of_job_id) where segment_of_job_id is not null;
 alter table batch_jobs add column if not exists clone_sample_base64 text;
 alter table batch_jobs add column if not exists clone_sample_mime_type text;
 alter table batch_jobs add column if not exists clone_sample_file_name text;
@@ -869,6 +874,7 @@ type GenerationRow = QueryResultRow & {
   audio_object_url?: string | null;
   content_type?: string | null;
   has_audio?: boolean | string | null;
+  segment_of_job_id?: string | null;
   created_at: Date | string;
 };
 
@@ -1380,6 +1386,7 @@ function mapGeneration(row: GenerationRow): GenerationRecord {
     audioObjectUrl: row.audio_object_url ?? null,
     contentType: row.content_type ?? null,
     hasAudio: row.has_audio === true || row.has_audio === "true" || Boolean(row.audio_base64 || row.audio_object_key),
+    segmentOfJobId: row.segment_of_job_id ?? null,
     createdAt: iso(row.created_at),
   };
 }
@@ -2114,20 +2121,30 @@ export async function revokeApiKey(userId: string, keyId: string): Promise<boole
 }
 
 export async function createGenerationRecord(
-  input: Omit<GenerationRecord, "id" | "createdAt"> & { createdAt?: string },
+  input: Omit<GenerationRecord, "id" | "createdAt"> & { createdAt?: string; id?: string },
 ): Promise<GenerationRecord> {
   const rows = await queryRows<GenerationRow>(
     `
     insert into generations (
       id, user_id, api_key_id, mode, source, status, model, voice, input_chars,
       input_preview, output_seconds, credits_requested, credits_charged,
-      latency_ms, error_message, audio_base64, audio_object_key, audio_object_url, content_type, created_at
+      latency_ms, error_message, audio_base64, audio_object_key, audio_object_url, content_type, segment_of_job_id, created_at
     )
-    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+    on conflict (id) do update set
+      status = excluded.status,
+      output_seconds = excluded.output_seconds,
+      credits_charged = excluded.credits_charged,
+      latency_ms = excluded.latency_ms,
+      error_message = excluded.error_message,
+      audio_base64 = excluded.audio_base64,
+      audio_object_key = excluded.audio_object_key,
+      audio_object_url = excluded.audio_object_url,
+      content_type = excluded.content_type
     returning *
     `,
     [
-      randomUUID(),
+      input.id ?? randomUUID(),
       input.userId,
       input.apiKeyId,
       input.mode,
@@ -2146,6 +2163,7 @@ export async function createGenerationRecord(
       input.audioObjectKey ?? null,
       input.audioObjectUrl ?? null,
       input.contentType ?? null,
+      input.segmentOfJobId ?? null,
       input.createdAt ?? new Date().toISOString(),
     ],
   );
@@ -2215,7 +2233,7 @@ export async function listUserGenerations(
   const search = options?.search?.trim() ?? "";
   const offset = Math.max(0, options?.offset ?? 0);
   const values: unknown[] = [userId];
-  const where = ["user_id = $1"];
+  const where = ["user_id = $1", "segment_of_job_id is null"];
 
   if (source !== "all") {
     values.push(source);
@@ -2243,7 +2261,7 @@ export async function listUserGenerations(
     select id, user_id, api_key_id, mode, source, status, model, voice,
            input_chars, input_preview, output_seconds, credits_requested,
            credits_charged, latency_ms, error_message, audio_base64,
-           audio_object_key, audio_object_url, content_type,
+           audio_object_key, audio_object_url, content_type, segment_of_job_id,
            (audio_base64 is not null or audio_object_key is not null) as has_audio, created_at
     from generations
     where ${where.join(" and ")}
@@ -2283,7 +2301,7 @@ export async function countUserGenerations(
   const mode = options?.mode ?? "all";
   const search = options?.search?.trim() ?? "";
   const values: unknown[] = [userId];
-  const where = ["user_id = $1"];
+  const where = ["user_id = $1", "segment_of_job_id is null"];
 
   if (source !== "all") {
     values.push(source);
@@ -2323,7 +2341,7 @@ export async function getGenerationStats(
   thisMonthGenerations: number;
 }> {
   const values: unknown[] = [userId];
-  const where = ["user_id = $1", "status = 'success'"];
+  const where = ["user_id = $1", "status = 'success'", "segment_of_job_id is null"];
   if (mode !== "all") {
     values.push(mode);
     where.push(`mode = $${values.length}`);

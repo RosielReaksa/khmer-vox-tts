@@ -239,7 +239,7 @@ export async function revokeApiKey(userId: string, keyId: string): Promise<boole
 }
 
 export async function createGenerationRecord(
-  input: Omit<GenerationRecord, "id" | "createdAt"> & { createdAt?: string },
+  input: Omit<GenerationRecord, "id" | "createdAt"> & { createdAt?: string; id?: string },
 ): Promise<GenerationRecord> {
   return (await activeStore()).createGenerationRecord(input);
 }

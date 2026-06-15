@@ -112,6 +112,7 @@ export type GenerationRecord = {
   audioObjectUrl?: string | null;
   contentType?: string | null;
   hasAudio?: boolean;
+  segmentOfJobId?: string | null;
   createdAt: string;
 };
 

@@ -3,6 +3,7 @@ import "server-only";
 import {
   BatchJobServiceError,
   createQueuedBatchJob,
+  dashboardMergeMetadataJson,
   kickBatchWorker,
   MAX_DASHBOARD_BATCH_ITEMS,
   type BatchLineInput,
@@ -74,6 +75,9 @@ export async function createQueuedDashboardGeneration(params: {
     model: params.model,
     cloneSample: params.cloneSample,
     cloneConsentAccepted: params.cloneConsentAccepted,
+    // Tag as a dashboard auto-chunked generation so the worker hides the
+    // per-chunk segment records and saves one merged full-audio history entry.
+    metadataJson: dashboardMergeMetadataJson(),
   });
 
   kickBatchWorker(job.id);

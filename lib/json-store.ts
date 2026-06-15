@@ -831,11 +831,27 @@ export async function revokeApiKey(userId: string, keyId: string): Promise<boole
 }
 
 export async function createGenerationRecord(
-  input: Omit<GenerationRecord, "id" | "createdAt"> & { createdAt?: string },
+  input: Omit<GenerationRecord, "id" | "createdAt"> & { createdAt?: string; id?: string },
 ): Promise<GenerationRecord> {
   return updateStore((store) => {
+    if (input.id) {
+      const existing = store.generations.find((item) => item.id === input.id);
+      if (existing) {
+        Object.assign(existing, {
+          ...input,
+          id: existing.id,
+          createdAt: existing.createdAt,
+          audioBase64: input.audioBase64 ?? null,
+          audioObjectKey: input.audioObjectKey ?? null,
+          audioObjectUrl: input.audioObjectUrl ?? null,
+          contentType: input.contentType ?? null,
+          hasAudio: Boolean(input.audioBase64 || input.audioObjectKey),
+        });
+        return existing;
+      }
+    }
     const record: GenerationRecord = {
-      id: randomUUID(),
+      id: input.id ?? randomUUID(),
       createdAt: input.createdAt ?? new Date().toISOString(),
       ...input,
       audioBase64: input.audioBase64 ?? null,

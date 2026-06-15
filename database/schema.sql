@@ -80,6 +80,9 @@ create index if not exists generations_admin_status_created_idx
 create index if not exists generations_api_key_created_idx on generations(api_key_id, created_at desc);
 alter table generations add column if not exists audio_base64 text;
 alter table generations add column if not exists content_type text;
+alter table generations add column if not exists segment_of_job_id text;
+create index if not exists generations_segment_of_job_idx
+  on generations(segment_of_job_id) where segment_of_job_id is not null;
 
 do $$
 begin

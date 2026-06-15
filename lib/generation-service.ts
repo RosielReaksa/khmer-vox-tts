@@ -109,6 +109,7 @@ export async function runGenerationForUser(params: {
   model?: string;
   cloneSample?: CloneSample;
   cloneCreditsPerSecond?: number;
+  segmentOfJobId?: string | null;
 }): Promise<{
   generationId: string;
   audioBase64: string;
@@ -218,6 +219,7 @@ export async function runGenerationForUser(params: {
       creditsCharged: 0,
       latencyMs: 0,
       errorMessage: "Insufficient tokens",
+      segmentOfJobId: params.segmentOfJobId ?? null,
     });
     await invalidateDashboardCountCache(params.userId, ["api", "billing", "history"]);
     throw new GenerationServiceError(
@@ -250,6 +252,7 @@ export async function runGenerationForUser(params: {
       errorMessage: null,
       audioBase64: null,
       contentType: null,
+      segmentOfJobId: params.segmentOfJobId ?? null,
     });
     generationId = processingGeneration.id;
 
@@ -417,6 +420,7 @@ export async function runGenerationForUser(params: {
         creditsCharged: 0,
         latencyMs,
         errorMessage: message,
+        segmentOfJobId: params.segmentOfJobId ?? null,
       });
     }
 
