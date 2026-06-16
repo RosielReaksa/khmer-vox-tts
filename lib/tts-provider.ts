@@ -860,6 +860,7 @@ function getSteadyTonalStats(
   windowRmsValues: number[],
   windowZeroCrossingRates: number[],
   windowSeconds: number,
+  tonalMinDbOverride?: number,
 ): { ratio: number; longestSeconds: number } {
   if (windowRmsValues.length === 0 || windowRmsValues.length !== windowZeroCrossingRates.length) {
     return { ratio: 0, longestSeconds: 0 };
@@ -871,7 +872,16 @@ function getSteadyTonalStats(
     return { ratio: 0, longestSeconds: 0 };
   }
 
-  const minRms = dbToAmplitude(readNumericEnv("TTS_AUDIO_TONAL_MIN_DB", -22, -40, -8));
+  // The tonal RMS floor is the only gain-dependent gate in this detector
+  // (envelope CV, average/peak ZCR are all ratios/rates, independent of level).
+  // Callers analyzing raw upstream audio that will later be boosted by the
+  // delivery loudnorm pass an override floor so a buzz which only becomes
+  // audible AFTER amplification is still flagged at the chunk level.
+  const minRms = dbToAmplitude(
+    typeof tonalMinDbOverride === "number"
+      ? tonalMinDbOverride
+      : readNumericEnv("TTS_AUDIO_TONAL_MIN_DB", -22, -40, -8),
+  );
   const maxEnvelopeCv = readNumericEnv("TTS_AUDIO_TONAL_MAX_ENVELOPE_CV", 0.18, 0.03, 1);
   const minAverageZcr = readNumericEnv("TTS_AUDIO_TONAL_MIN_AVG_ZCR", 0.07, 0.01, 0.4);
   const minPeakZcr = readNumericEnv("TTS_AUDIO_TONAL_MIN_PEAK_ZCR", 0.10, 0.02, 0.6);
@@ -917,7 +927,7 @@ function getSteadyTonalStats(
   };
 }
 
-function getWavPcm16Stats(bytes: Uint8Array): WavPcm16Stats | null {
+function getWavPcm16Stats(bytes: Uint8Array, tonalMinDbOverride?: number): WavPcm16Stats | null {
   if (bytes.byteLength < 44 || !looksLikeWav(bytes)) return null;
 
   let info: Pcm16WavInfo;
@@ -1026,6 +1036,7 @@ function getWavPcm16Stats(bytes: Uint8Array): WavPcm16Stats | null {
     windowRmsValues,
     windowZeroCrossingRates,
     lowWindowSeconds,
+    tonalMinDbOverride,
   );
 
   return {
@@ -1318,14 +1329,32 @@ async function cleanGeneratedAudioToWav(
   };
 }
 
+// Expected loudness boost (dB) applied to raw upstream chunks by the delivery
+// loudnorm pass. When set, the per-chunk tonal gate lowers its RMS floor by
+// this amount so a buzz that is quiet in the raw chunk (below TTS_AUDIO_TONAL_
+// MIN_DB) but becomes audible AFTER amplification is caught at the chunk level,
+// where the cheap per-chunk retry + temperature escalation can regenerate just
+// that chunk. Default 0 = disabled (gate behaves exactly as before).
+function readChunkTonalDeliveryBoostDb(): number {
+  return readNumericEnv("TTS_AUDIO_TONAL_DELIVERY_BOOST_DB", 0, 0, 24);
+}
+
+function chunkTonalMinDbOverride(): number | undefined {
+  const boostDb = readChunkTonalDeliveryBoostDb();
+  if (boostDb <= 0) return undefined;
+  const baseMinDb = readNumericEnv("TTS_AUDIO_TONAL_MIN_DB", -22, -40, -8);
+  return baseMinDb - boostDb;
+}
+
 async function analyzeRawGeneratedAudioSilence(
   bytes: Uint8Array,
   contentType: string,
 ): Promise<{ issue: string | null; durationSeconds: number | null }> {
+  const tonalMinDbOverride = chunkTonalMinDbOverride();
   let stats: WavPcm16Stats | null = null;
 
   if (contentType.toLowerCase().includes("wav") || looksLikeWav(bytes)) {
-    stats = getWavPcm16Stats(bytes);
+    stats = getWavPcm16Stats(bytes, tonalMinDbOverride);
   }
 
   if (!stats) {
@@ -1362,7 +1391,7 @@ async function analyzeRawGeneratedAudioSilence(
       1,
       sampleRate,
     );
-    stats = getWavPcm16Stats(wavBytes);
+    stats = getWavPcm16Stats(wavBytes, tonalMinDbOverride);
   }
 
   if (!stats) {

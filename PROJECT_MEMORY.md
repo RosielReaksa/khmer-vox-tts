@@ -527,6 +527,43 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## Clone path tuned toward preset path + dormant buzz-aware chunk gate
+
+Update on 2026-06-17:
+
+- User noted standard/preset-voice generations sound cleaner than page clone
+  uploads, and correctly observed both paths use a reference sample. Confirmed
+  in code (lib/tts-provider.ts ~2058-2097): the preset and clone paths differ in
+  three ways:
+  1. Reference: preset uses a curated clean clip; clone uses the user upload
+     (the test ref duration_probe_15s_d.wav is measurably noisy).
+  2. Temperature: preset TTS_PRESET_TEMPERATURE=0.45 vs clone
+     TTS_CLONE_TEMPERATURE=0.55 (higher = more variation = more buzz-prone).
+  3. Voice hint: preset keeps payload.voice; clone deletes it.
+  Measured the user's standard-voice file: better (shorter, scattered buzz) but
+  still not perfect (2.25s stuck-tonal, still FAILs standalone gate).
+- ACTION (user asked to "do everything like standard voice"): the only safely
+  env-tunable lever of the three is temperature (reference is the user's upload;
+  forcing the voice hint on clones is riskier). Set `TTS_CLONE_TEMPERATURE=0.45`
+  on worker + web to match the preset path. Verified live via printenv (=0.45,
+  timesteps=20, final-retries=2), pods Running 1/1, /api/health=200.
+  - Tradeoff: lower temperature can reduce voice likeness/expressiveness on
+    clones (0.55 was likely chosen for better source match). Revert:
+    `kubectl set env deployment/... TTS_CLONE_TEMPERATURE-`.
+  - Honest note: temperature alone will not fully remove buzz; a cleaner
+    reference upload remains the highest-impact lever (the preset path proves
+    a clean reference is most of the difference).
+- CODE CHANGE committed but DORMANT (off by default): buzz-aware per-chunk gate.
+  `getSteadyTonalStats`/`getWavPcm16Stats` now accept an optional tonal-floor
+  override; `analyzeRawGeneratedAudioSilence` lowers the per-chunk tonal RMS
+  floor by `TTS_AUDIO_TONAL_DELIVERY_BOOST_DB` (default 0 = disabled) so a buzz
+  that is quiet in the raw chunk but becomes audible after the ~13 dB delivery
+  loudnorm boost is caught at the chunk level (cheap targeted retry) instead of
+  only by the expensive whole-synthesis delivery retry. Built + typecheck +
+  lint + build all pass. NOT yet deployed (prod image still prod-20260617-2) and
+  NOT yet end-to-end tested; enable later with
+  TTS_AUDIO_TONAL_DELIVERY_BOOST_DB=13 after a real-pipeline verification.
+
 ## TTS_FINAL_QUALITY_RETRIES=2 + stuck-tonal gate diagnosis
 
 Update on 2026-06-17:
