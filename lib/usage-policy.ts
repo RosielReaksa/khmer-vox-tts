@@ -22,12 +22,18 @@ export const DEFAULT_USAGE_POLICIES: Record<UsagePolicyName, UsagePolicy> = {
   dashboardTts: {
     maxRequests: 20,
     windowMs: 60_000,
-    maxConcurrent: 2,
+    // Chunks of one dashboard generation fan out to the Modal pool in parallel.
+    // The worker is network-bound while awaiting Modal (only a light per-chunk
+    // ffmpeg pass runs locally), and the Modal account autoscales to many
+    // containers, so 4-wide roughly halves wall time for a ~5-chunk job vs 2.
+    // Tune live with TTS_DASHBOARD_CONCURRENT_LIMIT (no redeploy needed).
+    maxConcurrent: 4,
   },
   dashboardClone: {
     maxRequests: 8,
     windowMs: 60_000,
-    maxConcurrent: 1,
+    // Clone is heavier (reference-audio encode per call); keep it modest.
+    maxConcurrent: 2,
   },
   apiTts: {
     maxRequests: 60,

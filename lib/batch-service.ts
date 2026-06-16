@@ -506,7 +506,7 @@ async function saveMergedDashboardHistory(
     }
     if (buffers.length === 0) return;
 
-    const merged = await mergePublicMp3SegmentsForDelivery(buffers, job.outputSeconds);
+    const merged = await mergePublicMp3SegmentsForDelivery(buffers, job.outputSeconds, job.mode);
     const mergedBytes = merged.bytes;
     const outputSeconds = Math.max(1, Math.round(merged.outputSeconds ?? totalOutputSeconds ?? job.outputSeconds));
     const inputChars = Array.from(combinedText).length;
@@ -603,8 +603,10 @@ function batchItemConcurrency(): number {
 
   // The file-backed local store serializes mutations through one JSON file.
   // Concurrent item finalization can otherwise race and lose a generation
-  // record. Postgres production keeps parallel processing.
-  return getStoreMode() === "json" ? 1 : 3;
+  // record. Postgres production keeps parallel processing. Default 4 so the
+  // per-mode usage policy (dashboardTts.maxConcurrent) is the binding limit;
+  // override with BATCH_ITEM_CONCURRENCY to raise/lower the worker-wide cap.
+  return getStoreMode() === "json" ? 1 : 4;
 }
 
 function nextRetryIso(attemptCount: number): string {

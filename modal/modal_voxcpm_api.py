@@ -29,7 +29,11 @@ MAX_NUM_SEQS = int(os.environ.get("VOXCPM_MAX_NUM_SEQS", "16"))
 MAX_NUM_BATCHED_TOKENS = int(os.environ.get("VOXCPM_MAX_NUM_BATCHED_TOKENS", "8192"))
 MAX_MODEL_LEN = int(os.environ.get("VOXCPM_MAX_MODEL_LEN", "4096"))
 GPU_MEMORY_UTILIZATION = float(os.environ.get("VOXCPM_GPU_MEMORY_UTILIZATION", "0.90"))
-INFERENCE_TIMESTEPS = int(os.environ.get("VOXCPM_INFERENCE_TIMESTEPS", "10"))
+# Diffusion/acoustic decoding steps per generation. Lower = faster decode with
+# a modest quality tradeoff (higher = smoother but slower). 10 was the upstream
+# default; 8 trims ~20% off the decode stage with negligible audible difference
+# in testing. Tune with VOXCPM_INFERENCE_TIMESTEPS (requires a Modal redeploy).
+INFERENCE_TIMESTEPS = int(os.environ.get("VOXCPM_INFERENCE_TIMESTEPS", "8"))
 
 API_KEY_SECRET_NAME = os.environ.get("VOXCPM_API_KEY_SECRET_NAME", "voxcpm-api-key")
 API_SECRETS = [modal.Secret.from_name(API_KEY_SECRET_NAME)]

@@ -48,7 +48,7 @@ export async function GET(
     if (buffers.length === 0) {
       return NextResponse.json({ error: "No successful audio segments found in this batch job." }, { status: 404 });
     }
-    const cleanedAudio = await mergePublicMp3SegmentsForDelivery(buffers, job.outputSeconds);
+    const cleanedAudio = await mergePublicMp3SegmentsForDelivery(buffers, job.outputSeconds, job.mode);
     const audioBase64 = Buffer.from(cleanedAudio.bytes).toString("base64");
     const remainingTokens = await getUserTokenBalance(session.userId);
 

@@ -1,6 +1,6 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-06-14
+Last updated: 2026-06-15
 
 ## Purpose
 
@@ -2234,6 +2234,185 @@ Update on 2026-06-14:
   acceptable: buzzy generations cost ~1 extra full regen.
 - STILL UNCOMMITTED: 7 fixes live as the staging image but git worktree remains
   at a2bf891. Recommend committing the batch.
+
+## PROD DEPLOY 2026-06-15: prod-20260615-8 (faster generation via INFERENCE_TIMESTEPS 10->8)
+
+Follow-up to the concurrency fix. After confirming parallelism worked (both
+chunks of a test job started at the same instant), measured that the remaining
+slowness is raw Modal GPU decode (~3x realtime). User chose to lower the
+diffusion decode steps.
+
+Changes:
+- `modal/modal_voxcpm_api.py`: `INFERENCE_TIMESTEPS` default 10 -> 8.
+- `lib/modal-deployer.ts`: inject `VOXCPM_INFERENCE_TIMESTEPS=8` into every
+  Modal deploy (same pattern as VOXCPM_SCALEDOWN_WINDOW) so all accounts stay
+  consistent; tunable via env. Added `DEPLOY_INFERENCE_TIMESTEPS` const.
+- `.env.example` already documents related knobs.
+
+Deploy steps (IMPORTANT for future timesteps/scaledown changes):
+1. Build/push app image (carries the new modal_voxcpm_api.py + deployer).
+2. Roll out web+worker.
+3. The GPU reads INFERENCE_TIMESTEPS at container load, so a MODAL REDEPLOY is
+   required for it to take effect. Redeploy every account from inside the web
+   pod (it has the modal CLI + /app/data/.modal.toml + /app/modal):
+   `for P in number1 khmer-ai-research number2 number3 number4 number5 voxtts; do
+      MODAL_PROFILE=$P VOXCPM_INFERENCE_TIMESTEPS=8 modal deploy modal_voxcpm_api.py; done`
+   NOTE: pod image is slim -> use `sh`, NOT `bash` (no bash in container).
+   All 7 accounts redeployed OK (~4s each; upstream model image already built).
+
+Result (warm single chunk, timesteps=8): 318 chars -> 28s audio in 73.7s Modal
+call = ~2.6x realtime. Before (timesteps=10): ~3.0-3.2x realtime. So ~15-20%
+faster decode per second of audio - modest but real (timesteps only speeds the
+diffusion/acoustic stage, not the autoregressive token gen). Cold start (~60s)
+unchanged; right after a redeploy the first call per account pays it.
+
+INFRA NOTE: Local C: drive hit 0 bytes mid-session from accumulated Docker
+build cache. `docker builder prune -a -f` reclaimed 48GB; `docker image prune`
++ removing old tags left only 2 images. Auto-prune build cache after each build
+going forward (user request). Windows Docker WSL2 vdisk does not shrink the
+host automatically, so host free space stayed ~10GB even after internal prune.
+
+Verified `prod-20260615-8` (digest
+sha256:126b136bff5ad3102ce80b47d3914b0a3ef7fcdfcdcce118a6d8a5335644e893):
+typecheck+build clean, pushed, rolled out web+worker zero downtime. Rollback
+target = `prod-20260615-7` (note: rolling back the app image does NOT revert the
+Modal timesteps; to revert speed, redeploy accounts with
+VOXCPM_INFERENCE_TIMESTEPS=10).
+
+## PROD DEPLOY 2026-06-15: prod-20260615-7 (faster multi-chunk generation)
+
+User reported long-text generation was slow (~6-7 min wall time for ~5 min of
+audio). Investigated chunking + concurrency end-to-end.
+
+Root cause (artificial concurrency cap):
+- A long dashboard text splits into ~60s chunks (`splitDashboardTextForJob`).
+- Per-generation parallelism = `min(BATCH_ITEM_CONCURRENCY, dashboardTts
+  .maxConcurrent)`. Defaults were `min(3, 2) = 2`, so a 5-chunk job ran in 3
+  sequential waves (~100s each) even though the Modal account autoscales to
+  many containers. Measured prod jobs: 4-5 chunks took 357-405s wall.
+- Secondary: cold start adds ~60s on the first chunk (a 4s clip took 56-71s)
+  because Modal `scaledown_window=120s`. Left as-is (cost lever, user's call).
+
+Fix (app-side only, no Modal redeploy, fully env-tunable):
+- `lib/usage-policy.ts`: `dashboardTts.maxConcurrent` 2 -> 4;
+  `dashboardClone.maxConcurrent` 1 -> 2.
+- `lib/batch-service.ts`: postgres `batchItemConcurrency` default 3 -> 4 so the
+  per-mode policy is the binding limit.
+- `.env.example`: documented new defaults + `TTS_DASHBOARD_CONCURRENT_LIMIT`
+  and `BATCH_ITEM_CONCURRENCY` knobs to dial back live without a redeploy.
+- Rationale: the worker is network-bound while awaiting Modal (only a light
+  per-chunk ffmpeg pass runs on the 2vCPU/4GB box), so 4-wide is safe and
+  roughly halves wall time for a ~5-chunk job. Clone kept lower (heavier
+  reference-audio encode per call).
+
+Expected: ~5-chunk TTS drops from ~3 waves to ~2 waves (~halved, minus the
+one-time cold start). If Modal limits are hit, set
+`TTS_DASHBOARD_CONCURRENT_LIMIT=2` (web+worker) and rollout.
+
+Verified `prod-20260615-7` (digest
+sha256:14a65eec327a91b79d5c173324276077eb4c6725dcec2f4d0a7e9ca421bdb1f1):
+typecheck + build clean, pushed to GHCR, rolled out web + worker (zero
+downtime), `/api/health` 200 (`store: postgres`). Rollback target =
+`prod-20260615-6`. No concurrency env override set, so code defaults apply.
+
+## PROD DEPLOY 2026-06-15: prod-20260615-6 (generate panel stuck "Needs attention" fix)
+
+Fixed a UI bug on the dashboard generate panel (Generate Speech + Voice Clone).
+Symptom (user screenshot): while a multi-chunk job ran, the Audio Result panel
+showed a red "NEEDS ATTENTION / Generating: Segment 0 of 5 completed..." box
+instead of the animated generating state, and the in-progress generation was
+not yet in History (History only shows the merged record after completion,
+which is expected).
+
+Root cause: in `pollQueuedJob` (`app/app/dashboard/speech-workspace.tsx`), the
+mid-progress snapshot update set only `error` (the progress string) without
+re-asserting `busy: true`. If `busy` had been flipped to `false` by an earlier
+transient poll error, the render fell through to the `error` branch
+("Needs attention") because the progress string was treated as an error.
+Also the catch block gave up (busy:false) on any poll exception, including
+transient network/5xx blips.
+
+Fix: progress updates now always set `busy: true`; transient poll errors
+(network/fetch/5xx "Waiting for background") keep the spinner alive and retry
+instead of surfacing "Needs attention". Fatal errors and explicit
+failed/needs_review still stop with a real message.
+
+Verified `prod-20260615-6` was built (digest
+sha256:5057986eb524f94e498c73d5c9a885c21dd73ae49c16624c0bcd868c1c4e8b90),
+typecheck + build clean, pushed to GHCR, rolled out to web + worker
+(zero downtime, 0 restarts). Rollback target = `prod-20260615-5`.
+
+Note: confirmed the merged-history feature itself works on prod — a completed
+5-chunk dashboard_merge job had its merged record (id = job id, has audio,
+segment_of_job_id null) plus 5 hidden segment rows. The earlier screenshot was
+taken mid-run before completion.
+
+## PROD DEPLOY 2026-06-15: prod-20260615-5 (merged history + refresh persistence)
+
+Deployed to production (`voxtts.online`, `152.42.203.77`, ns `khmer-vox`) as
+immutable tag `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260615-5`
+(digest sha256:c38374225ea65cfd916b3700abc32094dffd7f7cdf1b6ba2609ed87327032d99).
+Rollback target = `prod-20260615-4`.
+
+Changes shipped:
+
+1. **Merged dashboard history** — long multi-chunk TTS/clone generations now
+   save one full merged audio row in History (play + download). Per-chunk rows
+   are tagged with `segment_of_job_id` and hidden from history/list/stats.
+   Runtime migration adds `generations.segment_of_job_id` + index on startup.
+2. **Refresh persistence** — Generate Speech and Voice Cloning panels restore
+   completed audio (or reconnect to an in-flight job) after page reload via
+   `workspace-persistence.ts`.
+
+Staging verification (fixer VPS `178.128.103.120`) passed first on
+`staging-20260615-1613`: 2219-char text split into 2 chunks, merged record
+saved (192s audio), history query returned exactly 1 row.
+
+Deploy steps: re-tagged the verified staging image as prod, `docker push` to
+GHCR, then `kubectl -n khmer-vox set image` on web + worker with zero-downtime
+rollout. Verified: `/api/health` 200 (`store: postgres`), both web pods and
+worker on `prod-20260615-5`, `segment_of_job_id` column + index present in
+prod Postgres.
+
+## Clone Pacing: Pitch-Preserving Output Tempo (2026-06-15, LOCAL-ONLY)
+
+User reported clone voice talks too fast (sentences run together, almost no
+breathing pauses). Objective ffmpeg analysis of a real clone MP3
+(`voxtts-clone-...db.mp3`, 201.8s) confirmed it: clean noise floor (mean -75 dB,
+no hiss), healthy loudness (-16.5 LUFS), but only 5 pauses > 0.6s in 201s with a
+44s continuous run (~30-74s) and no real breath. Noise was NOT a problem; speed
+was. Root cause: VoxCPM2 clones inherit the reference sample's rhythm, and the
+app clone payload (`lib/tts-provider.ts` synthesizeSingleChunk) sends NO
+speed/pacing param (only ref_audio + temperature + cfg_value; `voice` is deleted
+for real clones). The upstream `speed` param is weak (it just prepends a text
+hint like `(speaking slower...)` to input via voice_description; unreliable and
+collides with the deleted-voice channel for clone). So pacing was 100% inherited
+from the reference.
+
+Fix (deterministic, pitch-preserving, env-gated, default OFF):
+- Added `applyOutputTempo(bytes, mode)` + `readOutputTempo(mode)` in
+  `lib/tts-provider.ts`. Uses ffmpeg `atempo=<n>` which changes talking speed
+  WITHOUT changing pitch (voice identity preserved). <1.0 slows, >1.0 speeds up.
+  1.0 (or within 0.005) is a no-op returning original bytes (no re-encode).
+  Fails open (returns input on error) like the other finishing steps.
+- Runs LAST in the finishing chain, after capLongPauses + normalizeOutputLoudness,
+  so the time-based pause/loudness logic stays predictable. Wired into both
+  pipelines: internal `synthesizeMergedAudio` (uses params.mode) and the exported
+  `mergePublicMp3SegmentsForDelivery(buffers, outputSeconds, mode="tts")`.
+- Passed `job.mode` at all 3 merge call sites: `lib/batch-service.ts:509`,
+  `app/api/v2/audio/jobs/[id]/audio/route.ts`, `app/api/batch/jobs/[id]/merged/route.ts`.
+- Env knobs (`.env.example`): `TTS_OUTPUT_TEMPO_ENABLED` (default true),
+  `TTS_OUTPUT_TEMPO` (global, default 1.0), `TTS_OUTPUT_CLONE_TEMPO` (clone-only
+  override, falls back to global when unset). Clone reads clone-override first;
+  standard TTS reads global only. Defaults 1.0 = behavior unchanged until set.
+- Verified: lint clean (no new errors), `npx tsc --noEmit` clean, `npm run build`
+  exit 0. Functional ffmpeg proof on the real clone file: atempo=0.92 -> 201.8s
+  becomes 219.3s (exactly 1/0.92, pitch unchanged), pauses widened ~0.64s->0.69s
+  for more breathing room. Temp test file removed.
+- LOCAL-ONLY, not deployed. To slow clones in prod without a rebuild, set
+  `TTS_OUTPUT_CLONE_TEMPO=0.90`..`0.93` on web+worker via `kubectl set env` +
+  rollout (suggest starting at 0.92). Standard voices stay untouched (leave
+  TTS_OUTPUT_TEMPO=1.0).
 
 ## Next Priorities
 

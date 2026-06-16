@@ -18,6 +18,12 @@ function getModalSrcDir(): string {
 // without any per-account manual step. Override with the env var if needed.
 const DEPLOY_SCALEDOWN_WINDOW = (process.env.VOXCPM_SCALEDOWN_WINDOW || "120").trim();
 
+// Diffusion decode steps baked into every deploy. Lower = faster generation
+// with a modest quality tradeoff. Injected here (like the scaledown window) so
+// every account connected through the admin page stays consistent. Default 8
+// (down from the upstream 10). Override with VOXCPM_INFERENCE_TIMESTEPS.
+const DEPLOY_INFERENCE_TIMESTEPS = (process.env.VOXCPM_INFERENCE_TIMESTEPS || "8").trim();
+
 // Builds the environment passed to every spawned `modal` CLI call so deploy
 // settings (like the scaledown window) are applied consistently.
 function buildModalEnv(profile: string): NodeJS.ProcessEnv {
@@ -30,6 +36,8 @@ function buildModalEnv(profile: string): NodeJS.ProcessEnv {
     // Force the cost-saving warm window into the deploy regardless of the
     // value baked into the Python default, so all accounts stay consistent.
     VOXCPM_SCALEDOWN_WINDOW: DEPLOY_SCALEDOWN_WINDOW,
+    // Force the diffusion decode steps into every deploy for consistent speed.
+    VOXCPM_INFERENCE_TIMESTEPS: DEPLOY_INFERENCE_TIMESTEPS,
   };
 }
 

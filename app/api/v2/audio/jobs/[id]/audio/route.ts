@@ -73,7 +73,7 @@ export async function GET(request: Request, context: RouteContext) {
       return jsonWithCors({ error: "No generated audio is available for this job." }, { status: 404 });
     }
 
-    const cleaned = await mergePublicMp3SegmentsForDelivery(buffers, result.job.outputSeconds);
+    const cleaned = await mergePublicMp3SegmentsForDelivery(buffers, result.job.outputSeconds, result.job.mode);
     const body = new ArrayBuffer(cleaned.bytes.byteLength);
     new Uint8Array(body).set(cleaned.bytes);
     return new NextResponse(body, {

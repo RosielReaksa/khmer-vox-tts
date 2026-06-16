@@ -703,6 +703,66 @@ async function normalizeOutputLoudness(bytes: Uint8Array): Promise<Uint8Array> {
   }
 }
 
+// Optional pitch-preserving talking-speed adjustment for the delivered audio.
+// VoxCPM2 clones inherit the reference sample's rhythm, which can be too fast
+// (sentences run together with almost no breathing pauses). atempo changes the
+// tempo WITHOUT changing pitch, so the cloned voice identity is preserved.
+// Values below 1.0 slow speech down; above 1.0 speed it up. 1.0 is a no-op and
+// returns the original bytes (no re-encode). Clone output reads
+// TTS_OUTPUT_CLONE_TEMPO first, then falls back to the global TTS_OUTPUT_TEMPO;
+// standard TTS reads TTS_OUTPUT_TEMPO only. Defaults are 1.0 (off) so existing
+// behavior is unchanged until a value is configured. Runs last, after pause
+// capping and loudness normalization, so those time-based steps stay
+// predictable. Disabled entirely with TTS_OUTPUT_TEMPO_ENABLED=false.
+function readOutputTempo(mode: GenerationMode): number {
+  const global = readNumericEnv("TTS_OUTPUT_TEMPO", 1.0, 0.5, 2.0);
+  if (mode === "clone") {
+    // Clone-specific override wins when set; otherwise inherit the global tempo.
+    const cloneRaw = process.env.TTS_OUTPUT_CLONE_TEMPO?.trim();
+    if (cloneRaw) {
+      return readNumericEnv("TTS_OUTPUT_CLONE_TEMPO", global, 0.5, 2.0);
+    }
+  }
+  return global;
+}
+
+async function applyOutputTempo(bytes: Uint8Array, mode: GenerationMode): Promise<Uint8Array> {
+  if (!readBooleanEnv("TTS_OUTPUT_TEMPO_ENABLED", true)) {
+    return bytes;
+  }
+  const tempo = readOutputTempo(mode);
+  // Treat near-1.0 as a no-op to avoid a needless re-encode and tiny artifacts.
+  if (!Number.isFinite(tempo) || Math.abs(tempo - 1.0) < 0.005) {
+    return bytes;
+  }
+
+  try {
+    const output = await runFfmpeg(
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-af",
+        `atempo=${tempo.toFixed(3)}`,
+        "-codec:a",
+        "libmp3lame",
+        "-b:a",
+        readPublicMp3Bitrate(),
+        "-f",
+        "mp3",
+        "pipe:1",
+      ],
+      bytes,
+    );
+    return output.byteLength > 0 ? output : bytes;
+  } catch {
+    // Tempo is a finishing touch; never fail delivery over it.
+    return bytes;
+  }
+}
+
 async function encodeWavToMp3(bytes: Uint8Array): Promise<{ bytes: Uint8Array; durationSeconds: number | null }> {
   const wav = readPcm16Wav(bytes);
 
@@ -1329,6 +1389,7 @@ export async function cleanPublicMp3ForDelivery(
 export async function mergePublicMp3SegmentsForDelivery(
   buffers: Uint8Array[],
   outputSeconds: number | null,
+  mode: GenerationMode = "tts",
 ): Promise<{ bytes: Uint8Array; contentType: string; outputSeconds: number | null }> {
   if (buffers.length === 0) {
     throw new TtsProviderError("No audio segments were available to merge.", 502);
@@ -1354,8 +1415,9 @@ export async function mergePublicMp3SegmentsForDelivery(
   const merged = await concatMp3Buffers(publicSegments);
   const depaused = await capLongPauses(merged);
   const normalized = await normalizeOutputLoudness(depaused);
+  const paced = await applyOutputTempo(normalized, mode);
   return {
-    bytes: normalized,
+    bytes: paced,
     contentType: PUBLIC_AUDIO_CONTENT_TYPE,
     outputSeconds: outputSeconds ?? (hasSummedSeconds ? summedSeconds : null),
   };
@@ -2248,6 +2310,7 @@ async function synthesizeMergedAudio(params: {
   const mergedBytes = await concatMp3Buffers(publicSegments);
   const depausedBytes = await capLongPauses(mergedBytes);
   const normalizedBytes = await normalizeOutputLoudness(depausedBytes);
+  const pacedBytes = await applyOutputTempo(normalizedBytes, params.mode);
 
   const upstreamRequestId = chunkResults
     .map((r) => r.upstreamRequestId)
@@ -2255,7 +2318,7 @@ async function synthesizeMergedAudio(params: {
     .join(",");
 
   return {
-    audioBytes: normalizedBytes,
+    audioBytes: pacedBytes,
     contentType: PUBLIC_AUDIO_CONTENT_TYPE,
     model,
     upstreamRequestId,

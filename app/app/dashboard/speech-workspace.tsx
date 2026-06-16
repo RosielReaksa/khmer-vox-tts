@@ -317,16 +317,38 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
             throw new Error(job.errorMessage || "Background generation failed.");
           } else {
             const progressMsg = `Generating: Segment ${job.completedItems} of ${job.totalItems} completed...`;
+            // Always keep busy:true while processing so the animated equalizer
+            // keeps showing instead of "Needs attention" on transient hiccups.
             commitWorkspaceSnapshot(mode, {
+              busy: true,
               error: progressMsg,
             });
           }
         } catch (pollErr: unknown) {
           const err = pollErr as Error;
+          const msg = err.message || "";
+          // Transient network/server errors during polling should NOT stop the
+          // spinner — the job may still be running. Only stop on fatal errors
+          // (job explicitly failed/needs_review already throws above, and
+          // non-retryable HTTP status codes throw above too).
+          const isTransient =
+            msg.includes("fetch") ||
+            msg.includes("network") ||
+            msg.includes("Failed to fetch") ||
+            msg.includes("NetworkError") ||
+            msg.includes("Waiting for background");
+          if (isTransient && attempts < maxAttempts - 1) {
+            commitWorkspaceSnapshot(mode, {
+              busy: true,
+              error: `Generating: Segment ${0} of ${0} completed...`,
+            });
+            attempts++;
+            continue;
+          }
           clearActiveJob(mode);
           commitWorkspaceSnapshot(mode, {
             busy: false,
-            error: err.message || "Failed during background generation polling.",
+            error: msg || "Failed during background generation polling.",
           });
           return;
         }
