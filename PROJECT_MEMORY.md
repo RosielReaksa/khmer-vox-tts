@@ -527,6 +527,26 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## prod-20260617-1 Deploy (parallel chunks + VoxCPM knobs)
+
+Update on 2026-06-17:
+
+- Deployed commit `81881f0` to production as `prod-20260617-1` (previous live
+  tag was `prod-20260616-4`). Live and verified on `https://voxtts.online`.
+- Followed the tag-based GHCR flow: Docker Desktop had to be started first (it
+  was left stopped after the C: disk cleanup), built + tagged
+  `prod-20260617-1`, `docker push` to GHCR, then `kubectl set image` on both
+  `khmer-vox-web` and `khmer-vox-worker`. No `ImagePullBackOff` this time
+  because the tag was pushed before `set image`.
+- Rollout was clean with zero downtime; afterwards all pods Running 1/1 with 0
+  restarts (2x web, 1x worker, 1x postgres) and `/api/health` + `/app/signin`
+  both returned 200.
+- Behavior change now live: parallel chunk generation is ACTIVE (auto-sized to
+  the endpoint pool). The other three knobs (`TTS_INFERENCE_TIMESTEPS`,
+  `TTS_UPSTREAM_NORMALIZE`, `TTS_RETRY_CFG_STEP`) remain off by default. Instant
+  revert path if GPU load or audio quality regresses: set
+  `TTS_CHUNK_CONCURRENCY=1` and redeploy.
+
 ## VoxCPM Pipeline Performance + Quality Tuning (env-gated)
 
 Update on 2026-06-17:
