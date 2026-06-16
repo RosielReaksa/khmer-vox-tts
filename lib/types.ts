@@ -116,6 +116,27 @@ export type GenerationRecord = {
   createdAt: string;
 };
 
+// System-wide API error log entry. Captures errors that may never create a
+// generation row: auth failures (401/402/403), rate-limit/quota rejections
+// (429), validation errors (400), and unexpected server errors (500). Written
+// fire-and-forget so logging never affects the request outcome.
+export type ApiErrorRecord = {
+  id: string;
+  userId: string | null;
+  apiKeyId: string | null;
+  source: GenerationSource;
+  endpoint: string;
+  method: string;
+  statusCode: number;
+  errorCode: string | null;
+  errorMessage: string;
+  inputPreview: string | null;
+  requestParams: string | null; // JSON string of sanitized request params
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: string;
+};
+
 export type BatchJobRecord = {
   id: string;
   userId: string;
@@ -432,6 +453,7 @@ export type DataStore = {
   webhookTestEvents: WebhookTestEventRecord[];
   workerHeartbeats: WorkerHeartbeatRecord[];
   userVoices: UserVoiceRecord[];
+  apiErrors: ApiErrorRecord[];
   systemSettings?: SystemSettingRecord[];
 };
 

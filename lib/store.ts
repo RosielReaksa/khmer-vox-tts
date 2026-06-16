@@ -13,6 +13,7 @@ import type {
   BusinessApiRequestStatus,
   GenerationMode,
   GenerationRecord,
+  ApiErrorRecord,
   GenerationSource,
   GenerationStatus,
   PaymentOrderRecord,
@@ -63,6 +64,20 @@ export type TelegramPaymentEventWithOrder = TelegramPaymentEventRecord & {
 
 export type GenerationWithUser = GenerationRecord & {
   userEmail: string;
+};
+
+export type AdminGenerationsPage = {
+  rows: GenerationWithUser[];
+  total: number;
+};
+
+export type ApiErrorWithUser = ApiErrorRecord & {
+  userEmail: string | null;
+};
+
+export type AdminApiErrorsPage = {
+  rows: ApiErrorWithUser[];
+  total: number;
 };
 
 export type BatchJobWithUser = BatchJobRecord & {
@@ -762,6 +777,37 @@ export async function listGenerationsForAdmin(options?: {
   q?: string;
 }): Promise<GenerationWithUser[]> {
   return (await activeStore()).listGenerationsForAdmin(options);
+}
+
+export async function listGenerationsPageForAdmin(options?: {
+  limit?: number;
+  offset?: number;
+  mode?: GenerationMode | "all";
+  source?: GenerationSource | "all";
+  status?: GenerationStatus | "all";
+  q?: string;
+  fromDate?: string | null;
+  toDate?: string | null;
+}): Promise<AdminGenerationsPage> {
+  return (await activeStore()).listGenerationsPageForAdmin(options);
+}
+
+export async function createApiError(
+  input: Omit<ApiErrorRecord, "id" | "createdAt"> & { id?: string; createdAt?: string },
+): Promise<ApiErrorRecord> {
+  return (await activeStore()).createApiError(input);
+}
+
+export async function listApiErrorsPageForAdmin(options?: {
+  limit?: number;
+  offset?: number;
+  source?: GenerationSource | "all";
+  statusGroup?: "all" | "4xx" | "5xx";
+  q?: string;
+  fromDate?: string | null;
+  toDate?: string | null;
+}): Promise<AdminApiErrorsPage> {
+  return (await activeStore()).listApiErrorsPageForAdmin(options);
 }
 
 export async function listBatchJobsForAdmin(options?: {

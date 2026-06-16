@@ -17,6 +17,7 @@ import type {
   DataStore,
   GenerationMode,
   GenerationRecord,
+  ApiErrorRecord,
   GenerationSource,
   GenerationStatus,
   PaymentOrderRecord,
@@ -67,6 +68,7 @@ const EMPTY_STORE: DataStore = {
   webhookTestEvents: [],
   workerHeartbeats: [],
   userVoices: [],
+  apiErrors: [],
   systemSettings: [],
 };
 
@@ -419,6 +421,7 @@ function normalizeStore(parsed: Partial<DataStore>): DataStore {
       lastError: heartbeat.lastError ?? null,
     })),
     userVoices: parsed.userVoices ?? [],
+    apiErrors: parsed.apiErrors ?? [],
     systemSettings: parsed.systemSettings ?? [],
   };
 }
@@ -2754,6 +2757,139 @@ export async function listGenerationsForAdmin(options?: {
     )
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
     .slice(0, limit);
+}
+
+export type AdminGenerationsPage = {
+  rows: GenerationWithUser[];
+  total: number;
+};
+
+// Paginated, date-filterable generation feed for the admin Activity Log.
+export async function listGenerationsPageForAdmin(options?: {
+  limit?: number;
+  offset?: number;
+  mode?: GenerationMode | "all";
+  source?: GenerationSource | "all";
+  status?: GenerationStatus | "all";
+  q?: string;
+  fromDate?: string | null;
+  toDate?: string | null;
+}): Promise<AdminGenerationsPage> {
+  const limit = Math.max(1, Math.min(options?.limit ?? 100, 500));
+  const offset = Math.max(0, options?.offset ?? 0);
+  const mode = options?.mode ?? "all";
+  const source = options?.source ?? "all";
+  const status = options?.status ?? "all";
+  const q = options?.q?.trim().toLowerCase() ?? "";
+  const fromMs = options?.fromDate ? Date.parse(options.fromDate) : NaN;
+  const toMs = options?.toDate ? Date.parse(options.toDate) : NaN;
+  const store = await readStore();
+
+  const filtered = store.generations
+    .filter((generation) => (mode === "all" ? true : generation.mode === mode))
+    .filter((generation) => (source === "all" ? true : generation.source === source))
+    .filter((generation) => (status === "all" ? true : generation.status === status))
+    .map((generation) => ({
+      ...generation,
+      userEmail: store.users.find((user) => user.id === generation.userId)?.email ?? "unknown user",
+    }))
+    .filter((generation) =>
+      q
+        ? `${generation.userEmail} ${generation.inputPreview} ${generation.mode} ${generation.source} ${generation.status}`
+            .toLowerCase()
+            .includes(q)
+        : true,
+    )
+    .filter((generation) => {
+      const createdMs = Date.parse(generation.createdAt);
+      if (!Number.isNaN(fromMs) && !(createdMs >= fromMs)) return false;
+      if (!Number.isNaN(toMs) && !(createdMs < toMs)) return false;
+      return true;
+    })
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+
+  return { rows: filtered.slice(offset, offset + limit), total: filtered.length };
+}
+
+export type ApiErrorWithUser = ApiErrorRecord & {
+  userEmail: string | null;
+};
+
+export type AdminApiErrorsPage = {
+  rows: ApiErrorWithUser[];
+  total: number;
+};
+
+export async function createApiError(
+  input: Omit<ApiErrorRecord, "id" | "createdAt"> & { id?: string; createdAt?: string },
+): Promise<ApiErrorRecord> {
+  return updateStore((store) => {
+    const record: ApiErrorRecord = {
+      id: input.id ?? randomUUID(),
+      userId: input.userId,
+      apiKeyId: input.apiKeyId,
+      source: input.source,
+      endpoint: input.endpoint,
+      method: input.method,
+      statusCode: input.statusCode,
+      errorCode: input.errorCode,
+      errorMessage: input.errorMessage,
+      inputPreview: input.inputPreview,
+      requestParams: input.requestParams,
+      ipAddress: input.ipAddress,
+      userAgent: input.userAgent,
+      createdAt: input.createdAt ?? new Date().toISOString(),
+    };
+    store.apiErrors.push(record);
+    return record;
+  });
+}
+
+export async function listApiErrorsPageForAdmin(options?: {
+  limit?: number;
+  offset?: number;
+  source?: GenerationSource | "all";
+  statusGroup?: "all" | "4xx" | "5xx";
+  q?: string;
+  fromDate?: string | null;
+  toDate?: string | null;
+}): Promise<AdminApiErrorsPage> {
+  const limit = Math.max(1, Math.min(options?.limit ?? 100, 500));
+  const offset = Math.max(0, options?.offset ?? 0);
+  const source = options?.source ?? "all";
+  const statusGroup = options?.statusGroup ?? "all";
+  const q = options?.q?.trim().toLowerCase() ?? "";
+  const fromMs = options?.fromDate ? Date.parse(options.fromDate) : NaN;
+  const toMs = options?.toDate ? Date.parse(options.toDate) : NaN;
+  const store = await readStore();
+
+  const filtered = store.apiErrors
+    .filter((err) => (source === "all" ? true : err.source === source))
+    .filter((err) => {
+      if (statusGroup === "4xx") return err.statusCode >= 400 && err.statusCode < 500;
+      if (statusGroup === "5xx") return err.statusCode >= 500;
+      return true;
+    })
+    .map((err) => ({
+      ...err,
+      userEmail: err.userId ? store.users.find((user) => user.id === err.userId)?.email ?? null : null,
+    }))
+    .filter((err) =>
+      q
+        ? `${err.userEmail ?? ""} ${err.endpoint} ${err.errorMessage} ${err.errorCode ?? ""} ${err.inputPreview ?? ""}`
+            .toLowerCase()
+            .includes(q)
+        : true,
+    )
+    .filter((err) => {
+      const createdMs = Date.parse(err.createdAt);
+      if (!Number.isNaN(fromMs) && !(createdMs >= fromMs)) return false;
+      if (!Number.isNaN(toMs) && !(createdMs < toMs)) return false;
+      return true;
+    })
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+
+  return { rows: filtered.slice(offset, offset + limit), total: filtered.length };
 }
 
 export type BatchJobWithUser = BatchJobRecord & {

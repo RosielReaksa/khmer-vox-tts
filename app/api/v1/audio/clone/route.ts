@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { authenticateApiKeyFromRequest } from "@/lib/api-key-auth";
 import { ApiKeyLimitError, apiKeyUsagePolicy, enforceApiKeyTokenLimit } from "@/lib/api-key-limits";
+import { logApiError } from "@/lib/api-error-log";
 import { corsHeaders, corsOptionsResponse } from "@/lib/cors";
 import { calculateGenerationUsage, GenerationServiceError, runGenerationForUser } from "@/lib/generation-service";
 import { acquireUsageLimit, type UsageLimitResult } from "@/lib/rate-limit";
@@ -160,6 +161,15 @@ export async function POST(request: Request) {
       apiKeyUsagePolicy(auth.apiKey, getUsagePolicy("apiClone")),
     );
     if (!usageLimit.ok) {
+      logApiError({
+        request,
+        statusCode: usageLimit.status,
+        errorMessage: usageLimit.message,
+        errorCode: usageLimit.code,
+        source: "api_key",
+        userId: auth.userId,
+        apiKeyId: auth.apiKeyId,
+      });
       return jsonWithCors(
         { error: usageLimit.message, code: usageLimit.code },
         { status: usageLimit.status, headers: usageLimit.headers },
@@ -197,12 +207,39 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     if (isJsonRequestError(error)) {
+      logApiError({
+        request,
+        statusCode: error.status,
+        errorMessage: error.message,
+        errorCode: "INVALID_JSON",
+        source: "api_key",
+        userId: auth.userId,
+        apiKeyId: auth.apiKeyId,
+      });
       return jsonWithCors(jsonRequestErrorBody(error), { status: error.status, headers: limit?.headers });
     }
     if (error instanceof ApiKeyLimitError) {
+      logApiError({
+        request,
+        statusCode: error.status,
+        errorMessage: error.message,
+        errorCode: error.code,
+        source: "api_key",
+        userId: auth.userId,
+        apiKeyId: auth.apiKeyId,
+      });
       return jsonWithCors({ error: error.message, code: error.code }, { status: error.status, headers: limit?.headers });
     }
     if (error instanceof GenerationServiceError) {
+      logApiError({
+        request,
+        statusCode: error.status,
+        errorMessage: error.message,
+        errorCode: error.code,
+        source: "api_key",
+        userId: auth.userId,
+        apiKeyId: auth.apiKeyId,
+      });
       return jsonWithCors(
         {
           error: error.message,
@@ -212,6 +249,15 @@ export async function POST(request: Request) {
         { status: error.status, headers: { ...corsHeaders(), ...limit?.headers } },
       );
     }
+    logApiError({
+      request,
+      statusCode: 500,
+      errorMessage: error instanceof Error ? error.message : "Clone generation failed.",
+      errorCode: "INTERNAL_ERROR",
+      source: "api_key",
+      userId: auth.userId,
+      apiKeyId: auth.apiKeyId,
+    });
     return jsonWithCors({ error: "Clone generation failed." }, { status: 500, headers: limit?.headers });
   } finally {
     await limit?.release();

@@ -17,6 +17,7 @@ import type {
   BusinessApiRequestStatus,
   GenerationMode,
   GenerationRecord,
+  ApiErrorRecord,
   GenerationSource,
   GenerationStatus,
   PaymentOrderRecord,
@@ -74,6 +75,10 @@ export type TelegramPaymentEventWithOrder = TelegramPaymentEventRecord & {
 
 export type GenerationWithUser = GenerationRecord & {
   userEmail: string;
+};
+
+export type ApiErrorWithUser = ApiErrorRecord & {
+  userEmail: string | null;
 };
 
 export type BatchJobWithUser = BatchJobRecord & {
@@ -173,6 +178,26 @@ create index if not exists generations_user_status_mode_created_idx
 create index if not exists generations_admin_status_created_idx
   on generations(status, created_at desc);
 create index if not exists generations_api_key_created_idx on generations(api_key_id, created_at desc);
+
+create table if not exists api_errors (
+  id text primary key,
+  user_id text references users(id) on delete set null,
+  api_key_id text references api_keys(id) on delete set null,
+  source text not null check (source in ('dashboard', 'api_key')),
+  endpoint text not null,
+  method text not null,
+  status_code integer not null,
+  error_code text,
+  error_message text not null,
+  input_preview text,
+  request_params text,
+  ip_address text,
+  user_agent text,
+  created_at timestamptz not null default now()
+);
+create index if not exists api_errors_created_idx on api_errors(created_at desc);
+create index if not exists api_errors_status_created_idx on api_errors(status_code, created_at desc);
+create index if not exists api_errors_user_created_idx on api_errors(user_id, created_at desc);
 
 create table if not exists batch_jobs (
   id text primary key,
@@ -4812,6 +4837,206 @@ export async function listGenerationsForAdmin(options?: {
     [mode, source, status, q, limit],
   );
   return rows.map(mapGenerationWithUser);
+}
+
+export type AdminGenerationsPage = {
+  rows: GenerationWithUser[];
+  total: number;
+};
+
+// Paginated, date-filterable generation feed for the admin Activity Log. Unlike
+// listGenerationsForAdmin (capped "latest N" feed), this supports deep history
+// via offset paging and returns the total matching count for the pager.
+export async function listGenerationsPageForAdmin(options?: {
+  limit?: number;
+  offset?: number;
+  mode?: GenerationMode | "all";
+  source?: GenerationSource | "all";
+  status?: GenerationStatus | "all";
+  q?: string;
+  fromDate?: string | null; // inclusive ISO/date string (UTC)
+  toDate?: string | null;   // exclusive ISO/date string (UTC)
+}): Promise<AdminGenerationsPage> {
+  const limit = Math.max(1, Math.min(options?.limit ?? 100, 500));
+  const offset = Math.max(0, options?.offset ?? 0);
+  const mode = options?.mode ?? "all";
+  const source = options?.source ?? "all";
+  const status = options?.status ?? "all";
+  const q = options?.q?.trim() ?? "";
+  const fromDate = options?.fromDate?.trim() || null;
+  const toDate = options?.toDate?.trim() || null;
+
+  // Shared WHERE clause + params for both the count and the page query.
+  const where = `
+    where ($1 = 'all' or generations.mode = $1)
+      and ($2 = 'all' or generations.source = $2)
+      and ($3 = 'all' or generations.status = $3)
+      and (
+        $4 = ''
+        or coalesce(users.email, '') ilike '%' || $4 || '%'
+        or generations.input_preview ilike '%' || $4 || '%'
+        or generations.model ilike '%' || $4 || '%'
+        or generations.voice ilike '%' || $4 || '%'
+      )
+      and ($5::timestamptz is null or generations.created_at >= $5::timestamptz)
+      and ($6::timestamptz is null or generations.created_at < $6::timestamptz)
+  `;
+  const filterParams = [mode, source, status, q, fromDate, toDate];
+
+  const countRows = await queryRows<{ total: string }>(
+    `select count(*)::text as total from generations
+     left join users on users.id = generations.user_id
+     ${where}`,
+    filterParams,
+  );
+  const total = Number(countRows[0]?.total ?? "0");
+
+  const rows = await queryRows<GenerationWithUserRow>(
+    `select generations.*, users.email as user_email
+     from generations
+     left join users on users.id = generations.user_id
+     ${where}
+     order by generations.created_at desc
+     limit $7 offset $8`,
+    [...filterParams, limit, offset],
+  );
+  return { rows: rows.map(mapGenerationWithUser), total };
+}
+
+type ApiErrorRow = QueryResultRow & {
+  id: string;
+  user_id: string | null;
+  api_key_id: string | null;
+  source: string;
+  endpoint: string;
+  method: string;
+  status_code: number;
+  error_code: string | null;
+  error_message: string;
+  input_preview: string | null;
+  request_params: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string | Date;
+};
+
+type ApiErrorWithUserRow = ApiErrorRow & { user_email: string | null };
+
+function mapApiError(row: ApiErrorRow): ApiErrorRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    apiKeyId: row.api_key_id,
+    source: row.source as GenerationSource,
+    endpoint: row.endpoint,
+    method: row.method,
+    statusCode: row.status_code,
+    errorCode: row.error_code,
+    errorMessage: row.error_message,
+    inputPreview: row.input_preview,
+    requestParams: row.request_params,
+    ipAddress: row.ip_address,
+    userAgent: row.user_agent,
+    createdAt: iso(row.created_at),
+  };
+}
+
+export async function createApiError(
+  input: Omit<ApiErrorRecord, "id" | "createdAt"> & { id?: string; createdAt?: string },
+): Promise<ApiErrorRecord> {
+  const rows = await queryRows<ApiErrorRow>(
+    `
+    insert into api_errors (
+      id, user_id, api_key_id, source, endpoint, method, status_code,
+      error_code, error_message, input_preview, request_params,
+      ip_address, user_agent, created_at
+    )
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    returning *
+    `,
+    [
+      input.id ?? randomUUID(),
+      input.userId,
+      input.apiKeyId,
+      input.source,
+      input.endpoint,
+      input.method,
+      input.statusCode,
+      input.errorCode,
+      input.errorMessage,
+      input.inputPreview,
+      input.requestParams,
+      input.ipAddress,
+      input.userAgent,
+      input.createdAt ?? new Date().toISOString(),
+    ],
+  );
+  return mapApiError(rows[0]);
+}
+
+export type AdminApiErrorsPage = {
+  rows: ApiErrorWithUser[];
+  total: number;
+};
+
+export async function listApiErrorsPageForAdmin(options?: {
+  limit?: number;
+  offset?: number;
+  source?: GenerationSource | "all";
+  statusGroup?: "all" | "4xx" | "5xx";
+  q?: string;
+  fromDate?: string | null;
+  toDate?: string | null;
+}): Promise<AdminApiErrorsPage> {
+  const limit = Math.max(1, Math.min(options?.limit ?? 100, 500));
+  const offset = Math.max(0, options?.offset ?? 0);
+  const source = options?.source ?? "all";
+  const statusGroup = options?.statusGroup ?? "all";
+  const q = options?.q?.trim() ?? "";
+  const fromDate = options?.fromDate?.trim() || null;
+  const toDate = options?.toDate?.trim() || null;
+
+  const where = `
+    where ($1 = 'all' or api_errors.source = $1)
+      and (
+        $2 = 'all'
+        or ($2 = '4xx' and api_errors.status_code >= 400 and api_errors.status_code < 500)
+        or ($2 = '5xx' and api_errors.status_code >= 500)
+      )
+      and (
+        $3 = ''
+        or coalesce(users.email, '') ilike '%' || $3 || '%'
+        or api_errors.endpoint ilike '%' || $3 || '%'
+        or api_errors.error_message ilike '%' || $3 || '%'
+        or coalesce(api_errors.error_code, '') ilike '%' || $3 || '%'
+        or coalesce(api_errors.input_preview, '') ilike '%' || $3 || '%'
+      )
+      and ($4::timestamptz is null or api_errors.created_at >= $4::timestamptz)
+      and ($5::timestamptz is null or api_errors.created_at < $5::timestamptz)
+  `;
+  const filterParams = [source, statusGroup, q, fromDate, toDate];
+
+  const countRows = await queryRows<{ total: string }>(
+    `select count(*)::text as total from api_errors
+     left join users on users.id = api_errors.user_id
+     ${where}`,
+    filterParams,
+  );
+  const total = Number(countRows[0]?.total ?? "0");
+
+  const rows = await queryRows<ApiErrorWithUserRow>(
+    `select api_errors.*, users.email as user_email
+     from api_errors
+     left join users on users.id = api_errors.user_id
+     ${where}
+     order by api_errors.created_at desc
+     limit $6 offset $7`,
+    [...filterParams, limit, offset],
+  );
+  return {
+    rows: rows.map((row) => ({ ...mapApiError(row), userEmail: row.user_email })),
+    total,
+  };
 }
 
 export async function listBatchJobsForAdmin(options?: {

@@ -114,6 +114,27 @@ begin
 end $$;
 
 
+create table if not exists api_errors (
+  id text primary key,
+  user_id text references users(id) on delete set null,
+  api_key_id text references api_keys(id) on delete set null,
+  source text not null check (source in ('dashboard', 'api_key')),
+  endpoint text not null,
+  method text not null,
+  status_code integer not null,
+  error_code text,
+  error_message text not null,
+  input_preview text,
+  request_params text,
+  ip_address text,
+  user_agent text,
+  created_at timestamptz not null default now()
+);
+create index if not exists api_errors_created_idx on api_errors(created_at desc);
+create index if not exists api_errors_status_created_idx on api_errors(status_code, created_at desc);
+create index if not exists api_errors_user_created_idx on api_errors(user_id, created_at desc);
+
+
 create table if not exists batch_jobs (
   id text primary key,
   user_id text not null references users(id) on delete cascade,
