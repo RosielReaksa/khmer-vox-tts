@@ -468,17 +468,41 @@ npm run lint
 npx tsc --noEmit
 npm run build
 docker build -t ghcr.io/rosielreaksa/khmer-vox-tts:latest .
-docker push ghcr.io/rosielreaksa/khmer-vox-tts:latest
 ```
 
-Use the existing authorized SSH configuration, then:
+IMPORTANT: production runs **date-versioned tags** (e.g. `prod-20260616-4`),
+NOT `:latest`, and both deployments use `imagePullPolicy: Always`. A plain
+`kubectl rollout restart` only re-pulls the SAME tag (a no-op for new code), and
+a `k3s ctr images import` alone is NOT enough because `Always` makes the kubelet
+pull from GHCR regardless of the local containerd store. So the new tag MUST be
+pushed to GHCR before `set image`, or pods go `ImagePullBackOff`.
+
+Pick the next tag in sequence (check the current one first with
+`kubectl -n khmer-vox get deployment khmer-vox-web -o wide`), then:
+
+```powershell
+$TAG = "prod-YYYYMMDD-N"
+docker tag  ghcr.io/rosielreaksa/khmer-vox-tts:latest ghcr.io/rosielreaksa/khmer-vox-tts:$TAG
+docker push ghcr.io/rosielreaksa/khmer-vox-tts:$TAG
+```
+
+There is no local kubectl context on the Windows host and no `~/.ssh/config`;
+all cluster commands run over password SSH via `scripts/vps-ssh.py` (reads
+`VPS_HOST`/`VPS_USER`/`VPS_PASS` from env; prod host is `152.42.203.77`). The
+`k3s ctr images import` of a `docker save` tar is OPTIONAL belt-and-suspenders;
+the GHCR push above is what actually makes the rollout succeed. Then:
 
 ```text
-kubectl rollout restart deployment/khmer-vox-web -n khmer-vox
-kubectl rollout restart deployment/khmer-vox-worker -n khmer-vox
-kubectl rollout status deployment/khmer-vox-web -n khmer-vox --timeout=180s
-kubectl rollout status deployment/khmer-vox-worker -n khmer-vox --timeout=180s
+py -3 scripts/vps-ssh.py "kubectl -n khmer-vox set image deployment/khmer-vox-web web=ghcr.io/rosielreaksa/khmer-vox-tts:$TAG"
+py -3 scripts/vps-ssh.py "kubectl -n khmer-vox set image deployment/khmer-vox-worker worker=ghcr.io/rosielreaksa/khmer-vox-tts:$TAG"
+py -3 scripts/vps-ssh.py "kubectl -n khmer-vox rollout status deployment/khmer-vox-web --timeout=180s"
+py -3 scripts/vps-ssh.py "kubectl -n khmer-vox rollout status deployment/khmer-vox-worker --timeout=180s"
 ```
+
+If a pod is stuck in `ImagePullBackOff` after the GHCR push, delete it to force
+an immediate re-pull instead of waiting out the backoff:
+`kubectl -n khmer-vox delete pod <name>`. Old replicas keep serving throughout,
+so a failed pull does not cause downtime.
 
 Verify:
 
@@ -502,6 +526,49 @@ and clone MP3 output, and one queued batch job.
 - Generated public audio must remain MP3.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
+
+## Admin API Error Log + Activity Log Production Deploy
+
+Update on 2026-06-16:
+
+- Built and deployed two admin-only pages plus full system error logging to
+  production `https://voxtts.online` as `prod-20260616-4`.
+- Feature work (commit `b9537ec`):
+  - `/app/admin/errors` (API Error Log) and `/app/admin/activity` (Activity Log),
+    both admin-only with deep pagination and UTC date-range filters. The error
+    log captures errors that never create a generation row: auth 401/402/403,
+    rate-limit 429, validation 400, server 500.
+  - New `api_errors` table added to BOTH `lib/postgres-store.ts` `SCHEMA_SQL`
+    and `database/schema.sql`; it auto-creates on boot via the idempotent schema
+    run, so no manual migration was needed (new pods created it on startup).
+  - New `lib/api-error-log.ts` logs fire-and-forget (never throws, never blocks
+    the response), redacts sensitive keys (authorization/password/token/secret/
+    cookie), and truncates large payloads.
+  - Auth failures are captured centrally in `authenticateApiKeyFromRequest`
+    (covers all public routes); 4xx/5xx are captured in the speech, clone,
+    batch, and batch-clone route handlers. Inline 400 validation `return`s in
+    the clone route are NOT all logged yet (would need a typed ValidationError
+    caught in one place) - documented as a known follow-up.
+  - Store helpers `createApiError` + `listApiErrorsPageForAdmin` (plus the
+    earlier `listGenerationsPageForAdmin`) added across postgres, json, and the
+    store facade.
+- Also fixed a PRE-EXISTING lint error (commit `052c392`) that was blocking the
+  deploy gate: `app/app/dashboard/speech-workspace.tsx` `WaveformPlayer` called
+  setState synchronously in an effect; moved the resets into the async
+  `buildPeaks` body. It came from the prior `c2927f6` ZipEnhancer commit, not
+  this feature.
+- Deploy gotcha (the reason the deploy steps above were rewritten): the first
+  rollout went `ImagePullBackOff`. Production pods use `imagePullPolicy: Always`
+  and date-versioned tags, so importing the tar via `k3s ctr images import` was
+  not enough - the kubelet still tried to PULL `prod-20260616-4` from GHCR,
+  which 404'd because only `:latest` had been pushed. Fixed by
+  `docker push ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260616-4`, then
+  deleting the stuck pods to force an immediate re-pull. Old replicas served the
+  whole time, so there was zero production downtime.
+- Verified after rollout: all pods Running 1/1 with 0 restarts on
+  `prod-20260616-4`; `https://voxtts.online/api/health`, `/app/dashboard/jobs`,
+  and `/app/signin` all returned 200. Uploaded tar removed from the VPS and
+  locally; temp build/upload logs deleted; worktree clean at `052c392`.
 
 ## Recent Local Audio Quality Work
 
