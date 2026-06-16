@@ -1876,6 +1876,7 @@ async function synthesizeSingleChunk(
     voice: string;
     model?: string;
     cloneSample?: CloneSample;
+    denoiseReference?: boolean;
   },
   model: string,
   responseFormat: AudioResponseFormat,
@@ -1903,6 +1904,13 @@ async function synthesizeSingleChunk(
     payload.ref_audio_wav_format = "wav";
 
     if (params.mode === "clone" && !isPresetReferenceSample(params.cloneSample)) {
+      // Opt-in ZipEnhancer reference denoise. Only forwarded for real clone
+      // uploads (never preset voices); default off. Helps noisy reference clips
+      // at the cost of a small timbre change + extra latency, so it is gated on
+      // an explicit per-request flag from the UI/API.
+      if (params.denoiseReference === true) {
+        payload.denoise = true;
+      }
       if (process.env.TTS_CLONE_USE_VOICE_DESCRIPTION?.trim().toLowerCase() === "true") {
         payload.voice = normalizeCloneVoiceDescription(params.voice);
       } else {
@@ -2118,6 +2126,7 @@ async function synthesizeChunkWithSilenceRetry(
     voice: string;
     model?: string;
     cloneSample?: CloneSample;
+    denoiseReference?: boolean;
   },
   model: string,
   responseFormat: AudioResponseFormat,
@@ -2188,6 +2197,7 @@ async function synthesizeChunkWithFallbackSplit(
     voice: string;
     model?: string;
     cloneSample?: CloneSample;
+    denoiseReference?: boolean;
   },
   model: string,
   responseFormat: AudioResponseFormat,
@@ -2270,6 +2280,7 @@ async function synthesizeMergedAudio(params: {
   voice: string;
   model?: string;
   cloneSample?: CloneSample;
+  denoiseReference?: boolean;
 }): Promise<TtsSynthesisResult> {
   const model = (params.model ?? process.env.TTS_UPSTREAM_MODEL ?? "voxcpm2").trim();
   const responseFormat = readAudioResponseFormat();
@@ -2338,6 +2349,7 @@ export async function synthesizeWithUpstream(params: {
   voice: string;
   model?: string;
   cloneSample?: CloneSample;
+  denoiseReference?: boolean;
 }): Promise<TtsSynthesisResult> {
   // Bounded final-quality retry. The per-chunk gate analyzes raw (quiet)
   // upstream audio, so a buzz that only becomes audible after the delivery-

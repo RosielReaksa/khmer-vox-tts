@@ -60,6 +60,7 @@ export async function createQueuedDashboardGeneration(params: {
   model?: string;
   cloneSample?: CloneSample;
   cloneConsentAccepted?: boolean;
+  denoiseReference?: boolean;
 }): Promise<{ job: BatchJobRecord }> {
   const chunks = splitDashboardTextForJob(params.text, params.mode);
   const lines: BatchLineInput[] = chunks.map((text) => ({ text }));
@@ -77,7 +78,10 @@ export async function createQueuedDashboardGeneration(params: {
     cloneConsentAccepted: params.cloneConsentAccepted,
     // Tag as a dashboard auto-chunked generation so the worker hides the
     // per-chunk segment records and saves one merged full-audio history entry.
-    metadataJson: dashboardMergeMetadataJson(),
+    // Carries the opt-in reference-denoise flag so the worker can forward it.
+    metadataJson: dashboardMergeMetadataJson({
+      denoiseReference: params.denoiseReference === true,
+    }),
   });
 
   kickBatchWorker(job.id);

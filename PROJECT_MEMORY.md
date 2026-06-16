@@ -2235,6 +2235,55 @@ Update on 2026-06-14:
 - STILL UNCOMMITTED: 7 fixes live as the staging image but git worktree remains
   at a2bf891. Recommend committing the batch.
 
+## CLONE QUALITY 2026-06-16 (part 2): opt-in ZipEnhancer reference denoise
+
+Follow-up after the clone-temperature fix (0.8 -> 0.55) made clone quality good.
+User wanted to further close the gap vs the official voxcpm2.org demo, which has
+a "Reference audio enhancement" denoise step we lacked.
+
+KEY ARCHITECTURE FINDING: our Modal model does NOT use the standard open-source
+`voxcpm` package. It uses the speed fork `nano-vllm-voxcpm==2.0.1` (imported as
+`nanovllm_voxcpm`), which has NO built-in denoiser (no load_denoiser flag). The
+official demo's denoise lives in the standard package. So we bolted ZipEnhancer
+on ourselves via modelscope (the same iic/speech_zipenhancer_ans_multiloss_16k_base
+model the standard package uses under the hood).
+
+Design decision: OPT-IN per request, default OFF. Upstream docs warn the denoiser
+runs at 16kHz and can slightly alter a clean voice; it only helps NOISY reference
+uploads. So it is gated behind an explicit UI toggle / API flag.
+
+Changes:
+- `modal/modal_voxcpm_api.py`: add `modelscope` to image; `ZIPENHANCER_MODEL_ID`
+  const; lazy `_get_denoiser()` (loads pipeline on first denoise=True, best-effort
+  - never fails a clone); `_denoise_wav_bytes()` (temp-file round-trip, returns
+  original bytes on any failure); `synthesize(..., denoise=False)` runs denoise on
+  prompt/ref WAV before `encode_latents`; `SpeechRequest.denoise` field wired to
+  synthesize.
+- `lib/tts-provider.ts`: added `denoiseReference?: boolean` to all 5 nested synth
+  param types (threaded via existing `...params` spread); in clone branch only
+  (not preset), sets `payload.denoise = true` when flag is true.
+- `lib/generation-service.ts`: `runGenerationForUser` accepts `denoiseReference`,
+  forwards to `synthesizeWithUpstream`.
+- `lib/batch-merge-marker.ts`: extended `dashboardMergeMetadataJson(options?)` to
+  optionally encode `denoiseReference`; added `readDashboardMergeOptions()`. This
+  is how the flag survives the dashboard QUEUE (clone is a queued batch job, run
+  later by the worker - the flag had to persist on job metadata).
+- `lib/generation-queue.ts`: `createQueuedDashboardGeneration` accepts the flag,
+  encodes it into the merge metadata.
+- `lib/batch-service.ts`: worker reads `readDashboardMergeOptions(job)` and passes
+  `denoiseReference` into `runGenerationForUser`.
+- `app/api/generate-clone/route.ts`: parses `denoise_reference` form field.
+- `app/app/dashboard/speech-workspace.tsx`: "Clean up noisy reference audio"
+  checkbox (default off) in the upload-reference block; sends `denoise_reference`.
+
+NOTE: only wired into the dashboard clone path + the shared provider. The v1/v2
+business clone API routes do NOT yet expose denoise (could add a `denoise` form
+field -> createQueuedBatchJob metadata later if a customer needs it).
+
+Verified: tsc + build clean, marker unit tests pass, no lint errors. Shipping in
+prod-20260616-3 (app) + Modal redeploy of all 7 accounts (modelscope download
+happens lazily on first denoise=True call, adds one-time delay for that request).
+
 ## CFG HARD-CAP 2026-06-16 (prevent broken audio from CFG > 2)
 
 User reported CFG (guidance scale) above 2 (e.g. 3) produces broken/distorted

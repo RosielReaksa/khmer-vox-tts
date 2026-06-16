@@ -35,6 +35,15 @@ GPU_MEMORY_UTILIZATION = float(os.environ.get("VOXCPM_GPU_MEMORY_UTILIZATION", "
 # in testing. Tune with VOXCPM_INFERENCE_TIMESTEPS (requires a Modal redeploy).
 INFERENCE_TIMESTEPS = int(os.environ.get("VOXCPM_INFERENCE_TIMESTEPS", "8"))
 
+# ZipEnhancer denoiser (opt-in per request via denoise=True). ModelScope model
+# id for acoustic noise suppression; runs on a 16kHz mono pipeline and cleans a
+# noisy reference clip before it is encoded into latents for cloning. Loaded
+# lazily on first use so it adds no cost to clean-reference clones. Set to an
+# empty string to disable the feature entirely at the server.
+ZIPENHANCER_MODEL_ID = os.environ.get(
+    "VOXCPM_ZIPENHANCER_MODEL_ID", "iic/speech_zipenhancer_ans_multiloss_16k_base"
+)
+
 API_KEY_SECRET_NAME = os.environ.get("VOXCPM_API_KEY_SECRET_NAME", "voxcpm-api-key")
 API_SECRETS = [modal.Secret.from_name(API_KEY_SECRET_NAME)]
 
@@ -396,6 +405,11 @@ image = (
         "fastapi[standard]",
         "huggingface_hub",
         "nano-vllm-voxcpm==2.0.1",
+        # ZipEnhancer reference-audio denoiser (opt-in). modelscope hosts the
+        # iic/speech_zipenhancer_ans_multiloss_16k_base acoustic-noise-suppression
+        # model. Only loaded lazily on first denoise=True request so clean-
+        # reference clones are unaffected in cold-start cost.
+        "modelscope",
     )
 )
 
@@ -938,6 +952,60 @@ class VoxCPM2TTS:
             gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
         )
         self.info = self.server.get_model_info()
+        # ZipEnhancer pipeline is loaded lazily on the first denoise=True request
+        # (see _get_denoiser) so clean-reference clones never pay for it.
+        self._denoiser = None
+
+    def _get_denoiser(self):
+        """Lazily build the ModelScope ZipEnhancer acoustic-noise-suppression
+        pipeline. Returns None if denoising is disabled or unavailable so the
+        caller can gracefully fall back to the raw reference audio."""
+        if not ZIPENHANCER_MODEL_ID:
+            return None
+        if self._denoiser is not None:
+            return self._denoiser
+        try:
+            from modelscope.pipelines import pipeline
+            from modelscope.utils.constant import Tasks
+
+            self._denoiser = pipeline(
+                Tasks.acoustic_noise_suppression,
+                model=ZIPENHANCER_MODEL_ID,
+            )
+        except Exception as exc:  # noqa: BLE001 - never fail a clone over denoise
+            print(f"[denoise] failed to load ZipEnhancer ({exc}); skipping denoise")
+            self._denoiser = None
+        return self._denoiser
+
+    def _denoise_wav_bytes(self, wav_bytes: bytes) -> bytes:
+        """Run ZipEnhancer on raw WAV bytes and return denoised WAV bytes. On any
+        failure the original bytes are returned unchanged (denoise is best-effort,
+        it must never break a clone)."""
+        denoiser = self._get_denoiser()
+        if denoiser is None:
+            return wav_bytes
+        import tempfile
+
+        in_path = out_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as in_f:
+                in_f.write(wav_bytes)
+                in_path = in_f.name
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as out_f:
+                out_path = out_f.name
+            denoiser(in_path, output_path=out_path)
+            with open(out_path, "rb") as fh:
+                return fh.read()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[denoise] enhance failed ({exc}); using original reference")
+            return wav_bytes
+        finally:
+            for p in (in_path, out_path):
+                if p and os.path.exists(p):
+                    try:
+                        os.unlink(p)
+                    except OSError:
+                        pass
 
     @modal.exit()
     def shutdown(self) -> None:
@@ -968,6 +1036,7 @@ class VoxCPM2TTS:
         temperature: float = 1.0,
         cfg_value: float = 2.0,
         voice_description: str | None = None,
+        denoise: bool = False,
     ) -> bytes:
         import numpy as np
         import soundfile as sf
@@ -985,15 +1054,21 @@ class VoxCPM2TTS:
         if prompt_wav_base64:
             if not prompt_text.strip():
                 raise ValueError("prompt_text is required when prompt_wav_base64 is provided")
+            prompt_wav_bytes = base64.b64decode(prompt_wav_base64)
+            if denoise:
+                prompt_wav_bytes = self._denoise_wav_bytes(prompt_wav_bytes)
             prompt_latents = self.server.encode_latents(
-                base64.b64decode(prompt_wav_base64),
+                prompt_wav_bytes,
                 prompt_wav_format,
             )
 
         ref_audio_latents = None
         if ref_audio_wav_base64:
+            ref_wav_bytes = base64.b64decode(ref_audio_wav_base64)
+            if denoise:
+                ref_wav_bytes = self._denoise_wav_bytes(ref_wav_bytes)
             ref_audio_latents = self.server.encode_latents(
-                base64.b64decode(ref_audio_wav_base64),
+                ref_wav_bytes,
                 ref_audio_wav_format,
             )
 
@@ -1056,6 +1131,10 @@ def api():
         # over-adhere and produce broken/distorted audio. Reject above 2 at the
         # API boundary as defense-in-depth (the app layer also clamps to 2.0).
         cfg_value: float = Field(default=2.0, ge=0.1, le=2.0)
+        # Opt-in ZipEnhancer denoise of the reference/prompt audio before cloning.
+        # Default off: only helps noisy reference uploads and can slightly alter a
+        # clean voice, so the app/UI gates it behind an explicit toggle.
+        denoise: bool = False
 
     @web.get("/", response_class=HTMLResponse)
     async def docs_page():
@@ -1133,6 +1212,7 @@ def api():
             temperature=payload.temperature,
             cfg_value=payload.cfg_value,
             voice_description=voice_description,
+            denoise=payload.denoise,
         )
         return Response(
             content=wav_bytes,

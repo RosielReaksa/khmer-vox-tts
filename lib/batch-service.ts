@@ -41,7 +41,7 @@ import {
 import { mergePublicMp3SegmentsForDelivery } from "@/lib/tts-provider";
 import type { CloneSample } from "@/lib/tts-provider";
 import { invalidateDashboardCountCache } from "@/lib/dashboard-count-cache";
-import { isDashboardMergeJob } from "@/lib/batch-merge-marker";
+import { isDashboardMergeJob, readDashboardMergeOptions } from "@/lib/batch-merge-marker";
 import type {
   BatchJobItemRecord,
   BatchJobRecord,
@@ -975,6 +975,8 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
 
   const cloneSample = job.mode === "clone" ? (storedCloneSample(job) ?? undefined) : undefined;
   const mergeJob = isDashboardMergeJob(job);
+  // Opt-in reference denoise flag persisted on the dashboard-merge job metadata.
+  const denoiseReference = readDashboardMergeOptions(job).denoiseReference === true;
   if (job.mode === "clone" && !cloneSample) {
     await failRemainingItems(
       job.id,
@@ -1053,6 +1055,7 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
             // record so it is hidden from History; the merged full-audio
             // record is saved once when the job completes.
             segmentOfJobId: mergeJob ? job.id : null,
+            denoiseReference,
           });
 
           await updateBatchJobItem({

@@ -8,8 +8,19 @@
 
 export const DASHBOARD_MERGE_JOB_KIND = "dashboard_merge";
 
-export function dashboardMergeMetadataJson(): string {
-  return JSON.stringify({ kind: DASHBOARD_MERGE_JOB_KIND });
+// Optional flags carried alongside the dashboard-merge marker. Kept additive so
+// older jobs (marker only, no flags) keep parsing correctly.
+export type DashboardMergeOptions = {
+  // Opt-in ZipEnhancer reference-audio denoise for clone jobs (default off).
+  denoiseReference?: boolean;
+};
+
+export function dashboardMergeMetadataJson(options?: DashboardMergeOptions): string {
+  const payload: Record<string, unknown> = { kind: DASHBOARD_MERGE_JOB_KIND };
+  if (options?.denoiseReference === true) {
+    payload.denoiseReference = true;
+  }
+  return JSON.stringify(payload);
 }
 
 export function isDashboardMergeJob(job: { metadataJson: string | null }): boolean {
@@ -19,5 +30,18 @@ export function isDashboardMergeJob(job: { metadataJson: string | null }): boole
     return parsed?.kind === DASHBOARD_MERGE_JOB_KIND;
   } catch {
     return false;
+  }
+}
+
+// Reads optional dashboard-merge flags. Returns false-y defaults for legacy or
+// malformed metadata so callers never have to special-case missing fields.
+export function readDashboardMergeOptions(job: { metadataJson: string | null }): DashboardMergeOptions {
+  if (!job.metadataJson) return {};
+  try {
+    const parsed = JSON.parse(job.metadataJson) as { kind?: unknown; denoiseReference?: unknown };
+    if (parsed?.kind !== DASHBOARD_MERGE_JOB_KIND) return {};
+    return { denoiseReference: parsed.denoiseReference === true };
+  } catch {
+    return {};
   }
 }

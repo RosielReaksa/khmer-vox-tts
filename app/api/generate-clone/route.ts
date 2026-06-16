@@ -56,6 +56,13 @@ export async function POST(request: Request) {
     const modelParsed = modelSchema.safeParse(typeof modelValue === "string" ? modelValue : undefined);
     const model = modelParsed.success ? modelParsed.data : undefined;
 
+    // Opt-in reference-audio enhancement (ZipEnhancer denoise). Off unless the
+    // UI explicitly sends a truthy value, so clean references are untouched.
+    const denoiseValue = formData.get("denoise_reference");
+    const denoiseReference =
+      typeof denoiseValue === "string" &&
+      ["true", "1", "on", "yes"].includes(denoiseValue.trim().toLowerCase());
+
     let sampleBytes: Uint8Array;
     let mimeType: string;
     let fileName: string;
@@ -117,6 +124,7 @@ export async function POST(request: Request) {
         fileName: fileName,
       },
       cloneConsentAccepted,
+      denoiseReference,
     });
 
     return NextResponse.json({

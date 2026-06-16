@@ -110,6 +110,7 @@ export async function runGenerationForUser(params: {
   cloneSample?: CloneSample;
   cloneCreditsPerSecond?: number;
   segmentOfJobId?: string | null;
+  denoiseReference?: boolean;
 }): Promise<{
   generationId: string;
   audioBase64: string;
@@ -262,6 +263,7 @@ export async function runGenerationForUser(params: {
       voice,
       model: params.model,
       cloneSample: cloneSample,
+      denoiseReference: params.denoiseReference === true,
     });
     const latencyMs = Date.now() - startedAtMs;
     const outputSeconds = Math.max(1, Math.ceil(synthesized.outputSeconds ?? usage.estimatedSeconds));

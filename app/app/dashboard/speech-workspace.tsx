@@ -128,6 +128,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
   const [runMode, setRunMode] = useState(snapshot.runMode);
   const [sampleFile, setSampleFile] = useState<File | null>(snapshot.sampleFile);
   const [voiceConsent, setVoiceConsent] = useState(snapshot.voiceConsent);
+  const [denoiseReference, setDenoiseReference] = useState(false);
   const [result, setResult] = useState<GenerationResponse | null>(snapshot.result);
   const [audioUrl, setAudioUrl] = useState(snapshot.audioUrl);
   const [error, setError] = useState(snapshot.error);
@@ -434,6 +435,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
           formData.set("sample", sampleFile);
           formData.set("voice_consent", voiceConsent ? "true" : "false");
         }
+        formData.set("denoise_reference", denoiseReference ? "true" : "false");
         response = await fetch("/api/generate-clone", {
           method: "POST",
           body: formData,
@@ -685,6 +687,26 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                     }}
                   />
                   <span>I own this voice or have permission from the owner.</span>
+                </label>
+                <label
+                  className={`mt-3 flex items-center gap-3 border-4 border-primary px-4 py-3 text-xs font-headline uppercase font-black cursor-pointer shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] ${
+                    denoiseReference ? "bg-[#def3e5] text-primary" : "bg-white text-primary"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={denoiseReference}
+                    onChange={(event) => {
+                      setDenoiseReference(event.target.checked);
+                      setError("");
+                    }}
+                  />
+                  <span className="flex flex-col gap-0.5">
+                    <span>Clean up noisy reference audio</span>
+                    <span className="font-body normal-case font-medium text-[10px] text-[#4a4a4a]">
+                      Removes background noise before cloning. Best for noisy mic recordings; leave off for already-clean audio.
+                    </span>
+                  </span>
                 </label>
               </div>
             )
