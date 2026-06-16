@@ -1052,7 +1052,10 @@ def api():
         reference_audio_filename: str | None = None
         max_generate_length: int = Field(default=2000, ge=100, le=8192)
         temperature: float = Field(default=1.0, ge=0.1, le=2.0)
-        cfg_value: float = Field(default=2.0, ge=0.1, le=5.0)
+        # CFG hard-capped at 2.0: higher guidance scale (e.g. 3) makes VoxCPM2
+        # over-adhere and produce broken/distorted audio. Reject above 2 at the
+        # API boundary as defense-in-depth (the app layer also clamps to 2.0).
+        cfg_value: float = Field(default=2.0, ge=0.1, le=2.0)
 
     @web.get("/", response_class=HTMLResponse)
     async def docs_page():

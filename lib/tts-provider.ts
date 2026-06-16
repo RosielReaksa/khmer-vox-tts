@@ -1912,7 +1912,11 @@ async function synthesizeSingleChunk(
         readNumericEnv("TTS_CLONE_TEMPERATURE", 0.55, 0.1, 2.0),
         qualityRetryAttempt,
       );
-      payload.cfg_value = readNumericEnv("TTS_CLONE_CFG_VALUE", 2.0, 0.1, 5.0);
+      // CFG (guidance scale) is hard-capped at 2.0. Values above ~2 make VoxCPM2
+      // over-adhere to the prompt/reference and produce broken/distorted audio
+      // (observed at 3). Keep the ceiling at 2.0 so a misconfigured env can never
+      // push it higher; default stays 2.0.
+      payload.cfg_value = readNumericEnv("TTS_CLONE_CFG_VALUE", 2.0, 0.1, 2.0);
     } else {
       // Standard preset TTS keeps the fixed speaker hint so the model stays on
       // the same intended voice while still using the preset reference sample.
@@ -1921,7 +1925,9 @@ async function synthesizeSingleChunk(
         readNumericEnv("TTS_PRESET_TEMPERATURE", 0.45, 0.1, 2.0),
         qualityRetryAttempt,
       );
-      payload.cfg_value = readNumericEnv("TTS_PRESET_CFG_VALUE", 2.0, 0.1, 5.0);
+      // CFG (guidance scale) is hard-capped at 2.0 for the same reason as clone:
+      // higher values (e.g. 3) make VoxCPM2 produce broken/distorted audio.
+      payload.cfg_value = readNumericEnv("TTS_PRESET_CFG_VALUE", 2.0, 0.1, 2.0);
     }
   }
 

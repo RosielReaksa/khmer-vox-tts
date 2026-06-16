@@ -2235,6 +2235,62 @@ Update on 2026-06-14:
 - STILL UNCOMMITTED: 7 fixes live as the staging image but git worktree remains
   at a2bf891. Recommend committing the batch.
 
+## CFG HARD-CAP 2026-06-16 (prevent broken audio from CFG > 2)
+
+User reported CFG (guidance scale) above 2 (e.g. 3) produces broken/distorted
+audio, and wanted it locked to 2 across the WHOLE system (website standard
+voice, clone, API call, business).
+
+Root cause / where CFG lives: every generation path (standard TTS, clone,
+API v1/v2, business) funnels through `synthesizeSingleChunk` in
+`lib/tts-provider.ts`. CFG was read from env (`TTS_CLONE_CFG_VALUE` /
+`TTS_PRESET_CFG_VALUE`, both default 2.0) via `readNumericEnv(..., min, max)`.
+The max ceiling was 5.0, so a misconfigured env could push CFG to 3-5 and break
+audio. API/business routes do NOT accept a caller-supplied cfg_value (grepped
+all of app/ - no matches), so the only risk vector was env.
+
+Fix (defense-in-depth, default behavior unchanged at 2.0):
+- `lib/tts-provider.ts`: both clamps changed `max` 5.0 -> 2.0
+  (`readNumericEnv("TTS_CLONE_CFG_VALUE", 2.0, 0.1, 2.0)` and the preset one).
+  Any env value above 2 is now clamped down to 2.0.
+- `modal/modal_voxcpm_api.py`: `SpeechRequest.cfg_value` Field `le=5.0 -> le=2.0`
+  so a direct upstream call with cfg > 2 is rejected at the API boundary.
+- `.env.example`: documented the 2.0 hard cap.
+
+Verified: `npx tsc --noEmit` + `npm run build` clean, no lint errors. Prod had
+NO CFG env override (already effectively 2.0). Shipping in prod-20260616-2.
+
+## PROD DEPLOY 2026-06-16: prod-20260616-1 (pitch-preserving clone tempo control)
+
+Shipped the clone tempo fix to production and enabled it live.
+
+Changes (committed as `c881487` on main, local-only before this deploy):
+- `lib/tts-provider.ts`: new finishing-stage `applyOutputTempo` (ffmpeg
+  `atempo`, pitch-preserving). Clone output reads `TTS_OUTPUT_CLONE_TEMPO`,
+  standard TTS reads `TTS_OUTPUT_TEMPO`; 1.0 is a no-op. Wired into the sync
+  pipeline and the exported merge path; `job.mode` passed at all delivery sites.
+- Also carried the already-deployed perf tuning (inference timesteps 8,
+  dashboard concurrency 4 / clone 2) and the polling-spinner UX fix.
+
+Verified before deploy: local clone E2E (refreshed `reasksaxz` dev Modal
+token), `npx tsc --noEmit` + `npm run build` clean. Controlled A/B confirmed
+0.92 stretches ~8.6% and widens pauses with pitch intact.
+
+Deploy: built+pushed `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260616-1`
+(digest sha256:e99b8fdf71fb54d852789c5cb89eae682a149d8deff887e17d1f0d5a11d7060a).
+`kubectl set image` web+worker, `kubectl set env TTS_OUTPUT_CLONE_TEMPO=0.92`
+web+worker. Both rolled out zero-downtime (web 2/2, worker 1/1, 0 restarts).
+Verified: `/api/health` 200 (`store: postgres`), `/`, `/app/signin`,
+`/app/dashboard/jobs` all 200; both deploys on prod-20260616-1 with
+TTS_OUTPUT_CLONE_TEMPO=0.92 confirmed via `set env --list`.
+
+Rollback target = `prod-20260615-8`. NOTE: clone tempo is now an env-only
+lever too -- to revert pacing without an image rollback, set
+TTS_OUTPUT_CLONE_TEMPO=1.0 on web+worker and the change is immediate on next
+generation (no code revert needed). The manifest template
+`/root/voxtts-populated.yaml` was NOT updated with the new tag/env, so persist
+there before any future full `kubectl apply`.
+
 ## PROD DEPLOY 2026-06-15: prod-20260615-8 (faster generation via INFERENCE_TIMESTEPS 10->8)
 
 Follow-up to the concurrency fix. After confirming parallelism worked (both
