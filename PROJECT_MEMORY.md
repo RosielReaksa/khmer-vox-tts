@@ -527,6 +527,25 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## prod-20260617-2 Deploy (denoise-stage code + earlier knobs)
+
+Update on 2026-06-17:
+
+- Deployed commit `8e5d1fc` (env-gated output denoise stage + parallel chunks +
+  VoxCPM knobs, all from the 2026-06-17 work) to production as
+  `prod-20260617-2`. Previous live image was `prod-20260617-1`.
+- Flow: Docker engine already up; built + tagged `prod-20260617-2`, pushed to
+  GHCR, then `kubectl set image` on both `khmer-vox-web` and
+  `khmer-vox-worker`. Tag pushed before set-image (no ImagePullBackOff).
+- Rollout clean, zero downtime. Verified: both deployments report image
+  `prod-20260617-2`, all pods Running 1/1, `/api/health` = 200, and the
+  separately-set `TTS_INFERENCE_TIMESTEPS=20` env SURVIVED the image change
+  (it lives on the deployment spec, confirmed via printenv = 20).
+- IMPORTANT: the new denoise stage ships OFF by default (`TTS_OUTPUT_DENOISE`
+  unset). Real A/B testing showed it does not help at default settings, so this
+  deploy is inert for audio output — it only gets the code into prod. The live
+  audio-quality improvement is still driven by `TTS_INFERENCE_TIMESTEPS=20`.
+
 ## TTS_INFERENCE_TIMESTEPS=20 in prod (real A/B-proven noise fix)
 
 Update on 2026-06-17:
