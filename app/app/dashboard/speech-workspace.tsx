@@ -1312,10 +1312,13 @@ function WaveformPlayer({ src, downloadName }: { src: string; downloadName: stri
   // Decode the audio into a fixed number of peak bars for the waveform.
   useEffect(() => {
     let cancelled = false;
-    setPeaks([]);
-    setAnalyzing(true);
 
     async function buildPeaks() {
+      // Reset the waveform for the new source. Kept inside the async function
+      // (not the effect body) to avoid a synchronous setState-in-effect that
+      // can trigger cascading renders.
+      setPeaks([]);
+      setAnalyzing(true);
       try {
         const res = await fetch(src);
         const buf = await res.arrayBuffer();
