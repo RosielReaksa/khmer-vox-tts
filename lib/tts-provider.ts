@@ -644,6 +644,48 @@ async function capLongPauses(bytes: Uint8Array): Promise<Uint8Array> {
 // fully merged audio to a consistent target with a true-peak limiter. It is
 // volume only (no EQ, no tone shaping) and uses two passes so the gain is
 // applied cleanly without pumping. Disabled with TTS_OUTPUT_LOUDNORM=false.
+// Optional speech-safe broadband denoise applied to the merged audio BEFORE
+// loudness normalization. VoxCPM2 output carries a low-level texture/noise that
+// the loudnorm boost (~13 dB up to the -16 LUFS target) lifts into audible
+// background noise during quiet passages. Running afftdn first deepens the true
+// silent gaps and shaves the inter-word floor while leaving the speech band
+// essentially untouched (measured: speech RMS moved <0.3 dB at nr=24). It runs
+// before loudnorm so the floor is lowered prior to amplification. Off by
+// default (TTS_OUTPUT_DENOISE=false) so existing behavior is unchanged until
+// opted in; tune strength with TTS_OUTPUT_DENOISE_NR (dB of reduction).
+async function reduceOutputNoise(bytes: Uint8Array): Promise<Uint8Array> {
+  if (!readBooleanEnv("TTS_OUTPUT_DENOISE", false)) {
+    return bytes;
+  }
+  const noiseReduction = readNumericEnv("TTS_OUTPUT_DENOISE_NR", 12, 0.01, 97);
+  const noiseFloor = readNumericEnv("TTS_OUTPUT_DENOISE_NF", -30, -80, -20);
+  try {
+    const output = await runFfmpeg(
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-af",
+        `afftdn=nr=${noiseReduction}:nf=${noiseFloor}:tn=1`,
+        "-codec:a",
+        "libmp3lame",
+        "-b:a",
+        readPublicMp3Bitrate(),
+        "-f",
+        "mp3",
+        "pipe:1",
+      ],
+      bytes,
+    );
+    return output.byteLength > 0 ? output : bytes;
+  } catch {
+    // Denoise is a finishing touch; never fail delivery over it.
+    return bytes;
+  }
+}
+
 async function normalizeOutputLoudness(bytes: Uint8Array): Promise<Uint8Array> {
   if (!readBooleanEnv("TTS_OUTPUT_LOUDNORM", true)) {
     return bytes;
@@ -1414,7 +1456,8 @@ export async function mergePublicMp3SegmentsForDelivery(
 
   const merged = await concatMp3Buffers(publicSegments);
   const depaused = await capLongPauses(merged);
-  const normalized = await normalizeOutputLoudness(depaused);
+  const denoised = await reduceOutputNoise(depaused);
+  const normalized = await normalizeOutputLoudness(denoised);
   const paced = await applyOutputTempo(normalized, mode);
   return {
     bytes: paced,
@@ -2421,7 +2464,8 @@ async function synthesizeMergedAudio(params: {
 
   const mergedBytes = await concatMp3Buffers(publicSegments);
   const depausedBytes = await capLongPauses(mergedBytes);
-  const normalizedBytes = await normalizeOutputLoudness(depausedBytes);
+  const denoisedBytes = await reduceOutputNoise(depausedBytes);
+  const normalizedBytes = await normalizeOutputLoudness(denoisedBytes);
   const pacedBytes = await applyOutputTempo(normalizedBytes, params.mode);
 
   const upstreamRequestId = chunkResults

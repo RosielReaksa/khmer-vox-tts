@@ -527,6 +527,50 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## Background Noise Investigation + Output Denoise (env-gated)
+
+Update on 2026-06-17:
+
+- User reported small background noise in generated long-form clone audio.
+  Analyzed two real delivered files plus the reference sample with the bundled
+  ffmpeg (`node_modules/ffmpeg-static/ffmpeg.exe`, astats per-window scans).
+- Findings (measured, not assumed):
+  - Delivered files: speech ~-13 dB RMS, peak ~-2.3 dB (no clipping). Fine
+    0.4s-window scan showed true silent gaps DO exist (min -70 dB), so it is not
+    a constant wall of noise. The audible noise is low-level model texture under
+    speech and in short inter-word gaps (~-45 dB), ~30 dB below speech.
+  - Reference sample `duration_probe_15s_d.wav` is itself somewhat noisy
+    (pause floor only -34 to -44 dB), BUT toggling the app's "CLEAN UP NOISY
+    REFERENCE AUDIO" (denoise_reference / ZipEnhancer) ON vs OFF produced
+    essentially identical output floors. So the reference is NOT the dominant
+    cause.
+  - ROOT CAUSE: intrinsic VoxCPM2 generation noise, amplified by the output
+    loudnorm boost (~13 dB up to the -16 LUFS target) which lifts the quiet-
+    section floor into audibility. Post filters cannot fully remove it without
+    risking speech quality.
+- Filter experiments on the real file (all measured): `afftdn` moved the floor
+  only ~0.3 dB at safe strength but preserved speech almost perfectly (speech
+  RMS -15.5 -> -15.7 dB at nr=24) and deepened true silences (min -70 -> -140
+  dB); a hard `agate`/expander either did not engage (pauses sit above any safe
+  threshold) or risked chopping quiet speech (the known "cut-cut" choppiness).
+- Implemented (in `lib/tts-provider.ts`): new env-gated `reduceOutputNoise`
+  stage using `afftdn`, inserted in BOTH master chains
+  (`mergePublicMp3SegmentsForDelivery` and `synthesizeMergedAudio`) between
+  `capLongPauses` and `normalizeOutputLoudness`, so the floor is lowered before
+  amplification. Off by default; never fails delivery (falls back to input on
+  error). New env vars: `TTS_OUTPUT_DENOISE` (default false), and once enabled
+  `TTS_OUTPUT_DENOISE_NR` (dB reduction, default 12) and `TTS_OUTPUT_DENOISE_NF`
+  (noise floor dB, default -30).
+- HONEST conclusion communicated to user: the only place this noise can be
+  truly reduced is at generation. Highest-impact lever is raising
+  `TTS_INFERENCE_TIMESTEPS` (e.g. 16-24; added in the earlier 2026-06-17
+  change, currently unset = upstream default 10) to make VoxCPM2 produce
+  cleaner audio. Secondary lever: lower `TTS_OUTPUT_LOUDNORM_I` from -16 toward
+  -18 to reduce noise lift (already env-tunable, no code change made). The
+  afftdn stage is a speech-safe finishing touch, not a magic fix.
+- Verified: tsc clean, eslint 0 errors (only pre-existing unused-var warnings),
+  `npm run build` passes. Temp test audio files cleaned up. NOT yet deployed.
+
 ## prod-20260617-1 Deploy (parallel chunks + VoxCPM knobs)
 
 Update on 2026-06-17:
