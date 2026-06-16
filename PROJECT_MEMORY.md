@@ -527,6 +527,41 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## TTS_FINAL_QUALITY_RETRIES=2 + stuck-tonal gate diagnosis
+
+Update on 2026-06-17:
+
+- Investigated why a delivered file still had sustained buzz (16-66s, 70-182s;
+  FAILs standalone gate at 4s) despite the in-pipeline stuck-tonal defenses.
+  Read the full path in lib/tts-provider.ts. Three existing layers:
+  1. Per-chunk gate `synthesizeChunkWithSilenceRetry` (TTS_NEAR_SILENCE_RETRIES,
+     default 2 retries + temperature escalation) -> runs
+     `analyzeRawGeneratedAudioSilence` -> `generatedAudioStatsIssue`
+     (stuck-tonal reject >1.5s). Algorithm/thresholds MATCH the standalone
+     scripts/audio-file-quality-check.mjs.
+  2. Fallback split into smaller chunks on repeated failure.
+  3. Delivery-level retry `synthesizeWithUpstream` (TTS_FINAL_QUALITY_RETRIES,
+     default 1) re-checks the FINAL delivered (loudness-boosted) audio via
+     `analyzeDeliveredAudio` and regenerates the whole synthesis if buzzing.
+- ROOT-CAUSE GAPS found:
+  - Gap 1: the per-chunk gate analyzes RAW ~-29 LUFS audio, so a buzz sitting
+    below TTS_AUDIO_TONAL_MIN_DB (-22 dB) is not flagged; loudnorm then boosts
+    it ~13 dB into an audible tone. (Code comments already acknowledge this.)
+  - Gap 2: the delivery retry only does 1 extra attempt, then ships the
+    "least-buzzy" attempt ANYWAY (line ~2522 returns best?.result). A
+    consistently-buzzing reference/text combo gets delivered every time.
+  - Whole-synthesis retry is the wrong tool: re-rolls the entire multi-minute
+    audio for a per-chunk problem (slow + random).
+- ACTION (user chose option 2, cheap immediate mitigation): set
+  `TTS_FINAL_QUALITY_RETRIES=2` (env-only) on worker + web. Verified live via
+  printenv (=2, timesteps still =20), pods Running 1/1, /api/health=200.
+- PLANNED REAL FIX (option 1, code change, not done yet): make the per-chunk
+  gate buzz-aware at DELIVERY loudness (normalize/boost before the tonal
+  analysis) so audible buzz is caught at the chunk level where the cheap
+  targeted retry + temperature escalation already live. Optional bigger follow-
+  up: per-chunk delivery-loudness re-check + targeted single-chunk regen
+  instead of whole-synthesis retry.
+
 ## REVERTED TTS_OUTPUT_LOUDNORM_I back to default -16
 
 Update on 2026-06-17:
