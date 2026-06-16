@@ -527,6 +527,33 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## TTS_INFERENCE_TIMESTEPS=20 in prod (real A/B-proven noise fix)
+
+Update on 2026-06-17:
+
+- Ran a REAL upstream A/B test (not post-processing): called the Modal endpoint
+  directly with the same reference sample + Khmer text, varying ONLY
+  `inference_timesteps` (10 vs 20). Faithfully replicated the clone payload from
+  `lib/tts-provider.ts` (mono 16kHz s16 wav ref base64, temperature 0.55,
+  cfg_value 2.0, voice field deleted for clone).
+- Measured result (this is the real generation-side noise fix):
+  - Quiet-section noise floor (5th percentile): ts=10 = -48 dB -> ts=20 =
+    -70 dB. ~22 dB quieter pauses, i.e. the reported "small background noise"
+    largely gone.
+  - Project quality gate high-ZCR (noise) ratio: ts=10 = 4.2% -> ts=20 = 0.0%.
+  - Speech level unchanged (median ~-32 dB both). Both PASS the gate.
+- Confirmed the earlier afftdn output-denoise stage did NOT help at defaults
+  (5th-pct floor went -47 -> -44.5 dB, stuck-tonal got slightly longer), so it
+  stays OFF by default. The real lever is generation-side timesteps.
+- Action taken: `kubectl -n khmer-vox set env` added
+  `TTS_INFERENCE_TIMESTEPS=20` to BOTH `khmer-vox-worker` (where generation
+  actually runs; web has DISABLE_INLINE_JOB_WORKER=true) and `khmer-vox-web`.
+  No image rebuild needed (env-only). Both rolled out cleanly; verified live via
+  `printenv` in both pods (=20), all pods Running 1/1, `/api/health` = 200.
+- Tradeoff: slightly slower per-chunk generation, largely absorbed by the
+  already-live parallel chunking across the 3-endpoint Modal pool. Revert is
+  trivial: `kubectl -n khmer-vox set env deployment/... TTS_INFERENCE_TIMESTEPS-`.
+
 ## Background Noise Investigation + Output Denoise (env-gated)
 
 Update on 2026-06-17:
