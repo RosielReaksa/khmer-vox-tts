@@ -527,6 +527,29 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## TTS_OUTPUT_LOUDNORM_I=-18 in prod (reduce residual background noise)
+
+Update on 2026-06-17:
+
+- After `TTS_INFERENCE_TIMESTEPS=20` went live, user confirmed audio is better
+  but reported a remaining "small background noise" in quiet sections. Measured
+  a real full ~4:39 generation: loudness normal (-16.4 dB RMS, -2.4 dB peak),
+  but a residual noise floor remained (5th-pct ~-41 dB) plus a ~4s stuck-tonal
+  region (still FAILs the standalone quality gate).
+- Applied the remaining output-side lever: lowered the loudnorm target from -16
+  to -18 LUFS via `kubectl set env TTS_OUTPUT_LOUDNORM_I=-18` on BOTH
+  `khmer-vox-worker` and `khmer-vox-web`. Less boost = less lift of the quiet-
+  section noise floor. Env-only (no rebuild); both rolled out cleanly. Verified
+  live via printenv (worker: TTS_OUTPUT_LOUDNORM_I=-18, TTS_INFERENCE_TIMESTEPS
+  =20), all pods Running 1/1, /api/health = 200.
+- Tradeoff: slightly quieter output overall (~2 dB). Revert:
+  `kubectl -n khmer-vox set env deployment/... TTS_OUTPUT_LOUDNORM_I-`.
+- OPEN ITEM (not yet addressed): a ~4s stuck-tonal/buzz region was delivered
+  despite the in-pipeline stuck-tonal gate + per-chunk retry. Suspect the
+  in-pipeline threshold is looser than `scripts/audio-file-quality-check.mjs`
+  or the retry is not catching this artifact. Worth investigating the
+  stuck-tonal detection/retry path in lib/tts-provider.ts next if buzz persists.
+
 ## prod-20260617-2 Deploy (denoise-stage code + earlier knobs)
 
 Update on 2026-06-17:
