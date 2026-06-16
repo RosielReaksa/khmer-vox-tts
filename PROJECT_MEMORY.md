@@ -527,6 +527,28 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## REVERTED TTS_OUTPUT_LOUDNORM_I back to default -16
+
+Update on 2026-06-17:
+
+- The earlier `TTS_OUTPUT_LOUDNORM_I=-18` change did NOT help. User reported the
+  next generation sounded worse, and measurement confirmed it was ~2 dB quieter
+  overall (mean -18.5 dB) without fixing the underlying noise/buzz. Quieter
+  output just pushes users to raise volume, re-exposing the noise.
+- Reverted by REMOVING the override (`kubectl set env ... TTS_OUTPUT_LOUDNORM_I-`)
+  on both worker + web so the code default (-16) is restored. Verified via
+  printenv: TTS_OUTPUT_LOUDNORM_I is unset (printenv exits 1), and
+  TTS_INFERENCE_TIMESTEPS=20 remains intact. Pods Running 1/1, /api/health=200.
+- NOTE: a `kubectl exec ... sh -c 'echo $VAR'` check is unreliable through the
+  vps-ssh -> kubectl layering ($VARs expand in an intermediate shell). Always
+  verify pod env with `printenv VAR` (no shell interpolation).
+- CURRENT PROD STATE: image prod-20260617-2, TTS_INFERENCE_TIMESTEPS=20,
+  loudnorm back at default -16. The genuine remaining issue is the sustained
+  stuck-tonal/buzz (this file had buzz runs incl. 16-66s and 70-182s, and FAILs
+  the standalone quality gate at 4.0s). Env tuning is exhausted; the real next
+  step is fixing the in-pipeline stuck-tonal detection/retry in
+  lib/tts-provider.ts so buzzy chunks are regenerated before delivery.
+
 ## TTS_OUTPUT_LOUDNORM_I=-18 in prod (reduce residual background noise)
 
 Update on 2026-06-17:
