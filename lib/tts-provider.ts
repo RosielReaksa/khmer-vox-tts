@@ -1869,6 +1869,71 @@ function retryAdjustedTemperature(baseTemperature: number, qualityRetryAttempt: 
   return Math.min(max, baseTemperature + step * qualityRetryAttempt);
 }
 
+// VoxCPM2's own docs note that when long-form output turns noisy or buzzy,
+// lowering cfg_value (toward ~1.5-1.6) is often more stable than holding it at
+// the 2.0 default. The per-chunk silence/buzz retry path already escalates
+// temperature; this complements it by *decreasing* CFG on each retry so a
+// stuck-tonal chunk is regenerated with looser guidance. The reduction is
+// floored so guidance never collapses entirely. Disabled by default
+// (TTS_RETRY_CFG_STEP=0) so existing behavior is unchanged until opted in.
+function retryAdjustedCfg(baseCfg: number, qualityRetryAttempt: number): number {
+  if (qualityRetryAttempt <= 0) return baseCfg;
+  const step = readNumericEnv("TTS_RETRY_CFG_STEP", 0, 0, 1);
+  if (step <= 0) return baseCfg;
+  const floor = readNumericEnv("TTS_RETRY_CFG_MIN", 1.5, 0.5, 2.0);
+  return Math.max(floor, baseCfg - step * qualityRetryAttempt);
+}
+
+// Runs an async task over `items` with at most `concurrency` in flight at once,
+// preserving input order in the returned results. Used to generate independent
+// text chunks against the upstream endpoint pool in parallel instead of strictly
+// one-at-a-time, which is the dominant latency cost for long-form audio. When
+// concurrency is 1 this behaves exactly like the previous sequential loop.
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const limit = Math.max(1, Math.floor(concurrency));
+  if (limit === 1 || items.length <= 1) {
+    const sequential: R[] = [];
+    for (let index = 0; index < items.length; index++) {
+      sequential.push(await worker(items[index], index));
+    }
+    return sequential;
+  }
+
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  async function runWorker(): Promise<void> {
+    for (;;) {
+      const current = nextIndex++;
+      if (current >= items.length) return;
+      results[current] = await worker(items[current], current);
+    }
+  }
+  const runnerCount = Math.min(limit, items.length);
+  await Promise.all(Array.from({ length: runnerCount }, () => runWorker()));
+  return results;
+}
+
+// Resolves how many chunks to generate concurrently. Defaults to the number of
+// configured upstream endpoints (so we never pile multiple requests onto one
+// GPU), capped to a sane ceiling. TTS_CHUNK_CONCURRENCY overrides explicitly;
+// set it to 1 to force the original strictly-sequential behavior.
+function resolveChunkConcurrency(): number {
+  const configured = process.env.TTS_CHUNK_CONCURRENCY?.trim();
+  const ceiling = readIntegerEnv("TTS_CHUNK_CONCURRENCY_MAX", 6, 1, 16);
+  if (configured) {
+    const parsed = Number(configured);
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      return Math.min(ceiling, Math.floor(parsed));
+    }
+  }
+  const poolSize = getUpstreamEndpoints().length;
+  return Math.min(ceiling, Math.max(1, poolSize));
+}
+
 async function synthesizeSingleChunk(
   params: {
     mode: GenerationMode;
@@ -1897,6 +1962,21 @@ async function synthesizeSingleChunk(
     max_generate_length: estimateMaxGenerateLength(params.text, params.mode),
   };
 
+  // Optional VoxCPM2 diffusion-step count. Lower = faster (fewer steps), higher
+  // = more detail. Only sent when explicitly configured so the upstream default
+  // (10) is preserved otherwise. Docs recommend 4-30.
+  const inferenceTimesteps = readIntegerEnv("TTS_INFERENCE_TIMESTEPS", 0, 0, 30);
+  if (inferenceTimesteps >= 4) {
+    payload.inference_timesteps = inferenceTimesteps;
+  }
+
+  // Optional upstream text normalization (expands numbers, dates, etc. so they
+  // are spoken as words instead of digit-by-digit). Off by default because the
+  // app already runs prepareTextForSpeech(); enable with TTS_UPSTREAM_NORMALIZE.
+  if (readBooleanEnv("TTS_UPSTREAM_NORMALIZE", false)) {
+    payload.normalize = true;
+  }
+
   if (params.cloneSample) {
     const normalizedSample = await normalizeCloneSampleForUpstream(params.cloneSample);
     const base64 = Buffer.from(normalizedSample.bytes).toString("base64");
@@ -1923,8 +2003,13 @@ async function synthesizeSingleChunk(
       // CFG (guidance scale) is hard-capped at 2.0. Values above ~2 make VoxCPM2
       // over-adhere to the prompt/reference and produce broken/distorted audio
       // (observed at 3). Keep the ceiling at 2.0 so a misconfigured env can never
-      // push it higher; default stays 2.0.
-      payload.cfg_value = readNumericEnv("TTS_CLONE_CFG_VALUE", 2.0, 0.1, 2.0);
+      // push it higher; default stays 2.0. On buzz/silence retries, CFG can be
+      // stepped DOWN toward TTS_RETRY_CFG_MIN (per VoxCPM docs) when
+      // TTS_RETRY_CFG_STEP is set, complementing the temperature escalation.
+      payload.cfg_value = retryAdjustedCfg(
+        readNumericEnv("TTS_CLONE_CFG_VALUE", 2.0, 0.1, 2.0),
+        qualityRetryAttempt,
+      );
     } else {
       // Standard preset TTS keeps the fixed speaker hint so the model stays on
       // the same intended voice while still using the preset reference sample.
@@ -1935,7 +2020,11 @@ async function synthesizeSingleChunk(
       );
       // CFG (guidance scale) is hard-capped at 2.0 for the same reason as clone:
       // higher values (e.g. 3) make VoxCPM2 produce broken/distorted audio.
-      payload.cfg_value = readNumericEnv("TTS_PRESET_CFG_VALUE", 2.0, 0.1, 2.0);
+      // Stepped down on retries when TTS_RETRY_CFG_STEP is configured.
+      payload.cfg_value = retryAdjustedCfg(
+        readNumericEnv("TTS_PRESET_CFG_VALUE", 2.0, 0.1, 2.0),
+        qualityRetryAttempt,
+      );
     }
   }
 
@@ -2291,15 +2380,21 @@ async function synthesizeMergedAudio(params: {
   // keeps VoxCPM2 segments much larger and preserves the upstream audio.
   const chunks = splitTextIntoChunks(params.text, upstreamChunkChars(params.mode));
 
-  const chunkResults: ChunkSynthesisResult[] = [];
-  for (const chunkText of chunks) {
-    chunkResults.push(await synthesizeChunkWithSilenceRetry(
-      { ...params, text: chunkText },
-      model,
-      responseFormat,
-      expectedContentType,
-    ));
-  }
+  // Chunks are independent generations, so run them against the endpoint pool
+  // with bounded concurrency (defaults to the number of configured endpoints)
+  // instead of strictly one-at-a-time. Order is preserved by index. Set
+  // TTS_CHUNK_CONCURRENCY=1 to restore the original sequential behavior.
+  const chunkResults: ChunkSynthesisResult[] = await mapWithConcurrency(
+    chunks,
+    resolveChunkConcurrency(),
+    (chunkText) =>
+      synthesizeChunkWithSilenceRetry(
+        { ...params, text: chunkText },
+        model,
+        responseFormat,
+        expectedContentType,
+      ),
+  );
 
   // Independently generated chunks drift in volume, which makes long audio get
   // louder/quieter over time. Align WAV chunks to one common loudness with a

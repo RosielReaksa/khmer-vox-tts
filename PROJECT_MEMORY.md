@@ -527,6 +527,44 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## VoxCPM Pipeline Performance + Quality Tuning (env-gated)
+
+Update on 2026-06-17:
+
+- Reviewed the full VoxCPM2 docs (voxcpm.readthedocs.io) against the generation
+  pipeline and made four refinements in `lib/tts-provider.ts`. ALL are gated by
+  env vars and default to the previous behavior, so production is unchanged
+  until each is explicitly enabled. Typecheck, eslint (0 errors; only
+  pre-existing unused-var warnings), and `npm run build` all pass.
+- Changes:
+  1. **Parallel chunk generation.** `synthesizeMergedAudio` previously generated
+     long-form chunks strictly one-at-a-time. Now uses a new
+     `mapWithConcurrency` helper that preserves output order while running
+     several chunks against the endpoint pool at once. Concurrency defaults to
+     the number of configured upstream endpoints (so we never pile requests on
+     one GPU), capped by `TTS_CHUNK_CONCURRENCY_MAX` (default 6). Override with
+     `TTS_CHUNK_CONCURRENCY`; set it to `1` to restore the exact old sequential
+     loop. This is the biggest latency win for multi-minute audio.
+  2. **`inference_timesteps` knob.** New `TTS_INFERENCE_TIMESTEPS` env (only sent
+     to upstream when >= 4, range 4-30). Unset = upstream default (10) preserved.
+     Lower = faster, higher = more detail.
+  3. **Upstream text normalization knob.** New `TTS_UPSTREAM_NORMALIZE` (default
+     false). When true, forwards `normalize: true` so numbers/dates are spoken as
+     words. Off by default because the app already runs `prepareTextForSpeech`.
+  4. **CFG reduction on retries.** New `retryAdjustedCfg` lowers `cfg_value` on
+     each silence/buzz retry toward `TTS_RETRY_CFG_MIN` (default 1.5) by
+     `TTS_RETRY_CFG_STEP` per attempt. Default step is 0 (disabled), so CFG stays
+     at the hard-capped 2.0 unless opted in. This complements the existing
+     temperature escalation and follows the VoxCPM docs' guidance that lowering
+     CFG toward ~1.5-1.6 stabilizes noisy/buzzy long-form output.
+- New env vars (all optional, safe defaults): `TTS_CHUNK_CONCURRENCY`,
+  `TTS_CHUNK_CONCURRENCY_MAX`, `TTS_INFERENCE_TIMESTEPS`, `TTS_UPSTREAM_NORMALIZE`,
+  `TTS_RETRY_CFG_STEP`, `TTS_RETRY_CFG_MIN`.
+- Not yet implemented (discussed, deferred): targeted single-chunk regen on the
+  delivered-audio buzz retry (currently regenerates the whole synthesis), a
+  result cache keyed on text+voice+params, public API idempotency keys, and
+  streaming delivery. These are larger changes for a follow-up.
+
 ## Admin API Error Log + Activity Log Production Deploy
 
 Update on 2026-06-16:
