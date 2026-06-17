@@ -16,7 +16,9 @@ function getModalSrcDir(): string {
 // to zero. Injecting it here means every account connected through the admin
 // page -- now and in the future -- automatically gets the same warm window
 // without any per-account manual step. Override with the env var if needed.
-const DEPLOY_SCALEDOWN_WINDOW = (process.env.VOXCPM_SCALEDOWN_WINDOW || "120").trim();
+// 300s (5 min) balances cold-start avoidance (measured ~58s cold vs ~1.2s warm)
+// against idle GPU cost for bursty multi-segment usage.
+const DEPLOY_SCALEDOWN_WINDOW = (process.env.VOXCPM_SCALEDOWN_WINDOW || "300").trim();
 
 // Diffusion decode steps baked into every deploy. Lower = faster generation
 // with a modest quality tradeoff. Injected here (like the scaledown window) so

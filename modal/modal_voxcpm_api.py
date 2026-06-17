@@ -21,10 +21,12 @@ GPU_TYPE = os.environ.get("VOXCPM_GPU", "L40S")
 # zero. You pay for every second a container is warm, even when idle, so this is
 # the main idle-cost lever. 60s was too aggressive (frequent cold-start timeouts
 # for users arriving a minute apart); 600s (10 min) kept far too many idle GPUs
-# warm and wasted credit. 120s (2 min) is the cost/UX balance: it bridges users
-# who arrive within ~2 minutes of each other while scaling to zero quickly when
-# truly idle. Raise toward 180-300 if cold starts feel too frequent for users.
-SCALEDOWN_WINDOW = int(os.environ.get("VOXCPM_SCALEDOWN_WINDOW", "120"))
+# warm and wasted credit. 300s (5 min) is the current cost/UX balance for bursty
+# usage: it bridges users (and multi-segment batches) that arrive within ~5
+# minutes while still scaling to zero when truly idle. Measured cold start is
+# ~58s vs ~1.2s warm, so a wider window meaningfully cuts perceived latency.
+# Raise toward 600 if cold starts still feel frequent; lower to cut idle cost.
+SCALEDOWN_WINDOW = int(os.environ.get("VOXCPM_SCALEDOWN_WINDOW", "300"))
 MAX_NUM_SEQS = int(os.environ.get("VOXCPM_MAX_NUM_SEQS", "16"))
 MAX_NUM_BATCHED_TOKENS = int(os.environ.get("VOXCPM_MAX_NUM_BATCHED_TOKENS", "8192"))
 MAX_MODEL_LEN = int(os.environ.get("VOXCPM_MAX_MODEL_LEN", "4096"))
