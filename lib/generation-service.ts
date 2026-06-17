@@ -134,7 +134,7 @@ export async function runGenerationForUser(params: {
     params.mode === "tts" ||
     ["male", "female", "sokha", "piseth", "maly", "dara", "natural khmer speech"].includes(voice.toLowerCase().trim());
   const isDefaultInstruction = voice === DEFAULT_CLONE_VOICE_INSTRUCTION;
-  const isCustomVoice = !isPreset && !isDefaultInstruction && voice.length > 0;
+  const isCustomVoice = !isPreset && !isDefaultInstruction && voice.length > 0 && !cloneSample;
 
   if (isCustomVoice) {
     const userVoice = await findUserVoiceById(params.userId, voice);
