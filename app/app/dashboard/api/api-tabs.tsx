@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import { KeyManager } from "@/app/app/dashboard/key-manager";
 import { clearDashboardCache } from "@/app/app/dashboard/dashboard-data-cache";
@@ -75,6 +75,15 @@ export function ApiTabs({
 }: ApiTabsProps) {
   const [activeTab, setActiveTab] = useState<ActiveTab>("keys");
   const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>(initialKeys);
+
+  // Sync the key list when fresh server data arrives (e.g. after a poll or
+  // cache invalidation). Previously the parent forced a full remount via a
+  // changing `key` prop to push new data in, but that also destroyed the
+  // one-time raw-key reveal panel before the user could copy it. Syncing via
+  // effect keeps KeyManager mounted so the reveal + its 5-minute timer survive.
+  useEffect(() => {
+    setApiKeys(initialKeys);
+  }, [initialKeys]);
 
   return (
     <section className="grid gap-6">

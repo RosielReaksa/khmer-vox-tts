@@ -182,7 +182,6 @@ export function ApiDashboardClient() {
 
       {loading && !data ? null : (
         <ApiTabs
-          key={`${normalKeys.length}:${data?.requestLogs.length ?? 0}:${data?.businessRequests[0]?.updatedAt ?? "none"}:${data?.webhookTests[0]?.createdAt ?? "none"}`}
           initialKeys={normalKeys}
           requestLogs={data?.requestLogs ?? []}
           batchJobs={data?.batchJobs ?? []}

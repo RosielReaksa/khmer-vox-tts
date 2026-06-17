@@ -48,6 +48,15 @@ export function KeyManager({
   const [keys, setKeys] = useState<ApiKeyItem[]>(initialKeys);
   const [name, setName] = useState("Primary key");
   const [dailyLimit, setDailyLimit] = useState("");
+
+  // Keep the displayed key list in sync with fresh server data (polls / cache
+  // invalidation) without disturbing the one-time `rawKey` reveal state below.
+  // This replaces the old parent-driven remount, which refreshed this list but
+  // also wiped the freshly created key reveal before it could be copied.
+  useEffect(() => {
+    setKeys(initialKeys);
+  }, [initialKeys]);
+
   const [monthlyLimit, setMonthlyLimit] = useState("");
   const [rawKey, setRawKey] = useState("");
   const [rawKeyExpiresAt, setRawKeyExpiresAt] = useState<number | null>(null);
@@ -60,6 +69,14 @@ export function KeyManager({
   const rawKeySecondsRemaining = rawKeyExpiresAt
     ? Math.max(0, Math.ceil((rawKeyExpiresAt - countdownNow) / 1000))
     : 0;
+
+  // Keep the displayed key list in sync with fresh server data (polls / cache
+  // invalidation) without disturbing the one-time `rawKey` reveal state. This
+  // replaces the old parent-driven remount, which used to refresh this list
+  // but also wiped the freshly created key reveal before it could be copied.
+  useEffect(() => {
+    setKeys(initialKeys);
+  }, [initialKeys]);
 
   useEffect(() => {
     if (!rawKey || !rawKeyExpiresAt) {
