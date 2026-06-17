@@ -527,6 +527,28 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## REVERTED buzz-aware chunk gate (TTS_AUDIO_TONAL_DELIVERY_BOOST_DB=0)
+
+Update on 2026-06-17 (~19:20):
+
+- After enabling the buzz gate at 13 (~18:20), user hit "All batch items
+  exhausted their retry limit" on the voice-cloning dashboard.
+- DB diagnosis (last 90 min): 3 batches completed, 2 needs_review; ~40 failed
+  items/generations ALL with "Upstream generated near-silent audio."
+- ROOT CAUSE: boost=13 lowers the per-chunk tonal RMS floor from -22 dB to
+  -35 dB (chunkTonalMinDbOverride = baseMinDb - boostDb). On the noisy
+  reference this made the tonal gate reject far more chunks; each rejection
+  retries with escalated temperature, and those escalated retries produced
+  NEAR-SILENT output -> retries exhausted -> whole batch fails. The gate was
+  too aggressive for this reference; it made things worse, not better.
+- ACTION: reverted `TTS_AUDIO_TONAL_DELIVERY_BOOST_DB=0` on web + worker
+  (env-only). Verified: BOTH deployments env=0, pods Running 1/1,
+  /api/health=200. The gate code remains in the image (dormant) but is OFF.
+- LESSON: do not raise the tonal delivery boost on noisy references. The buzz
+  gate is not a viable fix here. The real fix remains a CLEAN reference clip.
+  If revisiting, test the boost at a much lower value (e.g. 3-5) AND only
+  alongside a clean reference, measuring near-silent failure rate.
+
 ## prod-20260617-4 Deploy (fix API key reveal closing before copy)
 
 Update on 2026-06-17:
