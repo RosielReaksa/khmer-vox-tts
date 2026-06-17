@@ -527,6 +527,36 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## Enabled buzz-aware chunk gate in prod (TTS_AUDIO_TONAL_DELIVERY_BOOST_DB=13)
+
+Update on 2026-06-17:
+
+- User reported clone output sounds like "robot noise". Measured the file
+  `voxtts-clone-05b7db32...mp3`: 30 buzz runs (vs 10-11 earlier), 4.0s
+  stuck-tonal, worst yet. All using the same noisy reference
+  duration_probe_15s_d.wav.
+- Conclusion: server-side tuning (timesteps=20, temp=0.45, retries=2) has hit
+  its ceiling; the dominant cause is the noisy reference sample. VoxCPM2 clones
+  the reference noise/instability.
+- Attempted a local "best config" pipeline test (denoise + buzz-gate) but the
+  local tsx harness kept crashing with ENVIRONMENTAL Windows errors
+  (0xC0000409 stack overflow, 0xC0000142 DLL init, write EOF) — NOT code bugs
+  (same harness succeeded earlier today at 176s). Likely antivirus/OS
+  interference with node spawning ffmpeg repeatedly. Also learned denoise is a
+  per-request flag (cannot be forced via env), so it is not a deployable config.
+- ACTION: enabled the previously-dormant buzz-aware chunk gate in prod via
+  `TTS_AUDIO_TONAL_DELIVERY_BOOST_DB=13` (env-only, code already in
+  prod-20260617-3). This lowers the per-chunk tonal RMS floor by 13 dB so buzz
+  that only becomes audible after the delivery loudnorm boost is caught at the
+  chunk level (cheap targeted retry + temperature escalation) instead of only
+  the expensive whole-synthesis delivery retry.
+- Verified live: BUZZGATE=13, CLONE_TEMP=0.45, pods Running 1/1,
+  /api/health=200. Revert: `kubectl set env deployment/...
+  TTS_AUDIO_TONAL_DELIVERY_BOOST_DB-` (or set to 0).
+- NEXT: user to generate a clone through the live site; measure result. If buzz
+  drops, keep; else revert. HONEST CAVEAT: a clean reference clip remains the
+  single biggest lever — no gate can make a noisy reference produce clean audio.
+
 ## prod-20260617-3 Deploy (voice library lookup fix + buzz-aware gate code)
 
 Update on 2026-06-17:
