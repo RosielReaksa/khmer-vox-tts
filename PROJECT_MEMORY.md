@@ -527,6 +527,34 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## prod-20260617-4 Deploy (fix API key reveal closing before copy)
+
+Update on 2026-06-17:
+
+- User reported: creating a new API key auto-closes the one-time key reveal
+  before they can copy it.
+- ROOT CAUSE: `ApiDashboardClient` passed a `key` prop to `<ApiTabs>` that
+  included `${normalKeys.length}`. Creating a key called
+  `clearDashboardCache("dashboard:api")` -> react-query refetch -> key list
+  length increments -> the changing `key` prop forced React to UNMOUNT and
+  REMOUNT ApiTabs + its child KeyManager. The remount reset all KeyManager
+  state including `rawKey`, so the reveal panel (meant to last 5 min) vanished
+  within ~1s. The 5-minute timer never got a chance.
+- FIX (3 files, web-only):
+  1. app/app/dashboard/api/api-dashboard-client.tsx — removed the destructive
+     `key={...}` prop from <ApiTabs>.
+  2. app/app/dashboard/api/api-tabs.tsx — added `useEffect(() =>
+     setApiKeys(initialKeys), [initialKeys])` to sync server data without a
+     remount.
+  3. app/app/dashboard/key-manager.tsx — added matching
+     `useEffect(() => setKeys(initialKeys), [initialKeys])` so the key list
+     still updates on polls/invalidation while the separate `rawKey` reveal
+     state (and its timer) survive.
+- `initialKeys` is useMemo'd in the parent, so the sync effects do not loop.
+- Commit `175b961`. Build + typecheck + lint pass. Built/pushed
+  prod-20260617-4, deployed web + worker. Verified: image prod-20260617-4,
+  pods Running 1/1, /api/health=200, buzz gate still 13.
+
 ## Enabled buzz-aware chunk gate in prod (TTS_AUDIO_TONAL_DELIVERY_BOOST_DB=13)
 
 Update on 2026-06-17:
