@@ -527,6 +527,26 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## prod-20260617-3 Deploy (voice library lookup fix + buzz-aware gate code)
+
+Update on 2026-06-17:
+
+- Deployed commit `010992a` (skip voice library lookup when cloneSample already
+  provided) + `8e9f7d9` (dormant buzz-aware chunk gate) as `prod-20260617-3`.
+- Root cause of 188x 404 "Voice not found in library" errors: callers sending a
+  `voice` field (e.g. `male_800e`) alongside a reference audio to
+  `/api/v1/audio/clone`. The generation-service treated unrecognized voice
+  strings as user voice library IDs and tried a DB lookup, which failed 404.
+- Fix: one-line change in `lib/generation-service.ts` — skip the library lookup
+  if `cloneSample` is already provided in the request. The `voice` field becomes
+  a display name only. Backward compatible, no caller changes needed.
+- Also includes the dormant buzz-aware chunk gate code (env-gated off by default
+  via TTS_AUDIO_TONAL_DELIVERY_BOOST_DB=0).
+- Build + typecheck + lint all pass. Pushed to GHCR, deployed to both web +
+  worker. Verified: image prod-20260617-3, pods Running 1/1, /api/health=200,
+  env vars intact (TTS_INFERENCE_TIMESTEPS=20, TTS_CLONE_TEMPERATURE=0.45,
+  TTS_FINAL_QUALITY_RETRIES=2).
+
 ## Clone path tuned toward preset path + dormant buzz-aware chunk gate
 
 Update on 2026-06-17:
