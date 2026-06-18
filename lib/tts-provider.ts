@@ -2210,17 +2210,18 @@ async function synthesizeSingleChunk(
       // the same intended voice while still using the preset reference sample.
       // Add consistent voice description for preset voices to ensure consistency.
       payload.voice = params.voice === "male" || params.voice === "female"
-        ? "same speaker as the reference audio, natural clear speech, consistent tone, smooth pace"
+        ? "same speaker as the reference audio, natural clear speech, consistent tone, smooth pace, same voice every time"
         : params.voice;
       // OFFICIAL VoxCPM2 default temperature is 1.0 (see nanovllm_voxcpm source).
       // Lower values (0.45-0.55) make output deterministic but can cause the
       // model to get stuck on patterns, producing more buzz/noise artifacts.
-      // For preset voices, use 0.8 for more consistent voice across segments.
+      // For preset voices, use 0.6 for maximum consistency.
       payload.temperature = retryAdjustedTemperature(
-        readNumericEnv("TTS_PRESET_TEMPERATURE", 0.8, 0.1, 2.0),
+        readNumericEnv("TTS_PRESET_TEMPERATURE", 0.6, 0.1, 2.0),
         qualityRetryAttempt,
       );
       // CFG (guidance scale): official VoxCPM2 default is 2.0.
+      // Higher CFG = more faithful to reference audio = more consistent voice.
       payload.cfg_value = retryAdjustedCfg(
         readNumericEnv("TTS_PRESET_CFG_VALUE", 2.0, 0.1, 2.0),
         qualityRetryAttempt,
