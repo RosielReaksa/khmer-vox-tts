@@ -2988,11 +2988,41 @@ BATCH_ITEM_RETRY_MAX_MS="300000"   # Max retry delay in ms (default: 300000)
 ### Deployment Status
 
 DEPLOYED to **production VPS** `152.42.203.77` on 2026-06-18.
-Image: `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260618-1`.
+Image: `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260618-2`.
 All pods running: 2 web replicas + 1 worker + postgres.
 Health check: `{"status":"ok","store":"postgres"}`.
 Also deployed to staging VPS `178.128.103.120` (image: `latest`).
 SSH keys set up for both VPS servers (passwordless access).
+
+### Voice Consistency Fix (2026-06-18)
+
+Fixed voice inconsistency across segments in batch/long-text generation.
+
+**Problem**: When generating multiple segments with the same voice reference,
+each segment had different speed, pitch, volume, and tone characteristics,
+making the merged audio sound unnatural.
+
+**Root Cause**:
+- VoxCPM2 diffusion-based generation has inherent randomness
+- Temperature 1.0 caused too much variation between segments
+- No post-processing normalization across segments
+
+**Solution**:
+1. Lowered clone temperature from 1.0 to 0.8 for more consistent voice
+2. Updated default voice instruction to include "consistent tone, smooth pace"
+3. Added volume normalization across segments before merging:
+   - Measures RMS (loudness) of each segment
+   - Calculates target level (median of all segments)
+   - Adjusts each segment to match target (±6dB limit)
+
+**Files Changed**:
+- `lib/tts-provider.ts`: Added `normalizeSegmentVolumes()`, `measureMp3Rms()`, `applyMp3Gain()`
+- `lib/voice-defaults.ts`: Updated `DEFAULT_CLONE_VOICE_INSTRUCTION`
+
+**Configuration**:
+```
+TTS_CLONE_TEMPERATURE=0.8  # Lower = more consistent (default: 0.8, was 1.0)
+```
 
 ## Next Priorities
 
