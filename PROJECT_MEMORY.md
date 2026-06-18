@@ -2987,8 +2987,12 @@ BATCH_ITEM_RETRY_MAX_MS="300000"   # Max retry delay in ms (default: 300000)
 
 ### Deployment Status
 
-DEPLOYED to VPS `178.128.103.120` on 2026-06-18. Image: `ghcr.io/rosielreaksa/khmer-vox-tts:latest`.
-Health check: `{"status":"ok","store":"postgres"}`. All pods running (web + worker + postgres).
+DEPLOYED to **production VPS** `152.42.203.77` on 2026-06-18.
+Image: `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260618-1`.
+All pods running: 2 web replicas + 1 worker + postgres.
+Health check: `{"status":"ok","store":"postgres"}`.
+Also deployed to staging VPS `178.128.103.120` (image: `latest`).
+SSH keys set up for both VPS servers (passwordless access).
 
 ## Next Priorities
 
