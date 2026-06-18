@@ -2987,7 +2987,8 @@ BATCH_ITEM_RETRY_MAX_MS="300000"   # Max retry delay in ms (default: 300000)
 
 ### Deployment Status
 
-LOCAL-ONLY, not deployed yet. Needs VPS deployment.
+DEPLOYED to VPS `178.128.103.120` on 2026-06-18. Image: `ghcr.io/rosielreaksa/khmer-vox-tts:latest`.
+Health check: `{"status":"ok","store":"postgres"}`. All pods running (web + worker + postgres).
 
 ## Next Priorities
 
