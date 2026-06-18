@@ -62,7 +62,12 @@ function readRequiredUpstreamUrl(): string {
 
 type AudioResponseFormat = typeof PUBLIC_AUDIO_OUTPUT_FORMAT | "wav" | "ogg" | "webm";
 
-const DEFAULT_REFERENCE_AUDIO_FILTER = "highpass=f=70,lowpass=f=7600,loudnorm=I=-23:TP=-3:LRA=11";
+// OFFICIAL VoxCPM2: send clean reference audio as-is with no filtering.
+// The model encodes reference into latents; any pre-processing degrades the
+// voice identity the model learns. Only convert format (mono 16kHz WAV).
+// Override with TTS_REFERENCE_AUDIO_FILTER env if a specific reference needs
+// cleanup (e.g. "highpass=f=70,lowpass=f=12000").
+const DEFAULT_REFERENCE_AUDIO_FILTER = "";
 const DEFAULT_GENERATED_CHUNK_SILENCE_FILTER =
   "silenceremove=start_periods=1:start_duration=0.10:start_threshold=-45dB:start_silence=0.15:stop_periods=-1:stop_duration=1.25:stop_threshold=-45dB:stop_silence=0.25";
 const DEFAULT_GENERATED_FINAL_SILENCE_FILTER =
@@ -1457,6 +1462,114 @@ export async function cleanPublicMp3ForDelivery(
   return normalizeToPublicMp3(bytes, looksLikeWav(bytes) ? "audio/wav" : PUBLIC_AUDIO_CONTENT_TYPE, outputSeconds);
 }
 
+/**
+ * Normalize volume across multiple MP3 segments to ensure consistent loudness.
+ * Measures RMS of each segment and adjusts gain to match the median level.
+ */
+async function normalizeSegmentVolumes(segments: Uint8Array[]): Promise<Uint8Array[]> {
+  if (segments.length <= 1) return segments;
+
+  try {
+    // Measure RMS of each segment
+    const rmsValues: number[] = [];
+    for (const segment of segments) {
+      const rms = await measureMp3Rms(segment);
+      rmsValues.push(rms);
+    }
+
+    // Calculate target RMS (median of all segments)
+    const sortedRms = [...rmsValues].sort((a, b) => a - b);
+    const targetRms = sortedRms[Math.floor(sortedRms.length / 2)];
+
+    // Adjust each segment to match target RMS
+    const normalizedSegments: Uint8Array[] = [];
+    for (let i = 0; i < segments.length; i++) {
+      const currentRms = rmsValues[i];
+      if (currentRms <= 0 || targetRms <= 0) {
+        normalizedSegments.push(segments[i]);
+        continue;
+      }
+
+      const gainDb = 20 * Math.log10(targetRms / currentRms);
+      // Limit gain adjustment to ±6dB to prevent extreme changes
+      const clampedGainDb = Math.max(-6, Math.min(6, gainDb));
+
+      if (Math.abs(clampedGainDb) < 0.5) {
+        // Gain change is too small, skip processing
+        normalizedSegments.push(segments[i]);
+        continue;
+      }
+
+      const adjusted = await applyMp3Gain(segments[i], clampedGainDb);
+      normalizedSegments.push(adjusted);
+    }
+
+    return normalizedSegments;
+  } catch (error) {
+    // If normalization fails, return original segments
+    console.warn("[tts-provider] Segment volume normalization failed:", error);
+    return segments;
+  }
+}
+
+/**
+ * Measure RMS (loudness) of an MP3 file using ffmpeg
+ */
+async function measureMp3Rms(mp3Bytes: Uint8Array): Promise<number> {
+  try {
+    const stderr = await runFfmpegCollectStderr(
+      ["-hide_banner", "-nostdin", "-i", "pipe:0", "-af", "volumedetect", "-f", "null", "-"],
+      mp3Bytes,
+    );
+
+    // Parse mean_volume from ffmpeg output
+    const meanMatch = stderr.match(/mean_volume:\s*([-\d.]+)\s*dB/);
+    if (meanMatch) {
+      return Math.pow(10, parseFloat(meanMatch[1]) / 20);
+    }
+
+    // Fallback: measure RMS directly
+    const rmsMatch = stderr.match(/\[Parsed_volumedetect_0.*?\] n_samples:\s*(\d+)/);
+    if (rmsMatch) {
+      return 1.0; // Default RMS if parsing fails
+    }
+
+    return 1.0;
+  } catch {
+    return 1.0;
+  }
+}
+
+/**
+ * Apply gain adjustment to MP3 using ffmpeg
+ */
+async function applyMp3Gain(mp3Bytes: Uint8Array, gainDb: number): Promise<Uint8Array> {
+  try {
+    const output = await runFfmpeg(
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-af",
+        `volume=${gainDb.toFixed(1)}dB`,
+        "-codec:a",
+        "libmp3lame",
+        "-b:a",
+        readPublicMp3Bitrate(),
+        "-f",
+        "mp3",
+        "pipe:1",
+      ],
+      mp3Bytes,
+    );
+    return output.byteLength > 0 ? output : mp3Bytes;
+  } catch {
+    return mp3Bytes;
+  }
+}
+
 export async function mergePublicMp3SegmentsForDelivery(
   buffers: Uint8Array[],
   outputSeconds: number | null,
@@ -1483,7 +1596,11 @@ export async function mergePublicMp3SegmentsForDelivery(
     }
   }
 
-  const merged = await concatMp3Buffers(publicSegments);
+  // Normalize volume across segments before merging
+  // This ensures consistent loudness across all segments
+  const volumeNormalizedSegments = await normalizeSegmentVolumes(publicSegments);
+
+  const merged = await concatMp3Buffers(volumeNormalizedSegments);
   const depaused = await capLongPauses(merged);
   const denoised = await reduceOutputNoise(depaused);
   const normalized = await normalizeOutputLoudness(denoised);
@@ -2063,21 +2180,27 @@ async function synthesizeSingleChunk(
       if (params.denoiseReference === true) {
         payload.denoise = true;
       }
-      if (process.env.TTS_CLONE_USE_VOICE_DESCRIPTION?.trim().toLowerCase() === "true") {
+      // OFFICIAL VoxCPM2: clone mode uses a parenthetical voice description
+      // prepended to the text (e.g. "(same speaker, clear speech)text...").
+      // This guides the model on how to interpret the reference audio.
+      // Disable with TTS_CLONE_USE_VOICE_DESCRIPTION=false if needed.
+      if (process.env.TTS_CLONE_USE_VOICE_DESCRIPTION?.trim().toLowerCase() !== "false") {
         payload.voice = normalizeCloneVoiceDescription(params.voice);
       } else {
         delete payload.voice;
       }
+      // OFFICIAL VoxCPM2 default temperature is 1.0 (see nanovllm_voxcpm source).
+      // Lower values (0.45-0.55) make output deterministic but can cause the
+      // model to get stuck on patterns, producing more buzz/noise artifacts.
+      // For clone mode, use 0.8 for more consistent voice across segments.
       payload.temperature = retryAdjustedTemperature(
-        readNumericEnv("TTS_CLONE_TEMPERATURE", 0.55, 0.1, 2.0),
+        readNumericEnv("TTS_CLONE_TEMPERATURE", 0.8, 0.1, 2.0),
         qualityRetryAttempt,
       );
-      // CFG (guidance scale) is hard-capped at 2.0. Values above ~2 make VoxCPM2
-      // over-adhere to the prompt/reference and produce broken/distorted audio
-      // (observed at 3). Keep the ceiling at 2.0 so a misconfigured env can never
-      // push it higher; default stays 2.0. On buzz/silence retries, CFG can be
-      // stepped DOWN toward TTS_RETRY_CFG_MIN (per VoxCPM docs) when
-      // TTS_RETRY_CFG_STEP is set, complementing the temperature escalation.
+      // CFG (guidance scale): official VoxCPM2 default is 2.0. The docs recommend
+      // reducing to 1.5-1.6 for unstable long-form output, but 2.0 is the
+      // standard for normal clone requests. On buzz/silence retries, CFG can be
+      // stepped DOWN toward TTS_RETRY_CFG_MIN when TTS_RETRY_CFG_STEP is set.
       payload.cfg_value = retryAdjustedCfg(
         readNumericEnv("TTS_CLONE_CFG_VALUE", 2.0, 0.1, 2.0),
         qualityRetryAttempt,
@@ -2086,13 +2209,12 @@ async function synthesizeSingleChunk(
       // Standard preset TTS keeps the fixed speaker hint so the model stays on
       // the same intended voice while still using the preset reference sample.
       payload.voice = params.voice;
+      // OFFICIAL VoxCPM2 default temperature is 1.0 (see nanovllm_voxcpm source).
       payload.temperature = retryAdjustedTemperature(
-        readNumericEnv("TTS_PRESET_TEMPERATURE", 0.45, 0.1, 2.0),
+        readNumericEnv("TTS_PRESET_TEMPERATURE", 1.0, 0.1, 2.0),
         qualityRetryAttempt,
       );
-      // CFG (guidance scale) is hard-capped at 2.0 for the same reason as clone:
-      // higher values (e.g. 3) make VoxCPM2 produce broken/distorted audio.
-      // Stepped down on retries when TTS_RETRY_CFG_STEP is configured.
+      // CFG (guidance scale): official VoxCPM2 default is 2.0.
       payload.cfg_value = retryAdjustedCfg(
         readNumericEnv("TTS_PRESET_CFG_VALUE", 2.0, 0.1, 2.0),
         qualityRetryAttempt,

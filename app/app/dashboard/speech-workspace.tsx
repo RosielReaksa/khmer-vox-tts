@@ -129,6 +129,9 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
   const [sampleFile, setSampleFile] = useState<File | null>(snapshot.sampleFile);
   const [voiceConsent, setVoiceConsent] = useState(snapshot.voiceConsent);
   const [denoiseReference, setDenoiseReference] = useState(false);
+  const [audioSpeed, setAudioSpeed] = useState(1.0);
+  const [audioPitch, setAudioPitch] = useState(0);
+  const [audioVolume, setAudioVolume] = useState(0);
   const [result, setResult] = useState<GenerationResponse | null>(snapshot.result);
   const [audioUrl, setAudioUrl] = useState(snapshot.audioUrl);
   const [error, setError] = useState(snapshot.error);
