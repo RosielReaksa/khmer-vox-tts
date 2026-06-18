@@ -2951,6 +2951,44 @@ Fix (deterministic, pitch-preserving, env-gated, default OFF):
   rollout (suggest starting at 0.92). Standard voices stay untouched (leave
   TTS_OUTPUT_TEMPO=1.0).
 
+## Batch Retry Improvements (2026-06-18)
+
+Voice cloning batch jobs sometimes failed with "Generated 4 of 5 segments.
+Retry failed" due to transient upstream errors (Modal GPU timeouts, empty audio
+responses, rate limits). The retry mechanism was too conservative.
+
+### Changes Made
+
+**`lib/batch-service.ts`:**
+- Increased `BATCH_ITEM_MAX_ATTEMPTS` default: 3 → 5 (more retry chances)
+- Decreased `BATCH_ITEM_RETRY_BASE_MS` default: 30,000ms → 10,000ms (faster retries)
+  - New backoff: 10s, 20s, 40s, 80s, 160s (was 30s, 60s, 120s, 240s, 300s)
+- Added `isTransientBatchError()` function for smart error classification:
+  - **Transient** (retry up to 5x): timeout, empty audio, near-silent, upstream/Modal errors, network issues, HTTP 502/503/504, rate limits
+  - **Permanent** (stop immediately): account suspended, insufficient tokens, voice consent required, invalid API key
+- Error messages now show failure type: `"error (retries exhausted)"` or `"error (permanent error)"`
+
+**`app/app/dashboard/speech-workspace.tsx`:**
+- Improved partial job error message: shows count of failed segments
+- Before: `"Generated 4 of 5 segments. Retry failed lines from Batch Jobs."`
+- After: `"Generated 4 of 5 segments. 1 failed — retry from Batch Jobs."`
+
+**`.env.example`:**
+- Updated default values for `BATCH_ITEM_MAX_ATTEMPTS` and `BATCH_ITEM_RETRY_BASE_MS`
+
+### Configuration
+
+Override via environment variables:
+```
+BATCH_ITEM_MAX_ATTEMPTS="5"        # Max retry attempts per segment (default: 5)
+BATCH_ITEM_RETRY_BASE_MS="10000"   # Base retry delay in ms (default: 10000)
+BATCH_ITEM_RETRY_MAX_MS="300000"   # Max retry delay in ms (default: 300000)
+```
+
+### Deployment Status
+
+LOCAL-ONLY, not deployed yet. Needs VPS deployment.
+
 ## Next Priorities
 
 1. Configure Spaces env vars locally and run a real upload/download smoke test.

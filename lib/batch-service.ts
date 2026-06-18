@@ -584,13 +584,39 @@ function maxStuckRecoveries(): number {
 
 function maxBatchItemAttempts(): number {
   const configured = Number(process.env.BATCH_ITEM_MAX_ATTEMPTS);
-  return Number.isInteger(configured) && configured > 0 ? configured : 3;
+  return Number.isInteger(configured) && configured > 0 ? configured : 5;
+}
+
+// Classify errors as transient (worth retrying) or permanent (stop retrying).
+// Transient errors are network issues, timeouts, and upstream blips that often
+// succeed on the next attempt. Permanent errors are auth failures, validation
+// errors, and account issues that will keep failing.
+function isTransientBatchError(error: unknown): boolean {
+  if (!(error instanceof Error)) return true;
+  const msg = error.message.toLowerCase();
+  // Permanent errors — stop retrying immediately
+  if (msg.includes("account") && msg.includes("suspend")) return false;
+  if (msg.includes("insufficient") && msg.includes("token")) return false;
+  if (msg.includes("voice clone consent")) return false;
+  if (msg.includes("permission")) return false;
+  if (msg.includes("invalid") && msg.includes("api key")) return false;
+  // Transient errors — worth retrying
+  if (msg.includes("timeout") || msg.includes("timed out")) return true;
+  if (msg.includes("empty") || msg.includes("no audio")) return true;
+  if (msg.includes("near-silent") || msg.includes("silent")) return true;
+  if (msg.includes("upstream") || msg.includes("modal")) return true;
+  if (msg.includes("fetch") || msg.includes("network")) return true;
+  if (msg.includes("502") || msg.includes("503") || msg.includes("504")) return true;
+  if (msg.includes("rate limit")) return true;
+  // Default: treat as transient (retry)
+  return true;
 }
 
 function retryBackoffMs(attemptCount: number): number {
   const base = Number(process.env.BATCH_ITEM_RETRY_BASE_MS);
   const max = Number(process.env.BATCH_ITEM_RETRY_MAX_MS);
-  const baseMs = Number.isInteger(base) && base > 0 ? base : 30_000;
+  // First retry: 10s, then 20s, 40s, 80s, 160s (capped at max)
+  const baseMs = Number.isInteger(base) && base > 0 ? base : 10_000;
   const maxMs = Number.isInteger(max) && max > 0 ? max : 5 * 60 * 1000;
   return Math.min(baseMs * Math.max(1, 2 ** Math.max(0, attemptCount - 1)), maxMs);
 }
@@ -1077,12 +1103,17 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
             error instanceof Error && error.message.trim()
               ? error.message.slice(0, 260)
               : "Batch item failed.";
-          const exhausted = runningItem.attemptCount >= maxBatchItemAttempts();
+          // For permanent errors, don't retry — fail immediately.
+          // For transient errors, retry up to maxBatchItemAttempts().
+          const transient = isTransientBatchError(error);
+          const exhausted = !transient || runningItem.attemptCount >= maxBatchItemAttempts();
           await updateBatchJobItem({
             itemId: runningItem.id,
             status: "failed",
             nextRetryAt: exhausted ? null : nextRetryIso(runningItem.attemptCount),
-            errorMessage: message,
+            errorMessage: exhausted
+              ? `${message} (${transient ? "retries exhausted" : "permanent error"})`
+              : message,
           });
           lastWorkerError = message;
 

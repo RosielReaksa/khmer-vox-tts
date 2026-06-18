@@ -301,7 +301,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
             commitWorkspaceSnapshot(mode, {
               busy: false,
               error: job.status === "partial"
-                ? `Generated ${job.completedItems} of ${job.totalItems} segments. Retry failed lines from Batch Jobs.`
+                ? `Generated ${job.completedItems} of ${job.totalItems} segments. ${job.failedItems} failed — retry from Batch Jobs.`
                 : "",
               result: mergedData,
               audioUrl: url,
