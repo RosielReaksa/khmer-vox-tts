@@ -7,7 +7,7 @@ const features = [
   {
     title: "Khmer TTS API",
     description:
-      "Generate speech from text and return MP3 audio in a single request.",
+      "Generate speech from text and return WAV audio in a single request.",
   },
   {
     title: "Session Clone Voice",
@@ -35,7 +35,7 @@ const steps = [
   "Create an account and receive 100 free tokens.",
   "Buy a token pack with the KHQRcc ABA Pay QR checkout.",
   "Generate speech in the dashboard or from an API key.",
-  "Download MP3 files, batch ZIP files, or integrate responses in your own app.",
+  "Download WAV files, batch ZIP files, or integrate responses in your own app.",
 ];
 
 const plans = [

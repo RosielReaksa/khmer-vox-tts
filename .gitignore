@@ -32,6 +32,7 @@ artifacts/
 cleanup_reports/
 scratch/
 tmp_clone_verify/
+test-output/
 .antigravitycli/
 STITCH_OUTPUT.html
 download.txt

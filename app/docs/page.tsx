@@ -39,19 +39,19 @@ const navItems = [
 const platformStats = [
   ["Base URL", baseUrl],
   ["Authentication", "Bearer API key"],
-  ["Output", "MP3 audio + async MP3/ZIP job downloads"],
+  ["Output", "WAV audio + async WAV/ZIP job downloads"],
 ];
 
 const endpointCards = [
   {
     title: "Async Speech V2",
     path: "/api/v2/audio/jobs",
-    note: "Business-safe queued TTS: submit, poll status, download merged MP3.",
+    note: "Business-safe queued TTS: submit, poll status, download merged WAV.",
   },
   {
     title: "Async Clone V2",
     path: "/api/v2/audio/clone/jobs",
-    note: "Queued clone voice with reference audio, webhooks, and merged MP3 output.",
+    note: "Queued clone voice with reference audio, webhooks, and merged WAV output.",
   },
   {
     title: "Speech",
@@ -134,8 +134,8 @@ export default function ApiDocsPage() {
                   <p className="font-body text-sm leading-relaxed text-on-surface-variant border-l-4 border-outline pl-4 mb-6">
                     Khmer Vox TTS exposes audio endpoints backed by VoxCPM. For production apps and business
                     customers, use clone voice with a reference audio sample because normal VoxCPM speech can
-                    change speaker between generations. Single calls return MP3 audio bytes; batch calls create
-                    queued jobs that can be polled or downloaded as ZIP files containing MP3 files.
+                    change speaker between generations. Single calls return WAV audio bytes; batch calls create
+                    queued jobs that can be polled or downloaded as ZIP files containing WAV files.
                   </p>
                   <div className="flex flex-wrap gap-3">
                     <Link href="#test-console" className="px-5 py-3 bg-primary text-on-primary border-2 border-outline font-headline font-bold uppercase text-xs shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:bg-[#0055ff] transition-colors active:translate-x-0.5 active:translate-y-0.5 active:shadow-none">
@@ -189,7 +189,7 @@ export default function ApiDocsPage() {
                 <Step number={1} text="Create an account or sign in." />
                 <Step number={2} text="Buy Creator, Pro, or a paid token pack from Billing. Free accounts cannot create or use API keys." />
                 <Step number={3} text="Open Dashboard > API and create an API key. Daily and monthly limits are optional." />
-                <Step number={4} text="For production apps, use the V2 async job API: submit text or clone jobs, poll status, then download the merged MP3." />
+                <Step number={4} text="For production apps, use the V2 async job API: submit text or clone jobs, poll status, then download the merged WAV." />
               </ol>
             </section>
 
@@ -217,11 +217,11 @@ export default function ApiDocsPage() {
                 <DubbingSetupCard
                   title="2. Production segments"
                   body="For many short lines, call /api/v2/audio/clone/jobs with items. Put your segment ID in id or external_id so status payloads map back to your video segments."
-                  code={`items[0].id=episode01_seg_0001\nitems[0].text=Khmer line text\noutput=merged MP3 + ZIP`}
+                  code={`items[0].id=episode01_seg_0001\nitems[0].text=Khmer line text\noutput=merged WAV + ZIP`}
                 />
                 <DubbingSetupCard
                   title="3. Timing work"
-                  body="The API returns MP3 audio. Your dubber should trim leading silence and fit audio to the target video timing after download."
+                  body="The API returns WAV audio. Your dubber should trim leading silence and fit audio to the target video timing after download."
                   code={`trim leading silence\nfit to start_ms/end_ms\nmix into video`}
                 />
               </div>
@@ -236,19 +236,19 @@ export default function ApiDocsPage() {
               method="POST"
               path="/api/v2/audio/jobs"
               title="Async Audio Jobs V2"
-              description="Recommended business path. Submit a job, poll status, then download one merged MP3. Long text is split into safe worker segments automatically."
+              description="Recommended business path. Submit a job, poll status, then download one merged WAV. Long text is split into safe worker segments automatically."
             >
               <CodeBlock
                 title="Standard TTS job"
-                code={`curl -X POST "${baseUrl}/api/v2/audio/jobs" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  --data '{\n    "input": "long script text here",\n    "voice": "female",\n    "model": "voxcpm2",\n    "webhook_url": "https://your-app.com/tts-webhook",\n    "output_format": "mp3"\n  }'`}
+                code={`curl -X POST "${baseUrl}/api/v2/audio/jobs" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  --data '{\n    "input": "long script text here",\n    "voice": "female",\n    "model": "voxcpm2",\n    "webhook_url": "https://your-app.com/tts-webhook",\n    "output_format": "wav"\n  }'`}
               />
               <CodeBlock
                 title="Clone Voice job"
-                code={`curl -X POST "${baseUrl}/api/v2/audio/clone/jobs" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -F "sample=@reference.wav;type=audio/wav" \\\n  -F "input=long script text here" \\\n  -F "voice_consent=true" \\\n  -F "webhook_url=https://your-app.com/tts-webhook" \\\n  -F "output_format=mp3"`}
+                code={`curl -X POST "${baseUrl}/api/v2/audio/clone/jobs" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -F "sample=@reference.wav;type=audio/wav" \\\n  -F "input=long script text here" \\\n  -F "voice_consent=true" \\\n  -F "webhook_url=https://your-app.com/tts-webhook" \\\n  -F "output_format=wav"`}
               />
               <CodeBlock
                 title="Poll and download"
-                code={`curl -H "Authorization: Bearer YOUR_API_KEY" \\\n  "${baseUrl}/api/v2/audio/jobs/JOB_ID"\n\ncurl -H "Authorization: Bearer YOUR_API_KEY" \\\n  --output result.mp3 \\\n  "${baseUrl}/api/v2/audio/jobs/JOB_ID/audio"`}
+                code={`curl -H "Authorization: Bearer YOUR_API_KEY" \\\n  "${baseUrl}/api/v2/audio/jobs/JOB_ID"\n\ncurl -H "Authorization: Bearer YOUR_API_KEY" \\\n  --output result.wav \\\n  "${baseUrl}/api/v2/audio/jobs/JOB_ID/audio"`}
               />
               <FieldTable
                 rows={[
@@ -269,18 +269,18 @@ export default function ApiDocsPage() {
             >
               <CodeBlock
                 title="cURL"
-                code={`curl -X POST "${baseUrl}/api/v1/audio/speech" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  --output speech.mp3 \\\n  --data '{\n    "model": "voxcpm2",\n    "voice": "female",  # Optional: "female" (Sokha) or "male" (Piseth)\n    "input": "soursdey nih ku chea somleng khmer",\n    "output_format": "mp3"\n  }'`}
+                code={`curl -X POST "${baseUrl}/api/v1/audio/speech" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  --output speech.wav \\\n  --data '{\n    "model": "voxcpm2",\n    "voice": "female",  # Optional: "female" (Sokha) or "male" (Piseth)\n    "input": "soursdey nih ku chea somleng khmer",\n    "output_format": "wav"\n  }'`}
               />
               <CodeBlock
                 title="Python"
-                code={`import requests\n\nresponse = requests.post(\n    "${baseUrl}/api/v1/audio/speech",\n    headers={\n        "Authorization": "Bearer YOUR_API_KEY",\n        "Content-Type": "application/json",\n    },\n    json={\n        "model": "voxcpm2",\n        "voice": "female",  # Optional: "female" (Sokha) or "male" (Piseth)\n        "input": "soursdey nih ku chea somleng khmer",\n        "output_format": "mp3",\n    },\n    timeout=600,\n)\nresponse.raise_for_status()\nopen("speech.mp3", "wb").write(response.content)\nprint(response.headers.get("X-Remaining-Tokens"))`}
+                code={`import requests\n\nresponse = requests.post(\n    "${baseUrl}/api/v1/audio/speech",\n    headers={\n        "Authorization": "Bearer YOUR_API_KEY",\n        "Content-Type": "application/json",\n    },\n    json={\n        "model": "voxcpm2",\n        "voice": "female",  # Optional: "female" (Sokha) or "male" (Piseth)\n        "input": "soursdey nih ku chea somleng khmer",\n        "output_format": "wav",\n    },\n    timeout=600,\n)\nresponse.raise_for_status()\nopen("speech.wav", "wb").write(response.content)\nprint(response.headers.get("X-Remaining-Tokens"))`}
               />
               <FieldTable
                 rows={[
                   ["input", "string", `Required. 1 to ${MAX_TEXT_CHARS.toLocaleString()} characters.`],
                   ["voice", "string", "Optional. Set to 'female' (default preset, Sokha) or 'male' (Piseth) to select standard voices."],
                   ["model", "string", "Optional. Default comes from the deployed worker, usually voxcpm2."],
-                  ["output_format", "string", "Optional. Only mp3 is supported by the public API."],
+                  ["output_format", "string", "Optional. The public API always returns WAV. The field is accepted for backward compatibility."],
                 ]}
               />
             </EndpointSection>
@@ -294,11 +294,11 @@ export default function ApiDocsPage() {
             >
               <CodeBlock
                 title="Multipart upload recommended"
-                code={`curl -X POST "${baseUrl}/api/v1/audio/clone" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  --output cloned.mp3 \\\n  -F "sample=@reference.wav;type=audio/wav" \\\n  -F "input=soursdey nih ku chea somleng khmer" \\\n  -F "model=voxcpm2" \\\n  -F "voice_consent=true" \\\n  -F "output_format=mp3"`}
+                code={`curl -X POST "${baseUrl}/api/v1/audio/clone" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  --output cloned.wav \\\n  -F "sample=@reference.wav;type=audio/wav" \\\n  -F "input=soursdey nih ku chea somleng khmer" \\\n  -F "model=voxcpm2" \\\n  -F "voice_consent=true" \\\n  -F "output_format=wav"`}
               />
               <CodeBlock
                 title="Python multipart file send"
-                code={`import requests\n\nfiles = {\n    "sample": ("ref.wav", open("reference.wav", "rb"), "audio/wav"),\n}\ndata = {\n    "input": "soursdey nih ku chea somleng khmer",\n    "model": "voxcpm2",\n    "voice_consent": "true",\n    "output_format": "mp3",\n}\n\nresponse = requests.post(\n    "${baseUrl}/api/v1/audio/clone",\n    headers={"Authorization": "Bearer YOUR_API_KEY"},\n    files=files,\n    data=data,\n    timeout=600,\n)\nresponse.raise_for_status()\nopen("cloned.mp3", "wb").write(response.content)`}
+                code={`import requests\n\nfiles = {\n    "sample": ("ref.wav", open("reference.wav", "rb"), "audio/wav"),\n}\ndata = {\n    "input": "soursdey nih ku chea somleng khmer",\n    "model": "voxcpm2",\n    "voice_consent": "true",\n    "output_format": "wav",\n}\n\nresponse = requests.post(\n    "${baseUrl}/api/v1/audio/clone",\n    headers={"Authorization": "Bearer YOUR_API_KEY"},\n    files=files,\n    data=data,\n    timeout=600,\n)\nresponse.raise_for_status()\nopen("cloned.wav", "wb").write(response.content)`}
               />
               <FieldTable
                 rows={[
@@ -382,10 +382,10 @@ export default function ApiDocsPage() {
             <section id="responses" className="scroll-mt-24 border-4 border-outline bg-white p-6 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] text-left">
               <h2 className="text-3xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-4 mb-6">Response Metadata</h2>
               <p className="font-body text-sm text-on-surface-variant leading-relaxed mb-6">
-                All successful speech and clone endpoints return the raw MP3 audio bytes directly in the response body. Additional usage metadata is provided via HTTP headers.
+                All successful speech and clone endpoints return the raw WAV audio bytes directly in the response body. Additional usage metadata is provided via HTTP headers.
               </p>
               <div className="grid gap-4">
-                <InfoCard title="Content-Type" value="audio/mpeg" />
+                <InfoCard title="Content-Type" value="audio/wav" />
                 <InfoCard title="X-Remaining-Tokens" value="Available prepaid token balance left on the user's account after deducting for this request." />
                 <InfoCard title="X-Credits-Charged" value="Prepaid tokens deducted for the generation duration." />
                 <InfoCard title="X-Generation-Duration-Seconds" value="The exact duration of the generated audio in seconds (used to calculate X-Credits-Charged)." />

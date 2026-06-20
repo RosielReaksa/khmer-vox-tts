@@ -56,7 +56,7 @@ function sampleResult(overrides: Partial<WorkspaceGenerationResult> = {}): Works
   return {
     generationId: "gen_123",
     audioBase64: "QUJDRA==",
-    contentType: "audio/mpeg",
+    contentType: "audio/wav",
     creditsRequested: 10,
     creditsCharged: 10,
     remainingTokens: 990,
@@ -150,9 +150,21 @@ test("corrupt stored JSON is ignored, not thrown", () => {
   assert.equal(readResult("tts"), null);
 });
 
-test("stored result missing audioBase64 is rejected", () => {
+test("stored result without inline audio or audio url is rejected", () => {
   storage.setItem(resultStorageKey("tts"), JSON.stringify({ result: { generationId: "x" }, updatedAtLabel: "y" }));
   assert.equal(readResult("tts"), null);
+});
+
+test("stored result with streamed audio url is accepted", () => {
+  const payload: PersistedResult = {
+    result: sampleResult({
+      audioBase64: undefined,
+      audioUrl: "/api/batch/jobs/job_1/merged/audio",
+    }),
+    updatedAtLabel: "11:00:00 AM",
+  };
+  persistResult("tts", payload);
+  assert.equal(readResult("tts")?.result.audioUrl, "/api/batch/jobs/job_1/merged/audio");
 });
 
 test("quota error on persist is non-fatal and skips restore", () => {

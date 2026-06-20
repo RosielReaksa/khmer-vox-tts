@@ -517,7 +517,7 @@ async function saveMergedDashboardHistory(
         scope: "merged",
         userId: job.userId,
         id: job.id,
-        fileName: `${job.id}.mp3`,
+        fileName: `${job.id}.wav`,
       }),
       bytes: mergedBytes,
       contentType: merged.contentType,

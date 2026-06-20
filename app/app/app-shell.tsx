@@ -23,7 +23,10 @@ export function AppShell({
   const isDashboardRoute = pathname.startsWith("/app/dashboard");
   const isAdminRoute = pathname.startsWith("/app/admin");
   const isAuthRoute =
-    pathname === "/app/signin" || pathname === "/app/signup" || pathname.startsWith("/app/forgot-password");
+    pathname === "/app/signin" ||
+    pathname === "/app/signup" ||
+    pathname.startsWith("/app/forgot-password") ||
+    pathname.startsWith("/app/reset-password");
   const isCheckoutRoute = pathname.startsWith("/app/checkout");
 
   async function signOut() {

@@ -54,7 +54,10 @@ export function KeyManager({
   // This replaces the old parent-driven remount, which refreshed this list but
   // also wiped the freshly created key reveal before it could be copied.
   useEffect(() => {
-    setKeys(initialKeys);
+    const timeoutId = window.setTimeout(() => {
+      setKeys(initialKeys);
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [initialKeys]);
 
   const [monthlyLimit, setMonthlyLimit] = useState("");
@@ -69,14 +72,6 @@ export function KeyManager({
   const rawKeySecondsRemaining = rawKeyExpiresAt
     ? Math.max(0, Math.ceil((rawKeyExpiresAt - countdownNow) / 1000))
     : 0;
-
-  // Keep the displayed key list in sync with fresh server data (polls / cache
-  // invalidation) without disturbing the one-time `rawKey` reveal state. This
-  // replaces the old parent-driven remount, which used to refresh this list
-  // but also wiped the freshly created key reveal before it could be copied.
-  useEffect(() => {
-    setKeys(initialKeys);
-  }, [initialKeys]);
 
   useEffect(() => {
     if (!rawKey || !rawKeyExpiresAt) {

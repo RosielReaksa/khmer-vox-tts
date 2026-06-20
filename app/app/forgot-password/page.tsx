@@ -4,15 +4,6 @@ import { ForgotPasswordForm } from "@/app/app/forgot-password/forgot-password-fo
 import { getCurrentUser } from "@/lib/current-user";
 import { generateCsrfToken } from "@/lib/csrf";
 
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
 interface ForgotPasswordPageProps {
   searchParams?: Promise<{ email?: string }>;
 }
@@ -24,7 +15,7 @@ export default async function ForgotPasswordPage({ searchParams }: ForgotPasswor
   }
 
   const params = await searchParams;
-  const emailParam = params?.email ? escapeHtml(params.email) : "";
+  const emailParam = params?.email?.slice(0, 200) ?? "";
   const csrfToken = await generateCsrfToken();
 
   return <ForgotPasswordForm initialEmail={emailParam} csrfToken={csrfToken} />;

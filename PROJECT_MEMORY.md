@@ -1,6 +1,6 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-06-15
+Last updated: 2026-06-20
 
 ## Purpose
 
@@ -27,7 +27,8 @@ needed.
 - Live site: `https://voxtts.online`
 - Image: `ghcr.io/rosielreaksa/khmer-vox-tts:latest`
 - TTS provider: Modal VoxCPM2
-- Public audio format: MP3 only
+- Public audio format: WAV only (PCM-16, mono, 24 kHz). Switched from MP3 on
+  2026-06-20; see "Public Audio Format Switched From MP3 To WAV" below.
 
 The platform contains dashboard speech generation, fixed standard voices,
 voice cloning, saved voices, API keys, batch jobs, a worker queue, business
@@ -523,9 +524,161 @@ and clone MP3 output, and one queued batch job.
 - Keep payment and Telegram approval idempotent.
 - Keep production authorization and rate limiting fail-closed.
 - Free users must not gain API key access.
-- Generated public audio must remain MP3.
+- Generated public audio must remain WAV (PCM-16, mono, 24 kHz).
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
+
+## Verification Fix: stray test script broke tsc + build
+
+Update on 2026-06-20 (evening):
+
+- Ran the full verification suite on the uncommitted WAV-switch worktree.
+  `next build` reported `✓ Compiled successfully` for the whole app/lib tree,
+  so the application code is clean. The only failures were `npx tsc --noEmit`
+  (exit 2) and `npm run build` (TypeScript step) plus 1 lint error, all from a
+  single untracked dev script left by the previous agent:
+  `scripts/test-website-pipeline-male-10s.mts`.
+- ROOT CAUSE: `tsconfig.json` `include` has `**/*.mts`, so that script is type-
+  checked by both `tsc` and the `next build` typecheck. Two issues in it:
+  1. Line 49 dynamic-imported `"../lib/tts-provider.ts"` with a `.ts` extension
+     (TS5097: needs `allowImportingTsExtensions`, which is off).
+  2. Line 75 used `catch (error: any)` (the lone `@typescript-eslint/no-explicit-any`
+     error).
+- FIX (script-only, no app code touched): dropped the `.ts` extension on the
+  dynamic import (`"../lib/tts-provider"`), and replaced `catch (error: any)`
+  with `catch (error)` + a narrow local type cast. The script still runs the
+  same way under `npx tsx`.
+- Verified after the fix: `npx tsc --noEmit` clean (exit 0), `npm run lint`
+  0 errors / 82 pre-existing warnings, `npm run build` compiled successfully
+  (89 static pages, standalone sanitize step ran). The WAV switch, password
+  reset flow, and batch merged-audio download all build/lint/typecheck clean.
+- Still local-only. Nothing committed or deployed.
+- HOUSEKEEPING (done 2026-06-20 evening):
+  - Removed the stray `nul` file. It was a Windows reserved device name, so
+    normal PowerShell `Remove-Item` could not see it; deleted it with
+    `cmd /c 'del "\\?\D:\website api seller\nul"'`. Confirmed gone from
+    `git status`.
+  - Added `test-output/` to `.gitignore` (local generated artifacts section).
+    It holds local WAV test renders from the `scripts/test-*-10s` scripts.
+  - LEFT ALONE intentionally: the user's `scripts/scan-*.ps1`,
+    `scripts/check-vhdx.ps1`, `scripts/delete-vhdx.ps1` disk-housekeeping
+    utilities and the `scripts/configure-smtp.sh` /
+    `scripts/configure-google-apps-script-email.sh` helpers. These are personal
+    tooling / setup helpers, not deletion candidates without the user's say-so.
+
+## Pre-Deploy Audit Fixes For The WAV Switch
+
+Update on 2026-06-20 (later same day):
+
+A full system audit caught three issues in the WAV-switch worktree that would
+have hurt either fidelity or correctness on rollout. All three are now fixed,
+local-only, build/typecheck/lint clean.
+
+1. `deploy/production.env.example` still defaulted to MP3. Flipped:
+   `TTS_UPSTREAM_RESPONSE_FORMAT="wav"`, comment rewritten to match the new
+   delivery contract. `TTS_OUTPUT_REWRITE_MP3_HEADER` is now labelled as legacy
+   (ignored on the WAV path; left for backward compat with old deployments).
+   Without this fix, a fresh prod env from this template would have made every
+   generation pay an MP3 -> WAV decode hop on the website.
+
+2. Long-form merge audio quality regression. `mergePublicMp3SegmentsForDelivery`
+   and `synthesizeMergedAudio` were calling `concatWavBuffers` (a plain
+   data-segment splice with no crossfade and no chunk-join silence padding),
+   while the richer `concatPcm16WavBuffers` (which applies
+   `TTS_CHUNK_CROSSFADE_MS`, `TTS_CHUNK_JOIN_SILENCE_MS`, `TTS_CHUNK_JOIN_QUIET_DB`,
+   `TTS_CHUNK_JOIN_DECLICK_MS`, and loudness-matching) was defined but never
+   called. Effect: hard clicks/cuts at chunk seams in long audio. Fix: both
+   call sites now use `concatPcm16WavBuffers`. The MP3 path's join smoothing
+   behavior is restored on the WAV side.
+
+3. `modal/modal_voxcpm_api.py` still defaulted `response_format="mp3"` in three
+   places (the modal method, the FastAPI request schema, and the local test
+   entrypoint), plus the docstring/example response. Flipped all to `"wav"`,
+   updated docs/example accordingly. The website's pool config can still
+   override per-endpoint with the existing `TTS_UPSTREAM_RESPONSE_FORMAT` env,
+   but new Modal deployments will now serve WAV by default and avoid the
+   round-trip described in fix 1.
+
+Verification after the three fixes:
+- `npx tsc --noEmit`: clean.
+- `npm run lint`: 0 errors, 82 warnings (pre-existing + new "unused" warnings
+  on now-dormant MP3 helpers, plus `concatWavBuffers` itself which is now
+  superseded by `concatPcm16WavBuffers`; safe to prune later).
+- `npm run build`: compiled successfully.
+
+Still NOT deployed. Modal-side change (#3) requires a new Modal deploy if you
+want the upstream default to actually flip; existing live endpoints are still
+running the old code and will keep returning MP3 unless the request payload
+explicitly sets `response_format=wav`. The website normalizes either way, so
+this is a no-op for delivery correctness, just a fidelity/perf optimization.
+
+## Public Audio Format Switched From MP3 To WAV
+
+Update on 2026-06-20:
+
+- Switched the public delivery format from MP3 to WAV (PCM-16, mono, 24 kHz).
+  All generated public audio now ships as `audio/wav`. The old MP3 path is gone
+  from new generation; legacy MP3 inputs (e.g. old stored audio from before this
+  switch) are decoded back to PCM-16 WAV through `normalizeToPublicFormat`.
+- Why: the upstream Modal endpoint already returns WAV. Re-encoding to MP3
+  added a lossy step (and a known buzz/noise lift after loudnorm) for no
+  benefit. Shipping the upstream WAV bytes preserves the full PCM-16 fidelity
+  that callers actually want for editing, post-processing, and ASR pipelines.
+  WAV files are larger but are still a single contiguous container, and the
+  per-second token rate is unchanged.
+- Code changes (this commit, all local-only, not yet deployed):
+  - `lib/audio-api.ts`: `PUBLIC_AUDIO_OUTPUT_FORMAT="wav"`,
+    `PUBLIC_AUDIO_CONTENT_TYPE="audio/wav"`, and
+    `isUnsupportedPublicAudioOutputFormat()` is now a no-op (the public output
+    format request field is accepted for compatibility and ignored — the API
+    always returns WAV regardless of what the caller sends).
+  - `lib/tts-provider.ts`: renamed `normalizeToPublicMp3` ->
+    `normalizeToPublicFormat` (WAV pass-through, MP3 decoded back to WAV);
+    added a `concatPcm16WavBuffers` helper for joining PCM-16 segments without
+    re-encoding; `mergePublicMp3SegmentsForDelivery` and `synthesizeMergedAudio`
+    now concat WAV PCM directly instead of MP3-merging.
+  - Storage object keys: `audio-storage`, `batch-service`, and
+    `generation-service` now write `.wav` keys with `audio/wav` content type.
+  - Routes: `/api/v2/audio/jobs/[id]/audio`, `/api/batch/jobs/[id]/merged`, and
+    the batch download/zip routes return `audio/wav` and updated error strings.
+  - `lib/business-webhook-test.ts`: webhook test fixture now references WAV.
+  - UI/docs: `speech-workspace`, `batch-jobs-panel`, `app/docs/page.tsx`, and
+    `app/page.tsx` were updated to advertise WAV public output. Voice library
+    upload still accepts MP3 and WAV reference samples (input only — that path
+    is unaffected by the public output switch).
+  - `.env.example`: comments updated. `TTS_UPSTREAM_RESPONSE_FORMAT` defaults
+    to `wav`. `TTS_OUTPUT_REWRITE_MP3_HEADER`, `TTS_PUBLIC_MP3_BITRATE`, and
+    `TTS_VALIDATE_PUBLIC_MP3_ROUNDTRIP` are flagged as legacy/ignored on the
+    WAV path (they remain defined for backward compatibility with old
+    deployments that may still produce MP3).
+  - Smoke/test scripts: `scripts/v2-audio-api-smoke.mjs` now requests
+    `output_format: "wav"` and asserts `audio/wav`.
+    `app/app/dashboard/workspace-persistence.test.ts` fixtures use
+    `audio/wav`.
+- The `voice` reference upload path still accepts MP3 inputs (saved voice
+  library and clone reference samples). Only the public OUTPUT format changed.
+- Verification (local, on this branch): `npx tsc --noEmit` clean,
+  `npm run lint` 0 errors (existing warnings only — including a few new
+  unused-symbol warnings on now-dormant MP3 helpers in `lib/tts-provider.ts`
+  like `concatMp3Buffers`, `publicMp3RoundTripQualityIssue`,
+  `rewriteMp3WithSeekableHeader`, and `concatPcm16WavBuffers` until the WAV
+  helper is wired in everywhere; these are kept for reuse and can be pruned
+  later), and `npm run build` compiled successfully.
+- Not yet deployed. Before deploying:
+  - Spot-check upstream Modal endpoints really do return WAV (not MP3) on the
+    current model. Modal's `modal/modal_voxcpm_api.py` still has an MP3 default
+    in its docstring and `response_format`. The website normalizes either way,
+    but if upstream actually serves MP3 by default, every delivery will pay an
+    MP3->WAV decode hop. Either set `TTS_UPSTREAM_RESPONSE_FORMAT=wav` on the
+    Modal pool entries or update the Modal code to default to WAV first.
+  - Storage migration: NEW objects are `.wav`. EXISTING `.mp3` keys in Spaces
+    and any inline base64 still work because the read path treats either as
+    audio (the routes set the content type from the stored format, not from
+    the key). No backfill is required, but old downloads will keep their MP3
+    extension until the row is regenerated.
+  - File size: a 1-minute WAV (24 kHz, mono, PCM-16) is ~2.7 MB vs ~1.2 MB at
+    160 kbps MP3. Confirm the bandwidth budget on the API tier and any
+    customer-facing size docs before announcing.
 
 ## REVERTED buzz-aware chunk gate (TTS_AUDIO_TONAL_DELIVERY_BOOST_DB=0)
 
@@ -3023,6 +3176,23 @@ making the merged audio sound unnatural.
 ```
 TTS_CLONE_TEMPERATURE=0.8  # Lower = more consistent (default: 0.8, was 1.0)
 ```
+
+## Local Typecheck Fix 2026-06-20
+
+- Fixed the blocking TypeScript error in `lib/tts-provider.ts` by making
+  `contentTypeForResponseFormat` compare against `PUBLIC_AUDIO_OUTPUT_FORMAT`
+  instead of the impossible literal `"mp3"` while the local public audio format
+  is configured as WAV.
+- Status: local-only, not deployed.
+- Validation run:
+  - `npx tsc --noEmit` passed.
+  - `npm run lint` passed with 0 errors and 82 pre-existing warnings.
+  - `npm run build` passed.
+  - `npm run db:check` did not run successfully because local `DATABASE_URL`
+    is not a Supabase/Postgres URL.
+- Important: source still currently conflicts with older memory/product rules
+  about public audio format (`PROJECT_MEMORY.md` says MP3-only, current source
+  is WAV). Resolve MP3 vs WAV before deployment.
 
 ## Next Priorities
 

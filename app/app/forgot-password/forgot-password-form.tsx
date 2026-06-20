@@ -7,21 +7,33 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
   const [email, setEmail] = useState(initialEmail);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [error, setError] = useState("");
 
-  function onSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
+    setError("");
 
-    // Simulate sending recovery link
-    setTimeout(() => {
-      setSubmitting(false);
+    try {
+      const response = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrfToken,
+        },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      const data = (await response.json()) as { error?: string; message?: string };
+      if (!response.ok) {
+        setError(data.error ?? "Could not send the recovery email.");
+        return;
+      }
       setSuccess(true);
-
-      setTimeout(() => {
-        setSuccess(false);
-        setEmail("");
-      }, 3000);
-    }, 1500);
+    } catch {
+      setError("Network error. Try again.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -75,10 +87,26 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
                     required
                     type="email"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    disabled={submitting || success}
+                    onChange={(event) => {
+                      setEmail(event.target.value);
+                      setSuccess(false);
+                      setError("");
+                    }}
+                    disabled={submitting}
                   />
                 </div>
+
+                {error && (
+                  <div className="border-4 border-[#1a1a1a] bg-[#ffdad6] p-3 text-sm font-bold text-[#93000a]">
+                    {error}
+                  </div>
+                )}
+
+                {success && (
+                  <div className="border-4 border-[#1a1a1a] bg-[#d8f8e7] p-3 text-sm font-bold text-[#075e3b]">
+                    If an account exists for this email, the recovery link is on its way. Check spam or junk mail too.
+                  </div>
+                )}
 
                 <button
                   className={`w-full font-headline font-black uppercase tracking-wider py-4 px-6 brutalist-border brutalist-shadow transition-all flex items-center justify-center gap-2 group ${

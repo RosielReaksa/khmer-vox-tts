@@ -31,6 +31,10 @@ const envKeys: Record<UsagePolicyName, { requests: string; concurrent: string }>
     requests: "AUTH_SIGNUP_RATE_LIMIT",
     concurrent: "AUTH_SIGNUP_CONCURRENT_LIMIT",
   },
+  authPasswordReset: {
+    requests: "AUTH_PASSWORD_RESET_RATE_LIMIT",
+    concurrent: "AUTH_PASSWORD_RESET_CONCURRENT_LIMIT",
+  },
 };
 
 function readPositiveInt(name: string, fallback: number): number {

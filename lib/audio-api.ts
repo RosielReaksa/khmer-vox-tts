@@ -1,7 +1,7 @@
 import "server-only";
 
-export const PUBLIC_AUDIO_OUTPUT_FORMAT = "mp3" as const;
-export const PUBLIC_AUDIO_CONTENT_TYPE = "audio/mpeg";
+export const PUBLIC_AUDIO_OUTPUT_FORMAT = "wav" as const;
+export const PUBLIC_AUDIO_CONTENT_TYPE = "audio/wav";
 
 function cleanEnv(name: string): string {
   return (process.env[name] ?? "").trim().replace(/^"|"$/g, "");
@@ -34,8 +34,10 @@ export function publicBatchJobUrls(jobId: string): {
 }
 
 export function isUnsupportedPublicAudioOutputFormat(value: unknown): boolean {
-  if (value === undefined || value === null) return false;
-  if (typeof value !== "string") return true;
-  const normalized = value.trim().toLowerCase();
-  return Boolean(normalized) && normalized !== PUBLIC_AUDIO_OUTPUT_FORMAT;
+  // Public output is now WAV only, but the output_format request field is
+  // accepted for backward compatibility and ignored (the API always returns
+  // WAV regardless of what the caller requests). Nothing a caller sends is
+  // treated as unsupported, so this gate never rejects.
+  void value;
+  return false;
 }

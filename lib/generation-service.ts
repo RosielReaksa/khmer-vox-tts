@@ -282,7 +282,7 @@ export async function runGenerationForUser(params: {
         scope: "generation",
         userId: params.userId,
         id: generationId,
-        fileName: `${generationId}.mp3`,
+        fileName: `${generationId}.wav`,
       }),
       bytes: synthesized.audioBytes,
       contentType: synthesized.contentType,

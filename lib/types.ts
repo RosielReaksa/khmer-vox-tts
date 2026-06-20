@@ -66,6 +66,15 @@ export type UserRecord = {
   updatedAt: string;
 };
 
+export type PasswordResetTokenRecord = {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  expiresAt: string;
+  usedAt: string | null;
+  createdAt: string;
+};
+
 export type ApiKeyRecord = {
   id: string;
   userId: string;
@@ -438,6 +447,7 @@ export type UserVoiceRecord = {
 export type DataStore = {
   schemaVersion: number;
   users: UserRecord[];
+  passwordResetTokens: PasswordResetTokenRecord[];
   apiKeys: ApiKeyRecord[];
   tokenTransactions: TokenTransactionRecord[];
   generations: GenerationRecord[];

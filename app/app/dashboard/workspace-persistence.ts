@@ -13,7 +13,8 @@ export type WorkspaceMode = "tts" | "clone";
 
 export type WorkspaceGenerationResult = {
   generationId: string;
-  audioBase64: string;
+  audioBase64?: string;
+  audioUrl?: string;
   contentType: string;
   creditsRequested: number;
   creditsCharged: number;
@@ -95,7 +96,9 @@ export function readResult(mode: WorkspaceMode): PersistedResult | null {
     const raw = getStore()?.getItem(resultStorageKey(mode));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as PersistedResult;
-    if (!parsed || !parsed.result || typeof parsed.result.audioBase64 !== "string") {
+    const hasAudio = typeof parsed?.result?.audioBase64 === "string" ||
+      typeof parsed?.result?.audioUrl === "string";
+    if (!parsed || !parsed.result || !hasAudio) {
       return null;
     }
     return parsed;

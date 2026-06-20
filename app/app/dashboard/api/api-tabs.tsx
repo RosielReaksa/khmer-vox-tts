@@ -82,7 +82,10 @@ export function ApiTabs({
   // one-time raw-key reveal panel before the user could copy it. Syncing via
   // effect keeps KeyManager mounted so the reveal + its 5-minute timer survive.
   useEffect(() => {
-    setApiKeys(initialKeys);
+    const timeoutId = window.setTimeout(() => {
+      setApiKeys(initialKeys);
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [initialKeys]);
 
   return (

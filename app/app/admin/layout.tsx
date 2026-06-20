@@ -12,7 +12,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   }
 
   if (!isAdminEmail(user.email)) {
-    return children;
+    redirect("/app/dashboard");
   }
 
   return <AdminShell userEmail={user.email}>{children}</AdminShell>;

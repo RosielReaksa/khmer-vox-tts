@@ -91,9 +91,9 @@ export async function GET(request: Request, context: RouteContext) {
       },
     });
   } catch (error) {
-    console.error(`[v2-audio] Failed to build MP3 for job ${id}:`, error);
+    console.error(`[v2-audio] Failed to build audio for job ${id}:`, error);
     return jsonWithCors(
-      { error: error instanceof Error ? error.message : "Failed to build MP3 audio." },
+      { error: error instanceof Error ? error.message : "Failed to build audio." },
       { status: 500 },
     );
   }

@@ -35,7 +35,7 @@ function pass(message, detail = "") {
 
 function longSmokeInput() {
   const sentence =
-    "នេះជាការសាកល្បងប្រព័ន្ធ async API សម្រាប់អត្ថបទវែង ដើម្បីពិនិត្យការបំបែកជាផ្នែក ការគិតថ្លៃ និងការទាញយក MP3។ ";
+    "នេះជាការសាកល្បងប្រព័ន្ធ async API សម្រាប់អត្ថបទវែង ដើម្បីពិនិត្យការបំបែកជាផ្នែក ការគិតថ្លៃ និងការទាញយក WAV។ ";
   return sentence.repeat(90).slice(0, 8200);
 }
 
@@ -66,7 +66,7 @@ async function main() {
     body: JSON.stringify({
       input,
       voice: "female",
-      output_format: "mp3",
+      output_format: "wav",
       title: long ? "V2 long audio API smoke" : "V2 audio API smoke",
     }),
   });
@@ -115,14 +115,14 @@ async function main() {
     pass("v2 audio download not ready", "409 JOB_NOT_READY");
     return;
   }
-  if (audio.status !== 200 || !audio.headers.get("content-type")?.includes("audio/mpeg")) {
+  if (audio.status !== 200 || !audio.headers.get("content-type")?.includes("audio/wav")) {
     const text = await audio.text().catch(() => "");
     fail("v2 audio download", `HTTP ${audio.status}: ${text}`);
     return;
   }
   const bytes = Buffer.from(await audio.arrayBuffer());
   if (bytes.length < 1024) {
-    fail("v2 audio download size", `${bytes.length} bytes is too small for a usable MP3.`);
+    fail("v2 audio download size", `${bytes.length} bytes is too small for a usable WAV.`);
     return;
   }
   const seconds = Number(audio.headers.get("x-output-seconds") ?? 0);

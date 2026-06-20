@@ -29,6 +29,7 @@ import type {
   PaymentWebhookProvider,
   PaymentPlanId,
   PaymentProvider,
+  PasswordResetTokenRecord,
   TelegramPaymentActionRecord,
   TelegramPaymentActionStatus,
   TelegramPaymentActionType,
@@ -110,6 +111,20 @@ create table if not exists users (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create table if not exists password_reset_tokens (
+  id text primary key,
+  user_id text not null references users(id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists password_reset_tokens_user_idx
+  on password_reset_tokens(user_id, created_at desc);
+create index if not exists password_reset_tokens_expiry_idx
+  on password_reset_tokens(expires_at) where used_at is null;
 
 create table if not exists api_keys (
   id text primary key,
@@ -853,6 +868,15 @@ type UserRow = QueryResultRow & {
   updated_at: Date | string;
 };
 
+type PasswordResetTokenRow = QueryResultRow & {
+  id: string;
+  user_id: string;
+  token_hash: string;
+  expires_at: Date | string;
+  used_at: Date | string | null;
+  created_at: Date | string;
+};
+
 type ApiKeyRow = QueryResultRow & {
   id: string;
   user_id: string;
@@ -1360,6 +1384,17 @@ function mapUser(row: UserRow): UserRecord {
   };
 }
 
+function mapPasswordResetToken(row: PasswordResetTokenRow): PasswordResetTokenRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    tokenHash: row.token_hash,
+    expiresAt: iso(row.expires_at),
+    usedAt: nullableIso(row.used_at),
+    createdAt: iso(row.created_at),
+  };
+}
+
 function mapApiKey(row: ApiKeyRow): ApiKeyRecord {
   return {
     id: row.id,
@@ -1812,6 +1847,69 @@ export async function findUserByEmail(email: string): Promise<UserRecord | null>
 export async function findUserById(userId: string): Promise<UserRecord | null> {
   const rows = await queryRows<UserRow>("select * from users where id = $1 limit 1", [userId]);
   return rows[0] ? mapUser(rows[0]) : null;
+}
+
+export async function createPasswordResetToken(input: {
+  userId: string;
+  tokenHash: string;
+  expiresAt: string;
+}): Promise<PasswordResetTokenRecord> {
+  return withTransaction(async (client) => {
+    await client.query("delete from password_reset_tokens where user_id = $1", [input.userId]);
+    const rows = await client.query<PasswordResetTokenRow>(
+      `
+      insert into password_reset_tokens (id, user_id, token_hash, expires_at, created_at)
+      values ($1, $2, $3, $4, now())
+      returning *
+      `,
+      [randomUUID(), input.userId, input.tokenHash, input.expiresAt],
+    );
+    return mapPasswordResetToken(rows.rows[0]);
+  });
+}
+
+export async function deletePasswordResetToken(tokenHash: string): Promise<void> {
+  await queryRows("delete from password_reset_tokens where token_hash = $1", [tokenHash]);
+}
+
+export async function consumePasswordResetToken(
+  tokenHash: string,
+  passwordHash: string,
+): Promise<boolean> {
+  return withTransaction(async (client) => {
+    const tokenRows = await client.query<PasswordResetTokenRow>(
+      `
+      select *
+      from password_reset_tokens
+      where token_hash = $1 and used_at is null and expires_at > now()
+      limit 1
+      for update
+      `,
+      [tokenHash],
+    );
+    const token = tokenRows.rows[0];
+    if (!token) return false;
+
+    const updated = await client.query(
+      `
+      update users
+      set password_hash = $2, updated_at = now()
+      where id = $1
+      `,
+      [token.user_id, passwordHash],
+    );
+    if (updated.rowCount !== 1) return false;
+
+    await client.query(
+      `
+      update password_reset_tokens
+      set used_at = now()
+      where user_id = $1 and used_at is null
+      `,
+      [token.user_id],
+    );
+    return true;
+  });
 }
 
 export async function createUserWithSignupBonus(email: string, passwordHash: string): Promise<UserRecord> {

@@ -147,8 +147,8 @@ export function buildAudioObjectKey(input: {
   const day = new Date().toISOString().slice(0, 10).replace(/-/g, "/");
   const user = safePathPart(input.userId, "user");
   const id = safePathPart(input.id, "audio");
-  const fileName = safePathPart(input.fileName, `${id}.mp3`);
-  const finalName = fileName.toLowerCase().endsWith(".mp3") ? fileName : `${fileName}.mp3`;
+  const fileName = safePathPart(input.fileName, `${id}.wav`);
+  const finalName = fileName.toLowerCase().endsWith(".wav") ? fileName : `${fileName}.wav`;
   return `audio/${input.scope}/${day}/${user}/${id}/${finalName}`;
 }
 

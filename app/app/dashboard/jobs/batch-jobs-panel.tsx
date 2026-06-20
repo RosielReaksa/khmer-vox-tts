@@ -384,7 +384,7 @@ export function BatchJobsPanel() {
             <p className="text-sm font-medium">
               {mode === "clone"
                 ? "Use Clone Voice Batch when you need the same voice across many lines. Upload one clear reference sample, confirm permission, then paste one line per audio file."
-                : "Use Text to Speech for rapid Khmer MP3 generation. Input one sentence per line to create discrete audio segments for each entry."}
+                : "Use Text to Speech for rapid Khmer WAV generation. Input one sentence per line to create discrete audio segments for each entry."}
             </p>
           </div>
 
@@ -913,7 +913,7 @@ function BatchHistoryPanel({
         <div>
           <p className="font-headline text-3xl font-black uppercase tracking-tighter">Batch Voice History</p>
           <p className="mt-1 max-w-2xl text-sm font-body font-semibold text-on-surface-variant">
-            Track every batch voice job, open item details instantly, and download completed MP3 files as one ZIP.
+            Track every batch voice job, open item details instantly, and download completed audio files as one ZIP.
           </p>
         </div>
         <span className="border-2 border-primary bg-[#ffcc00] px-3 py-1 font-headline text-xs font-bold uppercase text-primary">
@@ -1151,9 +1151,9 @@ function JobItemsTable({
                   <a
                     href={`/api/batch/jobs/${item.jobId}/items/${item.id}/download`}
                     className="inline-flex min-w-28 items-center justify-center border-2 border-primary bg-primary px-3 py-2 font-headline text-[10px] font-bold uppercase text-surface shadow-[2px_2px_0px_0px_#1a1a1a] hover:bg-tertiary transition-colors"
-                    title={`Download line ${item.itemIndex + 1} MP3`}
+                    title={`Download line ${item.itemIndex + 1} audio`}
                   >
-                    Download MP3
+                    Download Audio
                   </a>
                 ) : isFailed ? (
                   <span className="max-w-full text-left leading-5" title={item.errorMessage ?? "Error"}>

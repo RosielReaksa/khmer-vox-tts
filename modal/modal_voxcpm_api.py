@@ -157,7 +157,7 @@ MODEL_DETAILS = {
         "summary": "Model-ready Khmer TTS endpoint for direct text-to-speech generation and reference-audio voice cloning on Modal GPU.",
         "dubber_step": "Use after Khmer translation when the selected TTS mode is VoxCPM.",
         "input": "JSON text input plus optional voice description, reference audio clone, or prompt-audio clone.",
-        "output": "audio/wav bytes.",
+        "output": "audio/wav bytes by default (PCM-16, mono, 24 kHz); audio/mpeg is still accepted by passing response_format=\"mp3\".",
         "example": {
             "model": "voxcpm2",
             "input": "Khmer text here",
@@ -1009,6 +1009,36 @@ class VoxCPM2TTS:
                     except OSError:
                         pass
 
+    def _encode_wav_to_mp3(self, wav_bytes: bytes) -> bytes:
+        import subprocess
+
+        bitrate = os.environ.get("VOXCPM_PUBLIC_MP3_BITRATE", "160k").strip() or "160k"
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                "pipe:0",
+                "-codec:a",
+                "libmp3lame",
+                "-b:a",
+                bitrate,
+                "-f",
+                "mp3",
+                "pipe:1",
+            ],
+            input=wav_bytes,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout:
+            message = result.stderr.decode("utf-8", errors="replace").strip()[:260]
+            raise RuntimeError(message or "MP3 encoding failed")
+        return result.stdout
+
     @modal.exit()
     def shutdown(self) -> None:
         server = getattr(self, "server", None)
@@ -1028,7 +1058,7 @@ class VoxCPM2TTS:
         self,
         text: str,
         *,
-        response_format: Literal["wav"] = "wav",
+        response_format: Literal["wav", "mp3"] = "wav",
         prompt_wav_base64: str | None = None,
         prompt_wav_format: str = "wav",
         prompt_text: str = "",
@@ -1042,9 +1072,6 @@ class VoxCPM2TTS:
     ) -> bytes:
         import numpy as np
         import soundfile as sf
-
-        if response_format != "wav":
-            raise ValueError("Only wav response_format is supported in this Modal wrapper.")
 
         target_text = text.strip()
         if not target_text:
@@ -1092,7 +1119,10 @@ class VoxCPM2TTS:
         wav = np.concatenate(chunks, axis=0)
         out = io.BytesIO()
         sf.write(out, wav, int(self.info["sample_rate"]), format="WAV")
-        return out.getvalue()
+        wav_bytes = out.getvalue()
+        if response_format == "wav":
+            return wav_bytes
+        return self._encode_wav_to_mp3(wav_bytes)
 
 
 @app.function(
@@ -1115,7 +1145,7 @@ def api():
             default=None,
             description="Natural-language voice description. Example: young Khmer male, warm tone",
         )
-        response_format: Literal["wav"] = "wav"
+        response_format: Literal["wav", "mp3"] = "wav"
         speed: float = Field(default=1.0, ge=0.5, le=2.0)
         prompt_wav_base64: str | None = None
         prompt_wav_format: str = "wav"
@@ -1202,7 +1232,7 @@ def api():
                 payload.ref_audio_wav_format,
             )
 
-        wav_bytes = await model.synthesize.remote.aio(
+        audio_bytes = await model.synthesize.remote.aio(
             payload.input,
             response_format=payload.response_format,
             prompt_wav_base64=payload.prompt_wav_base64,
@@ -1216,9 +1246,10 @@ def api():
             voice_description=voice_description,
             denoise=payload.denoise,
         )
+        media_type = "audio/mpeg" if payload.response_format == "mp3" else "audio/wav"
         return Response(
-            content=wav_bytes,
-            media_type="audio/wav",
+            content=audio_bytes,
+            media_type=media_type,
             headers={"X-Model": MODEL_ID},
         )
 
@@ -1296,11 +1327,11 @@ def test(
     out: str = "khmer_voxcpm2_modal_test.wav",
 ):
     """Run one cloud GPU synthesis job and save the WAV locally."""
-    wav_bytes = VoxCPM2TTS().synthesize.remote(
+    audio_bytes = VoxCPM2TTS().synthesize.remote(
         text,
         voice_description=voice,
         response_format="wav",
     )
     out_path = Path(out).resolve()
-    out_path.write_bytes(wav_bytes)
+    out_path.write_bytes(audio_bytes)
     print(f"saved {out_path} ({out_path.stat().st_size:,} bytes)")

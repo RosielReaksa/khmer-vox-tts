@@ -29,6 +29,7 @@ import type {
   PaymentWebhookProvider,
   PaymentPlanId,
   PaymentProvider,
+  PasswordResetTokenRecord,
   TelegramPaymentActionRecord,
   TelegramPaymentEventDecision,
   TelegramPaymentEventRecord,
@@ -51,8 +52,9 @@ import {
 const STORE_PATH = path.join(/*turbopackIgnore: true*/ process.cwd(), "data", "store.json");
 
 const EMPTY_STORE: DataStore = {
-  schemaVersion: 20,
+  schemaVersion: 21,
   users: [],
+  passwordResetTokens: [],
   apiKeys: [],
   tokenTransactions: [],
   generations: [],
@@ -232,12 +234,16 @@ async function readStore(): Promise<DataStore> {
 
 function normalizeStore(parsed: Partial<DataStore>): DataStore {
   return {
-    schemaVersion: 20,
+    schemaVersion: 21,
     users: (parsed.users ?? []).map((user) => ({
       ...user,
       suspendedAt: user.suspendedAt ?? null,
       suspendedReason: user.suspendedReason ?? null,
       suspendedByUserId: user.suspendedByUserId ?? null,
+    })),
+    passwordResetTokens: (parsed.passwordResetTokens ?? []).map((token) => ({
+      ...token,
+      usedAt: token.usedAt ?? null,
     })),
     apiKeys: (parsed.apiKeys ?? []).map((key) => ({
       ...key,
@@ -510,6 +516,67 @@ export async function findUserByEmail(email: string): Promise<UserRecord | null>
 export async function findUserById(userId: string): Promise<UserRecord | null> {
   const store = await readStore();
   return store.users.find((user) => user.id === userId) ?? null;
+}
+
+export async function createPasswordResetToken(input: {
+  userId: string;
+  tokenHash: string;
+  expiresAt: string;
+}): Promise<PasswordResetTokenRecord> {
+  return updateStore((store) => {
+    const now = new Date().toISOString();
+    store.passwordResetTokens = store.passwordResetTokens.filter(
+      (token) => token.userId !== input.userId,
+    );
+
+    const token: PasswordResetTokenRecord = {
+      id: randomUUID(),
+      userId: input.userId,
+      tokenHash: input.tokenHash,
+      expiresAt: input.expiresAt,
+      usedAt: null,
+      createdAt: now,
+    };
+    store.passwordResetTokens.push(token);
+    return token;
+  });
+}
+
+export async function deletePasswordResetToken(tokenHash: string): Promise<void> {
+  await updateStore((store) => {
+    store.passwordResetTokens = store.passwordResetTokens.filter(
+      (token) => token.tokenHash !== tokenHash,
+    );
+  });
+}
+
+export async function consumePasswordResetToken(
+  tokenHash: string,
+  passwordHash: string,
+): Promise<boolean> {
+  return updateStore((store) => {
+    const now = new Date();
+    const token = store.passwordResetTokens.find(
+      (candidate) =>
+        candidate.tokenHash === tokenHash &&
+        candidate.usedAt === null &&
+        new Date(candidate.expiresAt).getTime() > now.getTime(),
+    );
+    if (!token) return false;
+
+    const user = store.users.find((candidate) => candidate.id === token.userId);
+    if (!user) return false;
+
+    const timestamp = now.toISOString();
+    user.passwordHash = passwordHash;
+    user.updatedAt = timestamp;
+    for (const candidate of store.passwordResetTokens) {
+      if (candidate.userId === user.id && candidate.usedAt === null) {
+        candidate.usedAt = timestamp;
+      }
+    }
+    return true;
+  });
 }
 
 export async function createUserWithSignupBonus(email: string, passwordHash: string): Promise<UserRecord> {

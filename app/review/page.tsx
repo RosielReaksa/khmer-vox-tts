@@ -30,7 +30,7 @@ const paymentChecklist: Array<[string, string]> = [
 
 const apiChecklist: Array<[string, string]> = [
   ["API keys", "Paid users can create and revoke API keys from dashboard. Free users cannot create or use API keys."],
-  ["Speech endpoint", "POST /api/v1/audio/speech returns MP3 audio."],
+  ["Speech endpoint", "POST /api/v1/audio/speech returns WAV audio."],
   ["Clone endpoint", "POST /api/v1/audio/clone supports session reference audio."],
   ["Batch jobs", "Batch endpoints queue multiple text lines and return downloadable ZIP output."],
   ["Usage logs", "Dashboard shows request history, duration, credits, and downloads."],

@@ -11,7 +11,6 @@ const createKeySchema = z.object({
   name: z.string().min(2).max(50),
   dailyTokenLimit: z.number().int().positive().nullable().optional(),
   monthlyTokenLimit: z.number().int().positive().nullable().optional(),
-  isBusiness: z.boolean().optional(),
 });
 
 export async function GET() {
@@ -67,7 +66,7 @@ export async function POST(request: Request) {
     }
 
     const generated = generateApiKey();
-    const isBusiness = parsed.data.isBusiness ?? false;
+    const isBusiness = apiAccess.businessLimits !== null;
 
     const key = await createApiKey(
       session.userId,

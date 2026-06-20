@@ -10,7 +10,8 @@ export type UsagePolicyName =
   | "apiTts"
   | "apiClone"
   | "authSignin"
-  | "authSignup";
+  | "authSignup"
+  | "authPasswordReset";
 
 export type UsagePolicy = {
   maxRequests: number;
@@ -51,6 +52,11 @@ export const DEFAULT_USAGE_POLICIES: Record<UsagePolicyName, UsagePolicy> = {
     maxConcurrent: 4,
   },
   authSignup: {
+    maxRequests: 5,
+    windowMs: 60_000,
+    maxConcurrent: 2,
+  },
+  authPasswordReset: {
     maxRequests: 5,
     windowMs: 60_000,
     maxConcurrent: 2,

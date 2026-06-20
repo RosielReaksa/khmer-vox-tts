@@ -25,6 +25,7 @@ import type {
   PaymentWebhookProvider,
   PaymentPlanId,
   PaymentProvider,
+  PasswordResetTokenRecord,
   TelegramPaymentActionRecord,
   TelegramPaymentEventDecision,
   TelegramPaymentEventRecord,
@@ -140,6 +141,25 @@ export async function findUserByEmail(email: string): Promise<UserRecord | null>
 
 export async function findUserById(userId: string): Promise<UserRecord | null> {
   return (await activeStore()).findUserById(userId);
+}
+
+export async function createPasswordResetToken(input: {
+  userId: string;
+  tokenHash: string;
+  expiresAt: string;
+}): Promise<PasswordResetTokenRecord> {
+  return (await activeStore()).createPasswordResetToken(input);
+}
+
+export async function deletePasswordResetToken(tokenHash: string): Promise<void> {
+  return (await activeStore()).deletePasswordResetToken(tokenHash);
+}
+
+export async function consumePasswordResetToken(
+  tokenHash: string,
+  passwordHash: string,
+): Promise<boolean> {
+  return (await activeStore()).consumePasswordResetToken(tokenHash, passwordHash);
 }
 
 export async function createUserWithSignupBonus(email: string, passwordHash: string): Promise<UserRecord> {

@@ -26,6 +26,19 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   return bcrypt.compare(password, hash);
 }
 
+export function generatePasswordResetToken(): {
+  rawToken: string;
+  tokenHash: string;
+} {
+  const rawToken = randomBytes(32).toString("base64url");
+  const tokenHash = createHash("sha256").update(rawToken).digest("hex");
+  return { rawToken, tokenHash };
+}
+
+export function hashPasswordResetToken(rawToken: string): string {
+  return createHash("sha256").update(rawToken).digest("hex");
+}
+
 export function generateApiKey(): {
   rawKey: string;
   keyPrefix: string;
@@ -37,4 +50,3 @@ export function generateApiKey(): {
   const keyHash = createHash("sha256").update(rawKey).digest("hex");
   return { rawKey, keyPrefix, keyHash };
 }
-

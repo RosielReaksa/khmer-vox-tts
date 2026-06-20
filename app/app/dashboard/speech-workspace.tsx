@@ -33,7 +33,8 @@ type SpeechWorkspaceProps = {
 
 type GenerationResponse = {
   generationId: string;
-  audioBase64: string;
+  audioBase64?: string;
+  audioUrl?: string;
   contentType: string;
   creditsRequested: number;
   creditsCharged: number;
@@ -91,6 +92,15 @@ const workspaceListeners: Record<"tts" | "clone", Set<() => void>> = {
   tts: new Set(),
   clone: new Set(),
 };
+
+const QUEUED_JOB_POLL_INTERVAL_MS = 2000;
+const QUEUED_JOB_MAX_POLL_ATTEMPTS = 900; // 30 minutes for long dashboard jobs.
+
+function audioSourceFromResult(result: Pick<GenerationResponse, "audioBase64" | "audioUrl" | "contentType">): string {
+  if (result.audioUrl) return result.audioUrl;
+  if (result.audioBase64) return `data:${result.contentType};base64,${result.audioBase64}`;
+  return "";
+}
 
 function commitWorkspaceSnapshot(mode: "tts" | "clone", patch: Partial<WorkspaceSnapshot>) {
   workspaceSnapshots[mode] = { ...workspaceSnapshots[mode], ...patch };
@@ -261,10 +271,10 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
       commitWorkspaceSnapshot(mode, { busy: true });
       let completed = false;
       let attempts = 0;
-      const maxAttempts = 150; // 5 minutes
+      const maxAttempts = QUEUED_JOB_MAX_POLL_ATTEMPTS;
 
       while (!completed && attempts < maxAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, QUEUED_JOB_POLL_INTERVAL_MS));
         try {
           const pollRes = await fetch(`/api/batch/jobs/${jobId}`, { cache: "no-store" });
           if (!pollRes.ok) {
@@ -298,7 +308,10 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
               throw new Error(errBody.error || "Failed to retrieve merged audio.");
             }
             const mergedData = await mergedRes.json();
-            const url = `data:${mergedData.contentType};base64,${mergedData.audioBase64}`;
+            const url = audioSourceFromResult(mergedData);
+            if (!url) {
+              throw new Error("Merged audio is missing from the completed job response.");
+            }
             clearActiveJob(mode);
             const updatedAtLabel = new Date().toLocaleTimeString();
             commitWorkspaceSnapshot(mode, {
@@ -364,7 +377,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
         // refresh can reconnect. Just stop the local spinner with guidance.
         commitWorkspaceSnapshot(mode, {
           busy: false,
-          error: "Generation processing timed out. Please check the Batch Jobs or History tab.",
+          error: "This long generation is still processing in the background. Please keep this page open or check Batch Jobs / History.",
         });
       }
     },
@@ -394,7 +407,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
     if (!workspaceSnapshots[mode].result) {
       const stored = readResult(mode);
       if (stored) {
-        const url = `data:${stored.result.contentType};base64,${stored.result.audioBase64}`;
+        const url = audioSourceFromResult(stored.result);
         commitWorkspaceSnapshot(mode, {
           busy: false,
           error: "",
@@ -479,7 +492,10 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
       }
 
       const success = data as GenerationResponse;
-      const url = `data:${success.contentType};base64,${success.audioBase64}`;
+      const url = audioSourceFromResult(success);
+      if (!url) {
+        throw new Error("Generated audio response did not include audio.");
+      }
       const updatedAtLabel = new Date().toLocaleTimeString();
       commitWorkspaceSnapshot(mode, {
         busy: false,
@@ -574,7 +590,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
     setText(
       isCloneMode
         ? "សួស្តី នេះគឺជាការសាកល្បងសំឡេងក្លូនសម្រាប់ប្រព័ន្ធ Khmer Vox TTS។"
-        : "សួស្តី នេះគឺជាការសាកល្បងបង្កើតសំឡេងខ្មែរជា MP3។",
+        : "សួស្តី នេះគឺជាការសាកល្បងបង្កើតសំឡេងខ្មែរជា WAV។",
     );
     setError("");
   }
@@ -899,7 +915,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                 <div className="grid min-w-0 max-w-2xl grid-cols-3 border-4 border-primary bg-[#eee9e0] p-4 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
                   <CostCell label="Duration" value={`~${formatDuration(activeSeconds)}`} />
                   <CostCell label="Tokens" value={activeCredits.toLocaleString()} />
-                  <CostCell label="Output" value="MP3" />
+                  <CostCell label="Output" value="WAV" />
                 </div>
               </div>
               <button
@@ -910,7 +926,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                 className="inline-flex h-12 min-w-[180px] items-center justify-center gap-3 border-4 border-primary bg-[#10b981] px-5 text-sm font-headline uppercase font-black text-white shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:bg-[#059669] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all disabled:cursor-not-allowed disabled:bg-[#8a8d93] disabled:text-white disabled:shadow-none cursor-pointer"
               >
                 <MiniWaveIcon tone="light" />
-                {busy ? "Generating..." : generateBlocker ?? "Generate MP3"}
+                {busy ? "Generating..." : generateBlocker ?? "Generate WAV"}
               </button>
             </div>
           </div>
