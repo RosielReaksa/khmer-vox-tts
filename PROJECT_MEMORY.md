@@ -528,6 +528,74 @@ and clone MP3 output, and one queued batch job.
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
 
+## WAV Header Fix: delivered WAV had placeholder (0xFFFFFFFF) sizes
+
+Update on 2026-06-20 (evening, after commit 035b88e):
+
+- Ran a real 10s male Khmer generation through the website pipeline
+  (`synthesizeWithUpstream`) via `scripts/test-website-pipeline-male-10s.mts`.
+  Generation SUCCEEDED (audio/wav, ~12s, valid mono 24 kHz PCM-16 audio), but
+  inspecting the output header exposed a real correctness bug in the WAV switch.
+- BUG: the delivered WAV's RIFF size field AND `data` chunk size field were both
+  `0xFFFFFFFF`. ROOT CAUSE: the final delivery filters (`capLongPauses`,
+  `reduceOutputNoise`, `normalizeOutputLoudness`, `applyOutputTempo`) stream WAV
+  out of ffmpeg to a non-seekable stdout pipe, so ffmpeg cannot seek back to
+  backfill the size fields and writes placeholders. The app's own WAV readers
+  clamp this (so in-app playback/duration worked), but EXTERNAL consumers (audio
+  editors, browser duration readouts, ASR pipelines) trust the header and see a
+  malformed/wrongly-sized file — which defeats the whole point of shipping clean
+  WAV. Symptom in the test: local WAV parser reported a garbage 89478s duration.
+- FIX (`lib/tts-provider.ts`): added `finalizeDeliveredWav(bytes)` which, for a
+  PCM-16 WAV, rebuilds a clean canonical 44-byte header with correct RIFF/data
+  sizes via the existing `createPcm16Wav` (already-correct WAVs are returned
+  untouched via a fast-path check). Wired it into BOTH delivery choke points:
+  `synthesizeMergedAudio` (single/standard + clone generation) and
+  `mergePublicMp3SegmentsForDelivery` (batch merged download).
+- ALSO fixed the test harness env loader in
+  `scripts/test-website-pipeline-male-10s.mts`: `.env.backup` stores
+  `TTS_UPSTREAM_POOL` wrapped in SINGLE quotes, but the loader only stripped
+  double quotes, so `JSON.parse` failed and the test fell back to the single
+  `TTS_UPSTREAM_URL`. Loader now strips both quote styles (used `[\s\S]` not the
+  `s` regex flag, since tsconfig targets ES2017). Harness-only; production env
+  is not quoted, so this was never a prod issue.
+- VERIFIED after fix: re-ran the generation — local WAV parser now reports
+  11.94s, exactly matching the provider-reported duration. Direct byte check:
+  RIFF size 573156 (= bytes-8) and data size 573120 (= bytes-44) both correct,
+  fmt mono / 24000 Hz / 16-bit. `npx tsc --noEmit` clean, `npm run lint` 0
+  errors / 82 pre-existing warnings, `npm run build` compiled (89 static pages).
+- STATUS: code fix is local-only, NOT yet committed and NOT deployed (commit
+  035b88e was just before this). The delivered-WAV bug affects every generation
+  on the WAV path, so this should ship WITH the WAV switch — do not deploy
+  035b88e without this fix on top.
+
+### Real end-to-end website API verification (2026-06-20 evening)
+
+Earlier the only "generation" test was an IN-PROCESS call to
+`synthesizeWithUpstream` (provider layer only). It skipped the website route
+layer (API-key auth, token billing, rate limit, generations row). Ran a TRUE
+end-to-end test through the running dev server's public API:
+
+- No `DATABASE_URL` in `.env.backup`, so local dev uses the JSON file store
+  (NOT production Postgres) — safe to seed and test locally. Loaded the Modal
+  upstream pool env into the shell session only (no secrets written to disk).
+- Added `scripts/seed-paid-api-user.mts`: creates a paid user (approved Creator
+  order → `hasPaidApiAccess`), 10,100 tokens, and a fresh API key. The store
+  only keeps the key HASH, so the raw key is captured to
+  `test-output/seed-key.txt` (gitignored).
+- Added `scripts/test-website-api-call.mts`: real HTTP `POST
+  /api/v1/audio/speech` with `Authorization: Bearer <key>`, male voice, ~10s
+  Khmer text, then validates the response + WAV header.
+- RESULT (against `npm run dev` on localhost:3000): HTTP 200, `audio/wav`,
+  559.7 KB, `X-Output-Format: wav`, `X-Credits-Charged: 18`,
+  `X-Remaining-Tokens: 10082` (billing worked: 10100→10082), generation id
+  returned, and the WAV header was CORRECT through the real route too
+  (riffSize 573156 OK, dataSize 573120 OK, mono 24 kHz 16-bit, ~11.94s). This
+  confirms the `finalizeDeliveredWav` fix holds on the actual delivery path,
+  not just the in-process provider call.
+- tsc clean, lint 0 errors / 82 warnings after adding both scripts. Dev server
+  was stopped after the test. The two new scripts + the WAV fix remain
+  uncommitted (commit 035b88e predates them).
+
 ## Verification Fix: stray test script broke tsc + build
 
 Update on 2026-06-20 (evening):
@@ -552,7 +620,13 @@ Update on 2026-06-20 (evening):
   0 errors / 82 pre-existing warnings, `npm run build` compiled successfully
   (89 static pages, standalone sanitize step ran). The WAV switch, password
   reset flow, and batch merged-audio download all build/lint/typecheck clean.
-- Still local-only. Nothing committed or deployed.
+- COMMITTED on 2026-06-20 (evening) as `035b88e` ("feat: switch public audio to
+  WAV, add password reset and batch merged audio"), 50 files changed. Staged the
+  WAV switch, password reset flow, batch merged-audio download, the verification
+  fix, deploy helper scripts, and WAV test scripts. Intentionally EXCLUDED the
+  user's personal disk-utility scripts (`scripts/scan-*.ps1`,
+  `scripts/check-vhdx.ps1`, `scripts/delete-vhdx.ps1`) — they remain untracked.
+- NOT pushed and NOT deployed. Commit is local on `main` only.
 - HOUSEKEEPING (done 2026-06-20 evening):
   - Removed the stray `nul` file. It was a Windows reserved device name, so
     normal PowerShell `Remove-Item` could not see it; deleted it with

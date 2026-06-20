@@ -2169,7 +2169,7 @@ export async function mergePublicMp3SegmentsForDelivery(
   const normalized = await normalizeOutputLoudness(denoised);
   const paced = await applyOutputTempo(normalized, mode);
   return {
-    bytes: paced,
+    bytes: finalizeDeliveredWav(paced),
     contentType: PUBLIC_AUDIO_CONTENT_TYPE,
     outputSeconds: outputSeconds ?? (hasSummedSeconds ? summedSeconds : null),
   };
@@ -2361,6 +2361,38 @@ function createPcm16Wav(
   header.writeUInt32LE(data.length, 40);
 
   return new Uint8Array(Buffer.concat([header, data]));
+}
+
+// FFmpeg streams WAV to a non-seekable stdout pipe in the final delivery
+// filters (capLongPauses, reduceOutputNoise, normalizeOutputLoudness,
+// applyOutputTempo), so it cannot seek back to backfill the RIFF and `data`
+// chunk size fields and leaves placeholders (0xFFFFFFFF). The app's own WAV
+// readers clamp this, but external consumers (audio editors, browser duration
+// readouts, ASR pipelines) trust the declared sizes and see a malformed or
+// wrongly-sized file. Rebuild a clean canonical PCM-16 WAV header with correct
+// sizes before public delivery. Already-correct WAVs are returned untouched.
+function finalizeDeliveredWav(bytes: Uint8Array): Uint8Array {
+  if (!looksLikeWav(bytes)) return bytes;
+  let info: Pcm16WavInfo;
+  try {
+    info = readPcm16Wav(bytes);
+  } catch {
+    return bytes;
+  }
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const dataEnd = Math.min(buffer.length, info.dataOffset + info.dataSize);
+  const data = buffer.subarray(info.dataOffset, dataEnd);
+
+  // Fast path: canonical 44-byte header already present with correct sizes and
+  // no extra chunks (data immediately after fmt). Avoid a needless copy.
+  if (
+    info.dataOffset === 44 &&
+    buffer.readUInt32LE(4) === 36 + data.length &&
+    buffer.readUInt32LE(40) === data.length
+  ) {
+    return bytes;
+  }
+  return createPcm16Wav(data, info.channels, info.sampleRate);
 }
 
 // Concatenates multiple PCM-16 WAV buffers into one WAV by joining their raw
@@ -3467,7 +3499,7 @@ async function synthesizeMergedAudio(params: {
   const denoisedBytes = await reduceOutputNoise(depausedBytes);
   const normalizedBytes = await normalizeOutputLoudness(denoisedBytes);
   const pacedBytes = await applyOutputTempo(normalizedBytes, params.mode);
-  const deliverableBytes = pacedBytes;
+  const deliverableBytes = finalizeDeliveredWav(pacedBytes);
   const deliveredSeconds = await measureDeliveredAudioDurationSeconds(
     deliverableBytes,
     PUBLIC_AUDIO_CONTENT_TYPE,

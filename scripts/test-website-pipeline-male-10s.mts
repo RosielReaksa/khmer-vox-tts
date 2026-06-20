@@ -34,7 +34,7 @@ function loadEnvBackup() {
     const eq = trimmed.indexOf("=");
     if (eq < 0) continue;
     const key = trimmed.slice(0, eq).trim();
-    const value = trimmed.slice(eq + 1).trim().replace(/^"|"$/g, "");
+    const value = trimmed.slice(eq + 1).trim().replace(/^(['"])([\s\S]*)\1$/, "$2");
     if (!(key in process.env)) process.env[key] = value;
   }
 }
