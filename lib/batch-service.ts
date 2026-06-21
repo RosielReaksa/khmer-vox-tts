@@ -599,6 +599,7 @@ function isTransientBatchError(error: unknown): boolean {
   if (msg.includes("voice clone consent")) return false;
   if (msg.includes("permission")) return false;
   if (msg.includes("invalid") && msg.includes("api key")) return false;
+  if (msg.includes("billing") || msg.includes("spend limit")) return false;
   // Transient errors — worth retrying
   if (msg.includes("timeout") || msg.includes("timed out")) return true;
   if (msg.includes("empty") || msg.includes("no audio")) return true;
