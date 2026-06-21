@@ -139,7 +139,7 @@ export default function LineAudioPlayer({
   }, []);
 
   return (
-    <div className="flex items-center gap-2 sm:gap-3 w-full">
+    <div className="flex flex-col gap-3 w-full">
       <audio
         ref={audioRef}
         src={src}
@@ -157,79 +157,88 @@ export default function LineAudioPlayer({
         className="hidden"
       />
 
-      <button
-        type="button"
-        onClick={togglePlay}
-        aria-label={playing ? "Pause" : "Play"}
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#ffcc00] text-[#1a1a1a] hover:bg-[#ffd633] transition-colors cursor-pointer"
-      >
-        {playing ? (
-          <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-            <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
-          </svg>
-        ) : (
-          <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-            <path d="M8 5v14l11-7z" />
-          </svg>
-        )}
-      </button>
+      {/* Scrubber row: time | full-width line | time.
+          The line gets its own row with maximum width so the playhead dot has
+          a large, easy-to-grab drag target — like mainstream TTS/video players. */}
+      <div className="flex items-center gap-3 w-full">
+        <span className="shrink-0 w-10 text-right font-headline font-black tabular-nums text-[11px] text-[#1a1a1a]">
+          {formatClock(currentTime)}
+        </span>
 
-      <button
-        type="button"
-        onClick={skipToStart}
-        aria-label="Restart"
-        className="hidden sm:flex h-8 w-8 shrink-0 items-center justify-center text-[#4a4a4a] hover:text-[#1a1a1a] transition-colors cursor-pointer"
-      >
-        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-          <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
-        </svg>
-      </button>
+        {/* The thin scrub line. Taller hit area (h-10) than the visible line
+            (h-1.5) so the user has a generous grab target for drag-to-seek. */}
+        <div
+          ref={trackRef}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          role="slider"
+          aria-label="Seek"
+          aria-valuemin={0}
+          aria-valuemax={Math.max(0, Math.floor(duration))}
+          aria-valuenow={Math.floor(currentTime)}
+          className="group relative flex h-10 flex-1 cursor-pointer items-center touch-none select-none"
+        >
+          {/* Track */}
+          <div className="absolute left-0 right-0 h-1.5 rounded-full bg-[#1a1a1a]/15" />
+          {/* Played portion */}
+          <div
+            className="absolute left-0 h-1.5 rounded-full bg-[#ffcc00]"
+            style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%` }}
+          />
+          {/* Draggable playhead dot */}
+          <div
+            className={`pointer-events-none absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#1a1a1a] bg-white shadow-[0_1px_4px_rgba(0,0,0,0.35)] transition-transform ${
+              scrubbing ? "scale-125" : "group-hover:scale-110"
+            }`}
+            style={{ left: `${Math.min(100, Math.max(0, progress * 100))}%` }}
+          />
+        </div>
 
-      {/* The thin scrub line. Taller hit area (h-8) than the visible line (h-1)
-          so the user has a generous grab target for drag-to-seek. */}
-      <div
-        ref={trackRef}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        role="slider"
-        aria-label="Seek"
-        aria-valuemin={0}
-        aria-valuemax={Math.max(0, Math.floor(duration))}
-        aria-valuenow={Math.floor(currentTime)}
-        className="group relative flex h-8 flex-1 cursor-pointer items-center touch-none select-none"
-      >
-        {/* Track */}
-        <div className="absolute left-0 right-0 h-1 rounded-full bg-[#1a1a1a]/15" />
-        {/* Played portion */}
-        <div
-          className="absolute left-0 h-1 rounded-full bg-[#ffcc00]"
-          style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%` }}
-        />
-        {/* Draggable playhead dot */}
-        <div
-          className={`absolute h-4 w-4 -translate-x-1/2 rounded-full border-2 border-[#1a1a1a] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.3)] transition-transform ${
-            scrubbing ? "scale-125" : "group-hover:scale-110"
-          }`}
-          style={{ left: `${Math.min(100, Math.max(0, progress * 100))}%` }}
-        />
+        <span className="shrink-0 w-10 font-headline font-black tabular-nums text-[11px] text-[#4a4a4a]">
+          {formatClock(duration)}
+        </span>
       </div>
 
-      {/* Time readout */}
-      <div className="shrink-0 font-headline font-black tabular-nums text-[11px] text-[#1a1a1a]">
-        <span>{formatClock(currentTime)}</span>
-        <span className="mx-1 text-[#4a4a4a]">/</span>
-        <span className="text-[#4a4a4a]">{formatClock(duration)}</span>
-      </div>
+      {/* Controls row: play, restart, speed. */}
+      <div className="flex items-center justify-center gap-3">
+        <button
+          type="button"
+          onClick={togglePlay}
+          aria-label={playing ? "Pause" : "Play"}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#ffcc00] text-[#1a1a1a] shadow-[0_1px_3px_rgba(0,0,0,0.2)] hover:bg-[#ffd633] transition-colors cursor-pointer"
+        >
+          {playing ? (
+            <svg aria-hidden="true" viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor">
+              <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+            </svg>
+          ) : (
+            <svg aria-hidden="true" viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          )}
+        </button>
 
-      <button
-        type="button"
-        onClick={cycleRate}
-        aria-label="Playback speed"
-        className="flex h-8 shrink-0 items-center justify-center rounded-full border border-[#1a1a1a]/20 px-2 text-[10px] font-headline font-black uppercase text-[#1a1a1a] hover:bg-[#1a1a1a]/5 transition-colors cursor-pointer"
-      >
-        {rate}x
-      </button>
+        <button
+          type="button"
+          onClick={skipToStart}
+          aria-label="Restart"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[#4a4a4a] hover:bg-[#1a1a1a]/5 hover:text-[#1a1a1a] transition-colors cursor-pointer"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
+            <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+          </svg>
+        </button>
+
+        <button
+          type="button"
+          onClick={cycleRate}
+          aria-label="Playback speed"
+          className="flex h-10 shrink-0 items-center justify-center rounded-full border border-[#1a1a1a]/20 px-3 text-[11px] font-headline font-black uppercase text-[#1a1a1a] hover:bg-[#1a1a1a]/5 transition-colors cursor-pointer"
+        >
+          {rate}x
+        </button>
+      </div>
     </div>
   );
 }
