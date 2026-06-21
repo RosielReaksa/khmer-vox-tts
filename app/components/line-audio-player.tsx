@@ -74,12 +74,25 @@ export default function LineAudioPlayer({
   const seekToClientX = useCallback((clientX: number) => {
     const track = trackRef.current;
     const audio = audioRef.current;
-    if (!track || !audio || !Number.isFinite(audio.duration)) return;
+    if (!track || !audio) return;
+    // Duration can be NaN/Infinity for streaming or not-yet-loaded sources.
+    // Fall back to the React state value (set from onLoadedMetadata) so the
+    // scrubber still works when audio.duration is not directly usable.
+    const dur = Number.isFinite(audio.duration) ? audio.duration : duration;
+    if (!dur || dur <= 0) return;
     const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) return;
     const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    audio.currentTime = ratio * audio.duration;
-    setCurrentTime(audio.currentTime);
-  }, []);
+    const targetTime = ratio * dur;
+    // Setting currentTime can throw on some media that doesn't support seeking
+    // (e.g. certain data URIs before metadata is parsed); guard it.
+    try {
+      audio.currentTime = targetTime;
+    } catch {
+      // ignore — the UI still moves via setCurrentTime below.
+    }
+    setCurrentTime(targetTime);
+  }, [duration]);
 
   const handlePointerDown = useCallback(
     (event: PointerEvent) => {
