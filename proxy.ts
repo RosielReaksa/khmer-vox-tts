@@ -78,7 +78,9 @@ function shouldUseSecureCookie(request: NextRequest, hostname: string): boolean 
   return request.nextUrl.protocol === "https:" || process.env.NODE_ENV === "production";
 }
 
-function isRateLimited(ip: string, limit = 120, windowMs = 60000): boolean {
+function isRateLimited(ip: string): boolean {
+  const limit = Math.max(1, Number(process.env.RATE_LIMIT_MAX) || 300);
+  const windowMs = Math.max(1000, Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000);
   const now = Date.now();
   const record = rateLimitMap.get(ip);
 
