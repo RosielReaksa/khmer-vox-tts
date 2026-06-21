@@ -1064,6 +1064,8 @@ type WavPcm16Stats = {
   maximumZeroCrossingRate: number;
   steadyTonalWindowRatio: number;
   longestSteadyTonalSeconds: number;
+  highDominantFreqWindowRatio: number;
+  longestHighDominantFreqSeconds: number;
 };
 
 function getWavPcm16Stats(
@@ -1123,6 +1125,35 @@ function getWavPcm16Stats(
   let maximumZeroCrossingRate = 0;
   const windowRmsValues: number[] = [];
   const windowZeroCrossingRates: number[] = [];
+  // High-dominant-frequency ("machine buzz") detection. VoxCPM2 occasionally
+  // emits a sustained ~1-3 kHz tone that sounds like a harsh mechanical sound.
+  // It has a NORMAL zero-crossing rate (so the ZCR detector above misses it)
+  // but is spectrally wrong for speech. The discriminator is the variation of
+  // the inter-zero-crossing intervals: a pure high tone has very regular
+  // intervals (low coefficient of variation) AND a high fundamental frequency,
+  // while speech has irregular intervals with a low fundamental. Validated
+  // against real generated audio: clean speech scores CV~1.0 / ~390 Hz, the
+  // machine-buzz artifact scores CV~0.47 / ~1800 Hz.
+  const buzzMaxCv = readNumericEnv(
+    "TTS_AUDIO_BUZZ_MAX_CV",
+    0.6,
+    0.2,
+    1.2,
+  );
+  const buzzMinFreqHz = readNumericEnv(
+    "TTS_AUDIO_BUZZ_MIN_FREQ_HZ",
+    800,
+    400,
+    2000,
+  );
+  let highDominantFreqWindows = 0;
+  let currentHighDominantFreqWindows = 0;
+  let longestHighDominantFreqWindows = 0;
+  // Per-window state for dominant-period (CV + fundamental) estimation.
+  let lastZeroCrossingSampleIndex = -1;
+  let intervalSum = 0;
+  let intervalSumSquares = 0;
+  let intervalCount = 0;
 
   function flushWindow(): void {
     if (windowSamples === 0) return;
@@ -1135,6 +1166,19 @@ function getWavPcm16Stats(
     windowRmsValues.push(windowRms);
     windowZeroCrossingRates.push(zeroCrossingRate);
     totalWindows += 1;
+    // Machine-buzz: low CV of crossing intervals (regular period) AND a high
+    // fundamental frequency. Need enough intervals for a stable estimate.
+    let isHighDominantFreq = false;
+    if (!isLow && intervalCount >= 8 && intervalSum > 0) {
+      const meanInterval = intervalSum / intervalCount;
+      if (meanInterval >= 1) {
+        const variance =
+          Math.max(0, intervalSumSquares / intervalCount - meanInterval * meanInterval);
+        const cv = Math.sqrt(variance) / meanInterval;
+        const fundamentalHz = info.sampleRate / (2 * meanInterval);
+        isHighDominantFreq = cv < buzzMaxCv && fundamentalHz > buzzMinFreqHz;
+      }
+    }
     if (isLow) {
       lowWindows += 1;
       currentLowWindows += 1;
@@ -1154,6 +1198,16 @@ function getWavPcm16Stats(
     } else {
       currentHighZeroCrossingWindows = 0;
     }
+    if (isHighDominantFreq) {
+      highDominantFreqWindows += 1;
+      currentHighDominantFreqWindows += 1;
+      longestHighDominantFreqWindows = Math.max(
+        longestHighDominantFreqWindows,
+        currentHighDominantFreqWindows,
+      );
+    } else {
+      currentHighDominantFreqWindows = 0;
+    }
     maximumZeroCrossingRate = Math.max(
       maximumZeroCrossingRate,
       zeroCrossingRate,
@@ -1163,6 +1217,10 @@ function getWavPcm16Stats(
     windowZeroCrossings = 0;
     previousWindowSample = 0;
     hasPreviousWindowSample = false;
+    lastZeroCrossingSampleIndex = -1;
+    intervalSum = 0;
+    intervalSumSquares = 0;
+    intervalCount = 0;
   }
 
   for (let index = info.dataOffset; index + 1 < end; index += 2) {
@@ -1181,6 +1239,15 @@ function getWavPcm16Stats(
       value > 0 !== previousWindowSample > 0
     ) {
       windowZeroCrossings += 1;
+      // Accumulate inter-crossing interval stats for the dominant-period
+      // (CV + fundamental) machine-buzz detector above.
+      if (lastZeroCrossingSampleIndex >= 0) {
+        const interval = samples - lastZeroCrossingSampleIndex;
+        intervalSum += interval;
+        intervalSumSquares += interval * interval;
+        intervalCount += 1;
+      }
+      lastZeroCrossingSampleIndex = samples;
     }
     previousWindowSample = value;
     hasPreviousWindowSample = true;
@@ -1218,6 +1285,10 @@ function getWavPcm16Stats(
     maximumZeroCrossingRate,
     steadyTonalWindowRatio: steadyTonal.ratio,
     longestSteadyTonalSeconds: steadyTonal.longestSeconds,
+    highDominantFreqWindowRatio:
+      totalWindows > 0 ? highDominantFreqWindows / totalWindows : 0,
+    longestHighDominantFreqSeconds:
+      longestHighDominantFreqWindows * lowWindowSeconds,
   };
 }
 
@@ -1332,6 +1403,34 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
     stats.steadyTonalWindowRatio > maxSteadyTonalRatio
   ) {
     return `contains too much stuck tonal audio (${Math.round(stats.steadyTonalWindowRatio * 100)}% of windows)`;
+  }
+  // Sustained high-frequency pure tone ("machine buzz"): VoxCPM2 occasionally
+  // emits a 1-3 kHz tone that reads as a normal zero-crossing rate but is
+  // audibly a harsh mechanical sound. Reject any chunk with a long run of it
+  // so the silence-retry path regenerates the chunk.
+  const maxHighDominantFreqSeconds = readNumericEnv(
+    "TTS_AUDIO_MAX_HIGH_DOMINANT_FREQ_SECONDS",
+    0.75,
+    0.25,
+    5,
+  );
+  const maxHighDominantFreqRatio = readNumericEnv(
+    "TTS_AUDIO_MAX_HIGH_DOMINANT_FREQ_RATIO",
+    0.12,
+    0.03,
+    0.8,
+  );
+  if (
+    (stats.durationSeconds ?? 0) >= 2 &&
+    stats.longestHighDominantFreqSeconds > maxHighDominantFreqSeconds
+  ) {
+    return `contains a sustained high-frequency tone (${stats.longestHighDominantFreqSeconds.toFixed(1)}s)`;
+  }
+  if (
+    (stats.durationSeconds ?? 0) >= 4 &&
+    stats.highDominantFreqWindowRatio > maxHighDominantFreqRatio
+  ) {
+    return `contains too much high-frequency tone (${Math.round(stats.highDominantFreqWindowRatio * 100)}% of windows)`;
   }
 
   return null;
