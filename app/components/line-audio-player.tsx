@@ -34,6 +34,11 @@ export default function LineAudioPlayer({
   // current value without waiting for a re-render (avoids a stale-closure race
   // where the first move after pointer-down was ignored).
   const scrubbingRef = useRef(false);
+  // The last position the USER dragged to. After scrubbing ends, the rAF tick
+  // only syncs from audio.currentTime if the audio has actually reached near
+  // this target. This prevents the playhead snapping back to 0 on media where
+  // setting currentTime silently fails (e.g. some WAV data URIs).
+  const lastSeekTargetRef = useRef<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -41,6 +46,8 @@ export default function LineAudioPlayer({
   const [rate, setRate] = useState(1);
 
   // Smooth playhead via rAF while playing (browser timeupdate is ~4Hz).
+  // Depends only on `playing` — reads scrubbingRef at runtime so the effect
+  // doesn't tear down and recreate on every scrub (which caused a snap-back).
   useEffect(() => {
     if (!playing) {
       if (rafRef.current !== null) {
@@ -51,8 +58,20 @@ export default function LineAudioPlayer({
     }
     const tick = () => {
       const audio = audioRef.current;
-      if (audio && !scrubbing) {
-        setCurrentTime(audio.currentTime);
+      if (audio && !scrubbingRef.current) {
+        const actual = audio.currentTime;
+        const target = lastSeekTargetRef.current;
+        // If we recently seeked and the audio hasn't caught up yet (within
+        // 0.5s), keep showing the user's dragged position instead of the
+        // audio's stale position. This handles media where the seek is slow
+        // or silently fails.
+        if (target !== null && Math.abs(actual - target) > 0.5) {
+          setCurrentTime(target);
+        } else {
+          // Audio has caught up (or no pending seek) — sync normally.
+          lastSeekTargetRef.current = null;
+          setCurrentTime(actual);
+        }
       }
       rafRef.current = requestAnimationFrame(tick);
     };
@@ -63,7 +82,7 @@ export default function LineAudioPlayer({
         rafRef.current = null;
       }
     };
-  }, [playing, scrubbing]);
+  }, [playing]);
 
   useEffect(() => {
     onPlayingChange?.(playing);
@@ -91,6 +110,9 @@ export default function LineAudioPlayer({
     } catch {
       // ignore — the UI still moves via setCurrentTime below.
     }
+    // Record the user's intended position so the rAF tick doesn't snap the
+    // playhead back to the audio's stale position before the seek lands.
+    lastSeekTargetRef.current = targetTime;
     setCurrentTime(targetTime);
   }, [duration]);
 
@@ -159,7 +181,16 @@ export default function LineAudioPlayer({
         preload="metadata"
         onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)}
         onTimeUpdate={(event) => {
-          if (!scrubbing) setCurrentTime(event.currentTarget.currentTime);
+          // Respect a pending seek: if the user just dragged to a position the
+          // audio hasn't reached yet, don't snap the playhead back to the
+          // audio's stale currentTime. Once the audio catches up (within 0.5s),
+          // resume normal syncing.
+          if (scrubbingRef.current) return;
+          const target = lastSeekTargetRef.current;
+          const actual = event.currentTarget.currentTime;
+          if (target !== null && Math.abs(actual - target) > 0.5) return;
+          lastSeekTargetRef.current = null;
+          setCurrentTime(actual);
         }}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
