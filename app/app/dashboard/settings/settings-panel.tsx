@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState, useRef } from "react";
 
 import { useDashboardUser } from "@/app/app/dashboard/dashboard-user-context";
@@ -15,10 +14,12 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
 
   // Form states
   const [name, setName] = useState("Jane Doe");
-  const [bio, setBio] = useState("Audio engineer and AI enthusiast building voice applications.");
+  const [bio, setBio] = useState(
+    "Audio engineer and AI enthusiast building voice applications.",
+  );
   const [language, setLanguage] = useState("en");
   const [timezone, setTimezone] = useState("ict");
-  
+
   // Security states
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -39,7 +40,7 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
 
   // Profile avatar states & ref
   const [avatarUrl, setAvatarUrl] = useState(
-    "https://lh3.googleusercontent.com/aida-public/AB6AXuDVnhNU2jNTo7mLWZx7jhPbz68QOO9cHOkcMwa7K8bQQnDqr08vIosOBLhnLyA5QBADRuvF-4Ni55VriOPnNl8vEuo76tgLIUDzscLdEgdeVrNvhXSs4iB6YOxllELFqMdHh1hi17l2Z67cUbpRkt6Z0_VpokA2UXYyeOarhxfPz5hTVJl2Rjj_Cx3p9_efLtd-6CiXNGjVighua6rgsnDWYHb6R4pfK2CGNHoU9cEChzLVAwoHgY9HiDIWcttxeSnDgOvKdOM8NF52"
+    "https://lh3.googleusercontent.com/aida-public/AB6AXuDVnhNU2jNTo7mLWZx7jhPbz68QOO9cHOkcMwa7K8bQQnDqr08vIosOBLhnLyA5QBADRuvF-4Ni55VriOPnNl8vEuo76tgLIUDzscLdEgdeVrNvhXSs4iB6YOxllELFqMdHh1hi17l2Z67cUbpRkt6Z0_VpokA2UXYyeOarhxfPz5hTVJl2Rjj_Cx3p9_efLtd-6CiXNGjVighua6rgsnDWYHb6R4pfK2CGNHoU9cEChzLVAwoHgY9HiDIWcttxeSnDgOvKdOM8NF52",
   );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -94,7 +95,8 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
           Settings
         </h2>
         <p className="text-xl text-[#4a4a4a] max-w-2xl font-body">
-          Configure your account preferences, security settings, and system defaults.
+          Configure your account preferences, security settings, and system
+          defaults.
         </p>
       </header>
 
@@ -106,8 +108,11 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
             <div className="absolute -top-4 -left-4 bg-[#ffcc00] border-3 border-primary px-4 py-1 z-10 shadow-[4px_4px_0px_0px_#1a1a1a] font-headline font-bold uppercase text-primary">
               Profile
             </div>
-            
-            <form onSubmit={handleSaveProfile} className="mt-4 flex flex-col md:flex-row gap-8 items-start">
+
+            <form
+              onSubmit={handleSaveProfile}
+              className="mt-4 flex flex-col md:flex-row gap-8 items-start"
+            >
               <div className="flex flex-col items-center gap-4 shrink-0">
                 <input
                   type="file"
@@ -127,7 +132,9 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
                     src={avatarUrl}
                   />
                   <div className="absolute inset-0 bg-[#1a1a1a]/85 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                    <span className="material-symbols-outlined text-[#f5f0e8] text-3xl">upload</span>
+                    <span className="material-symbols-outlined text-[#f5f0e8] text-3xl">
+                      upload
+                    </span>
                   </div>
                 </div>
                 <button
@@ -202,7 +209,7 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
             <div className="absolute -top-4 -left-4 bg-[#0055ff] text-[#f5f0e8] border-3 border-primary px-4 py-1 z-10 shadow-[4px_4px_0px_0px_#1a1a1a] font-headline font-bold uppercase">
               Regional
             </div>
-            
+
             <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block font-label font-bold uppercase text-sm mb-2 text-primary">
@@ -233,7 +240,9 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
                     value={timezone}
                     onChange={(e) => setTimezone(e.target.value)}
                   >
-                    <option value="utc">UTC (Coordinated Universal Time)</option>
+                    <option value="utc">
+                      UTC (Coordinated Universal Time)
+                    </option>
                     <option value="ict">ICT (Indochina Time)</option>
                     <option value="pst">PST (Pacific Standard Time)</option>
                   </select>
@@ -253,14 +262,14 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
             <div className="absolute -top-4 -right-4 bg-[#e63b2e] text-white border-3 border-primary px-4 py-1 z-10 shadow-[4px_4px_0px_0px_#1a1a1a] font-headline font-bold uppercase">
               Security
             </div>
-            
+
             <div className="mt-4 space-y-8">
               {/* Password Form */}
               <form onSubmit={handleSavePassword} className="space-y-4">
                 <h4 className="font-label font-bold uppercase text-lg border-b-4 border-primary pb-2 mb-4">
                   Change Password
                 </h4>
-                
+
                 <div>
                   <label className="block font-label font-bold uppercase text-xs mb-1 text-primary">
                     Current Password
@@ -298,9 +307,13 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
                 </div>
 
                 {passwordMessage && (
-                  <p className={`border-2 border-primary p-3 text-xs font-bold shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] ${
-                    passwordMessage.includes("success") ? "bg-[#def3e5] text-emerald-800" : "bg-[#ffdad6] text-[#93000a]"
-                  }`}>
+                  <p
+                    className={`border-2 border-primary p-3 text-xs font-bold shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] ${
+                      passwordMessage.includes("success")
+                        ? "bg-[#def3e5] text-emerald-800"
+                        : "bg-[#ffdad6] text-[#93000a]"
+                    }`}
+                  >
                     {passwordMessage}
                   </p>
                 )}
@@ -318,7 +331,9 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
               <div className="border-t-4 border-primary pt-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h4 className="font-label font-bold uppercase text-lg">Two-Factor Auth</h4>
+                    <h4 className="font-label font-bold uppercase text-lg">
+                      Two-Factor Auth
+                    </h4>
                     <p className="text-sm text-[#4a4a4a] font-body mt-1">
                       Add an extra layer of security.
                     </p>
@@ -333,12 +348,18 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
                     <div className="w-14 h-7 bg-[#eee9e0] border-3 border-primary peer-focus:outline-none peer-checked:bg-[#ffcc00] peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[3px] after:left-[3px] after:bg-[#1a1a1a] after:border after:border-[#1a1a1a] after:h-5 after:w-5 after:transition-all"></div>
                   </label>
                 </div>
-                
+
                 {twoFactorEnabled && (
                   <div className="mt-4 p-3 bg-[#f5f0e8] border-2 border-primary border-l-8 flex gap-3 items-start">
-                    <span className="material-symbols-outlined text-[#00a859] select-none">check_circle</span>
+                    <span className="material-symbols-outlined text-[#00a859] select-none">
+                      check_circle
+                    </span>
                     <p className="text-sm font-body font-medium">
-                      2FA is currently <strong className="uppercase text-[#00a859]">Enabled</strong> via Authenticator App.
+                      2FA is currently{" "}
+                      <strong className="uppercase text-[#00a859]">
+                        Enabled
+                      </strong>{" "}
+                      via Authenticator App.
                     </p>
                   </div>
                 )}
@@ -351,7 +372,7 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
             <div className="absolute -top-4 -left-4 bg-[#f5f0e8] text-primary border-3 border-primary px-4 py-1 z-10 shadow-[4px_4px_0px_0px_#1a1a1a] font-headline font-bold uppercase">
               Notifications
             </div>
-            
+
             <div className="mt-4 space-y-6">
               <div>
                 <h4 className="font-label font-bold uppercase text-lg border-b-4 border-primary pb-2 mb-4">
@@ -369,7 +390,7 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
                       Weekly Usage Reports
                     </span>
                   </label>
-                  
+
                   <label className="flex items-center gap-3 cursor-not-allowed group select-none">
                     <input
                       type="checkbox"
@@ -381,7 +402,7 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
                       Security Alerts (Required)
                     </span>
                   </label>
-                  
+
                   <label className="flex items-center gap-3 cursor-pointer group select-none">
                     <input
                       type="checkbox"
@@ -405,14 +426,16 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
                     <input
                       type="checkbox"
                       checked={generationCompletions}
-                      onChange={(e) => setGenerationCompletions(e.target.checked)}
+                      onChange={(e) =>
+                        setGenerationCompletions(e.target.checked)
+                      }
                       className="w-6 h-6 border-[3px] border-primary text-[#1a1a1a] focus:ring-0 cursor-pointer bg-white"
                     />
                     <span className="font-body font-medium group-hover:text-[#0055ff] transition-colors">
                       Generation Completions
                     </span>
                   </label>
-                  
+
                   <label className="flex items-center gap-3 cursor-pointer group select-none">
                     <input
                       type="checkbox"
@@ -434,10 +457,11 @@ export function SettingsPanel({ email: emailProp }: SettingsPanelProps = {}) {
             <div className="absolute -top-4 -left-4 bg-[#ffcc00] border-3 border-primary px-4 py-1 z-10 shadow-[4px_4px_0px_0px_#1a1a1a] font-headline font-bold uppercase text-primary">
               Legal & Policies
             </div>
-            
+
             <div className="mt-4 space-y-4">
               <p className="text-sm text-[#4a4a4a] font-body">
-                Please review our terms of service, privacy policy, and refund rules.
+                Please review our terms of service, privacy policy, and refund
+                rules.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <a

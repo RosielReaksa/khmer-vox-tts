@@ -288,13 +288,19 @@ export function NavigationShell({ children }: NavigationShellProps) {
 
   return (
     <>
+      {/* Skip-to-content link (WCAG 2.4.1 Bypass Blocks). Visually hidden until
+          focused; the `#` href is ignored by the SPA click handler above, so it
+          performs a native in-page jump to the main content region. */}
+      <a href="#main-content" className="skip-to-content-link">
+        Skip to main content
+      </a>
       <div className="page-transition-bar" data-active={pending ? "true" : "false"} aria-hidden="true">
         <div className="page-transition-bar__fill route-progress" />
       </div>
       <div className="route-pending-card" data-active={pending && pendingHref ? "true" : "false"} aria-live="polite">
         Opening page...
       </div>
-      <div className="route-shell">{children}</div>
+      <div id="main-content" tabIndex={-1} className="route-shell">{children}</div>
     </>
   );
 }

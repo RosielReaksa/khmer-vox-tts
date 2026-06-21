@@ -6,7 +6,7 @@ import { VoxLoader } from "@/app/components/vox-loader";
 import { HistoryRowActions } from "./history-row-actions";
 import { getCurrentUser } from "@/lib/current-user";
 import { getGenerationStats, listUserGenerations } from "@/lib/store";
-import type { GenerationMode, GenerationStatus } from "@/lib/types";
+import type { GenerationMode } from "@/lib/types";
 
 function formatDuration(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60);
@@ -45,8 +45,12 @@ export default async function HistoryPage({ searchParams }: HistoryPageProps) {
       {/* Header Section */}
       <header className="border-b-4 border-primary pb-6 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h2 className="text-4xl md:text-6xl font-black font-headline uppercase tracking-tighter text-primary">Generation History</h2>
-          <p className="font-body text-base md:text-lg text-on-surface-variant mt-2 font-bold">Review and manage your synthesized audio logs.</p>
+          <h2 className="text-4xl md:text-6xl font-black font-headline uppercase tracking-tighter text-primary">
+            Generation History
+          </h2>
+          <p className="font-body text-base md:text-lg text-on-surface-variant mt-2 font-bold">
+            Review and manage your synthesized audio logs.
+          </p>
         </div>
         <div className="flex flex-col sm:flex-row gap-4 w-full md:w-auto">
           {/* Mode Switcher (Simplified Brutalist Tabs) */}
@@ -74,9 +78,14 @@ export default async function HistoryPage({ searchParams }: HistoryPageProps) {
           </div>
 
           {/* Search Input */}
-          <form action="/app/dashboard/history" className="relative w-full sm:w-64">
+          <form
+            action="/app/dashboard/history"
+            className="relative w-full sm:w-64"
+          >
             <input type="hidden" name="mode" value={selectedMode} />
-            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-primary">search</span>
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-primary">
+              search
+            </span>
             <input
               name="q"
               defaultValue={searchQuery}
@@ -88,7 +97,7 @@ export default async function HistoryPage({ searchParams }: HistoryPageProps) {
         </div>
       </header>
 
-      <Suspense fallback={<HistoryFallback selectedMode={selectedMode} searchQuery={searchQuery} />}>
+      <Suspense fallback={<HistoryFallback />}>
         <HistoryData selectedMode={selectedMode} searchQuery={searchQuery} />
       </Suspense>
     </section>
@@ -128,10 +137,26 @@ async function HistoryData({
     <>
       {/* Metric Cards Section */}
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4 mb-6">
-        <MetricCard title="Total Generations" value={stats.totalGenerations.toLocaleString()} note="All time" />
-        <MetricCard title="Total Duration" value={formatDuration(stats.totalDurationSec)} note="Audio generated" />
-        <MetricCard title="Avg. Duration" value={formatDuration(stats.avgDurationSec)} note="Per generation" />
-        <MetricCard title="This Month" value={stats.thisMonthGenerations.toLocaleString()} note="Successful generations" />
+        <MetricCard
+          title="Total Generations"
+          value={stats.totalGenerations.toLocaleString()}
+          note="All time"
+        />
+        <MetricCard
+          title="Total Duration"
+          value={formatDuration(stats.totalDurationSec)}
+          note="Audio generated"
+        />
+        <MetricCard
+          title="Avg. Duration"
+          value={formatDuration(stats.avgDurationSec)}
+          note="Per generation"
+        />
+        <MetricCard
+          title="This Month"
+          value={stats.thisMonthGenerations.toLocaleString()}
+          note="Successful generations"
+        />
       </div>
 
       {/* Table Header (Hidden on small screens, visual guide on large) */}
@@ -149,7 +174,9 @@ async function HistoryData({
       <div className="flex flex-col gap-4 mb-12">
         {recent.length === 0 ? (
           <div className="border-4 border-dashed border-primary bg-surface p-8 text-center mt-4 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
-            <p className="text-sm font-label font-bold uppercase text-primary">No generation history found</p>
+            <p className="text-sm font-label font-bold uppercase text-primary">
+              No generation history found
+            </p>
             <p className="mt-2 text-xs text-on-surface-variant font-body">
               Synthesize some speech in the workspace to see logs here.
             </p>
@@ -157,24 +184,28 @@ async function HistoryData({
         ) : (
           recent.map((item) => {
             const d = new Date(item.createdAt);
-            const dateStr = d.toLocaleDateString("en-US", {
-              day: "2-digit",
-              month: "short",
-              year: "numeric",
-            }).toUpperCase();
-            
+            const dateStr = d
+              .toLocaleDateString("en-US", {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+              })
+              .toUpperCase();
+
             // Format to Indochina Time (ICT)
-            const timeStr = d.toLocaleTimeString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-              second: "2-digit",
-              hour12: false,
-              timeZone: "Asia/Bangkok",
-            }) + " ICT";
+            const timeStr =
+              d.toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+                timeZone: "Asia/Bangkok",
+              }) + " ICT";
 
             const isFailed = item.status === "failed";
             const isProcessing = item.status === "processing";
-            const previewText = item.inputPreview || `${item.inputChars} characters`;
+            const previewText =
+              item.inputPreview || `${item.inputChars} characters`;
             const voiceModel = `${item.voice} - ${item.model}`;
 
             if (isFailed) {
@@ -206,7 +237,8 @@ async function HistoryData({
                   {/* Preview Text (Error Message) */}
                   <div className="p-4 lg:p-6 lg:col-span-4 font-body text-base font-bold text-error flex items-center gap-2">
                     <span className="material-symbols-outlined">warning</span>
-                    FAILED: {generationErrorText(item.errorMessage).toUpperCase()}
+                    FAILED:{" "}
+                    {generationErrorText(item.errorMessage).toUpperCase()}
                   </div>
 
                   {/* Voice Model */}
@@ -226,14 +258,21 @@ async function HistoryData({
 
                   {/* Actions */}
                   <div className="p-4 lg:p-6 lg:col-span-1 flex justify-center gap-2 border-t-2 lg:border-t-0 lg:border-l-2 border-error bg-surface">
-                    <button className="w-10 h-10 flex items-center justify-center border-2 border-outline-variant bg-surface-container opacity-50 cursor-not-allowed" disabled>
-                      <span className="material-symbols-outlined">play_arrow</span>
+                    <button
+                      className="w-10 h-10 flex items-center justify-center border-2 border-outline-variant bg-surface-container opacity-50 cursor-not-allowed"
+                      disabled
+                    >
+                      <span className="material-symbols-outlined">
+                        play_arrow
+                      </span>
                     </button>
                     <div
                       title={generationErrorText(item.errorMessage)}
                       className="w-10 h-10 flex items-center justify-center border-2 border-error bg-surface text-error hover:bg-error hover:text-surface transition-colors cursor-help"
                     >
-                      <span className="material-symbols-outlined">description</span>
+                      <span className="material-symbols-outlined">
+                        description
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -266,7 +305,10 @@ async function HistoryData({
                 </div>
 
                 {/* Preview Text */}
-                <div className="p-4 lg:p-6 lg:col-span-4 font-body text-base font-medium truncate" title={previewText}>
+                <div
+                  className="p-4 lg:p-6 lg:col-span-4 font-body text-base font-medium truncate"
+                  title={previewText}
+                >
                   {previewText}
                 </div>
 
@@ -287,7 +329,10 @@ async function HistoryData({
 
                 {/* Actions */}
                 <div className="p-4 lg:p-6 lg:col-span-1 flex justify-center gap-2 border-t-2 lg:border-t-0 lg:border-l-2 border-primary bg-surface-container">
-                  <HistoryRowActions itemId={item.id} hasAudio={!!item.hasAudio} />
+                  <HistoryRowActions
+                    itemId={item.id}
+                    hasAudio={!!item.hasAudio}
+                  />
                 </div>
               </div>
             );
@@ -297,14 +342,17 @@ async function HistoryData({
         {/* Pagination Footer */}
         <div className="flex flex-col sm:flex-row justify-between items-center pt-8 border-t-4 border-primary gap-4 mt-8">
           <div className="font-label font-bold uppercase text-primary border-2 border-primary bg-surface px-4 py-2 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] text-xs">
-            SHOWING {recent.length} OF {stats.totalGenerations.toLocaleString()} LOGS
+            SHOWING {recent.length} OF {stats.totalGenerations.toLocaleString()}{" "}
+            LOGS
           </div>
           <div className="flex gap-2">
             <button
               disabled
               className="px-4 py-2 border-2 border-primary bg-surface text-primary font-label font-bold uppercase text-xs flex items-center gap-2 hover:bg-primary hover:text-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <span className="material-symbols-outlined text-sm">arrow_left</span>
+              <span className="material-symbols-outlined text-sm">
+                arrow_left
+              </span>
               PREV
             </button>
             <button
@@ -312,7 +360,9 @@ async function HistoryData({
               className="px-4 py-2 border-2 border-primary bg-surface text-primary font-label font-bold uppercase text-xs flex items-center gap-2 hover:bg-primary hover:text-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               NEXT
-              <span className="material-symbols-outlined text-sm">arrow_right</span>
+              <span className="material-symbols-outlined text-sm">
+                arrow_right
+              </span>
             </button>
           </div>
         </div>
@@ -321,20 +371,18 @@ async function HistoryData({
   );
 }
 
-function HistoryFallback({
-  selectedMode,
-  searchQuery,
-}: {
-  selectedMode: GenerationMode;
-  searchQuery: string;
-}) {
+function HistoryFallback() {
   return (
     <>
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4 mb-6">
         <MetricCard title="Total Generations" value="--" note="All time" />
         <MetricCard title="Total Duration" value="--" note="Audio generated" />
         <MetricCard title="Avg. Duration" value="--" note="Per generation" />
-        <MetricCard title="This Month" value="--" note="Successful generations" />
+        <MetricCard
+          title="This Month"
+          value="--"
+          note="Successful generations"
+        />
       </div>
 
       <div className="flex flex-col gap-4">
@@ -368,9 +416,15 @@ function MetricCard({
 }) {
   return (
     <article className="border-4 border-primary bg-white p-6 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] hover:-translate-y-1 hover:shadow-[8px_8px_0px_0px_rgba(26,26,26,1)] transition-all duration-150">
-      <p className="text-4xl font-headline font-black text-primary leading-none tracking-tight">{value}</p>
-      <p className="mt-3 text-xs font-headline font-black uppercase tracking-wider text-primary">{title}</p>
-      <p className="mt-1 text-[11px] text-[#4a4a4a] font-body font-bold">{note}</p>
+      <p className="text-4xl font-headline font-black text-primary leading-none tracking-tight">
+        {value}
+      </p>
+      <p className="mt-3 text-xs font-headline font-black uppercase tracking-wider text-primary">
+        {title}
+      </p>
+      <p className="mt-1 text-[11px] text-[#4a4a4a] font-body font-bold">
+        {note}
+      </p>
     </article>
   );
 }

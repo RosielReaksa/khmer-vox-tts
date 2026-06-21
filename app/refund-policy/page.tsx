@@ -1,4 +1,12 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Refund Policy",
+  description:
+    "Khmer Vox TTS refund policy: when prepaid token purchases are eligible for a refund and when they are not.",
+  alternates: { canonical: "/refund-policy" },
+};
 
 const refundApproved = [
   "Duplicate payment for the same order.",

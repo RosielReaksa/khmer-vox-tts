@@ -2,6 +2,7 @@ import { PLAN_COMPARISON_ROWS, PLAN_DETAILS, type PlanKey } from "@/lib/plan-det
 import { getAudioDurationEstimates } from "@/lib/plans";
 import HomePlayground from "@/app/components/home-playground";
 import { PublicHeader } from "@/app/components/public-header";
+import { HomeStructuredData } from "@/app/components/structured-data";
 
 const features = [
   {
@@ -219,6 +220,7 @@ function PlanComparisonTable() {
 export default function Home() {
   return (
     <div className="bg-[#f5f0e8] min-h-screen text-[#1a1a1a]">
+      <HomeStructuredData />
       {/* Navigation Header */}
       <PublicHeader />
 
@@ -241,10 +243,10 @@ export default function Home() {
             <div className="flex flex-col sm:flex-row gap-4 md:gap-6 mt-4 w-full sm:w-auto">
               <a href="/app/signup" className="font-label text-lg sm:text-xl uppercase font-bold bg-primary text-on-primary border-4 border-primary px-6 sm:px-8 py-3 sm:py-4 hover:bg-primary-fixed hover:text-primary transition-colors duration-100 ease-linear shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] active:translate-x-1 active:translate-y-1 active:shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] flex items-center justify-center gap-2 w-full sm:w-auto">
                 Try for Free
-                <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>arrow_forward</span>
+                <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">arrow_forward</span>
               </a>
               <a href="/docs" className="font-label text-lg sm:text-xl uppercase font-bold bg-transparent text-primary border-4 border-primary px-6 sm:px-8 py-3 sm:py-4 hover:bg-[#eee9e0] transition-colors duration-100 ease-linear shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] active:translate-x-1 active:translate-y-1 active:shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] flex items-center justify-center gap-2 w-full sm:w-auto">
-                <span className="material-symbols-outlined">description</span>
+                <span className="material-symbols-outlined" aria-hidden="true">description</span>
                 View API Docs
               </a>
             </div>

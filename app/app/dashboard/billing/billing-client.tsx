@@ -2,19 +2,39 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState, type ChangeEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type ChangeEvent,
+  type ReactNode,
+} from "react";
 
 import { clearDashboardCache } from "@/app/app/dashboard/dashboard-data-cache";
 import { useDashboardUser } from "@/app/app/dashboard/dashboard-user-context";
 import { preparePaymentProofImage } from "@/lib/client-payment-proof-image";
 import { paymentMethodLabel } from "@/lib/payment-method-label";
-import { PLAN_COMPARISON_ROWS, PLAN_DETAILS, type PlanKey } from "@/lib/plan-details";
-import { formatUsd, getAudioDurationEstimates, type TokenPackPlan } from "@/lib/plans";
-import type { PaymentOrderRecord, PaymentSupportTicketRecord } from "@/lib/types";
+import {
+  PLAN_COMPARISON_ROWS,
+  PLAN_DETAILS,
+  type PlanKey,
+} from "@/lib/plan-details";
+import {
+  formatUsd,
+  getAudioDurationEstimates,
+  type TokenPackPlan,
+} from "@/lib/plans";
+import type {
+  PaymentOrderRecord,
+  PaymentSupportTicketRecord,
+} from "@/lib/types";
 import { Portal } from "@/app/components/portal";
 
-
-type CheckoutMode = "local_khqr" | "payway_qr" | "static_payway_qr" | "khqrcc_qr";
+type CheckoutMode =
+  | "local_khqr"
+  | "payway_qr"
+  | "static_payway_qr"
+  | "khqrcc_qr";
 
 type BillingClientProps = {
   plans: TokenPackPlan[];
@@ -41,7 +61,9 @@ function telegramContact(rawValue: string): { label: string; url: string } {
   const fallbackUrl = "https://t.me/OfficalVoxTTS";
   const raw = rawValue.trim() || fallbackUrl;
   if (raw.startsWith("http://") || raw.startsWith("https://")) {
-    const username = raw.replace(/\/+$/, "").split("/").pop()?.replace(/^@/, "") || "OfficalVoxTTS";
+    const username =
+      raw.replace(/\/+$/, "").split("/").pop()?.replace(/^@/, "") ||
+      "OfficalVoxTTS";
     return { label: `@${username}`, url: raw };
   }
   const username = raw.replace(/^@/, "") || "OfficalVoxTTS";
@@ -74,23 +96,32 @@ export function BillingClient({
   const [liveBalance, setLiveBalance] = useState(currentBalance);
   const [supportTickets, setSupportTickets] = useState(initialSupportTickets);
   const [activeOrder, setActiveOrder] = useState<PaymentOrderRecord | null>(
-    initialOrders.find((order) => order.status === "pending" && order.khqrImageDataUrl) ?? null,
+    initialOrders.find(
+      (order) => order.status === "pending" && order.khqrImageDataUrl,
+    ) ?? null,
   );
   const [message, setMessage] = useState("");
   const [loadingPlan, setLoadingPlan] = useState("");
-  const [selectedOrder, setSelectedOrder] = useState<PaymentOrderRecord | null>(null);
-  const [supportOrder, setSupportOrder] = useState<PaymentOrderRecord | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<PaymentOrderRecord | null>(
+    null,
+  );
+  const [supportOrder, setSupportOrder] = useState<PaymentOrderRecord | null>(
+    null,
+  );
   const [supportMessage, setSupportMessage] = useState("");
   const [supportLoading, setSupportLoading] = useState(false);
   const [proofOrder, setProofOrder] = useState<PaymentOrderRecord | null>(null);
   const [proofReference, setProofReference] = useState("");
   const [proofNote, setProofNote] = useState("");
-  const [proofImageDataUrl, setProofImageDataUrl] = useState<string | null>(null);
+  const [proofImageDataUrl, setProofImageDataUrl] = useState<string | null>(
+    null,
+  );
   const [proofLoading, setProofLoading] = useState(false);
   const [phoneProofLink, setPhoneProofLink] = useState("");
   const [phoneProofQr, setPhoneProofQr] = useState("");
   const [phoneProofLoading, setPhoneProofLoading] = useState(false);
-  const [cancelConfirmOrder, setCancelConfirmOrder] = useState<PaymentOrderRecord | null>(null);
+  const [cancelConfirmOrder, setCancelConfirmOrder] =
+    useState<PaymentOrderRecord | null>(null);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [showAddMoreModal, setShowAddMoreModal] = useState(false);
   const displayedBalance = Math.max(liveBalance, currentBalance);
@@ -101,7 +132,9 @@ export function BillingClient({
     setOrders(initialOrders);
   }
 
-  const [prevInitialSupportTickets, setPrevInitialSupportTickets] = useState(initialSupportTickets);
+  const [prevInitialSupportTickets, setPrevInitialSupportTickets] = useState(
+    initialSupportTickets,
+  );
   if (initialSupportTickets !== prevInitialSupportTickets) {
     setPrevInitialSupportTickets(initialSupportTickets);
     setSupportTickets(initialSupportTickets);
@@ -109,7 +142,9 @@ export function BillingClient({
 
   const pendingOrders = orders.filter((order) => order.status === "pending");
   const approvedOrders = orders.filter((order) => order.status === "approved");
-  const openSupportTickets = supportTickets.filter((ticket) => ticket.status === "open");
+  const openSupportTickets = supportTickets.filter(
+    (ticket) => ticket.status === "open",
+  );
 
   async function copyText(value: string, label: string) {
     try {
@@ -122,10 +157,16 @@ export function BillingClient({
 
   const refreshOrders = useCallback(async () => {
     try {
-      if (activeOrder?.status === "pending" && paymentInfo.autoVerificationEnabled) {
-        const verificationResponse = await fetch(`/api/payments/orders/${activeOrder.id}/verify`, {
-          method: "POST",
-        });
+      if (
+        activeOrder?.status === "pending" &&
+        paymentInfo.autoVerificationEnabled
+      ) {
+        const verificationResponse = await fetch(
+          `/api/payments/orders/${activeOrder.id}/verify`,
+          {
+            method: "POST",
+          },
+        );
         const verification = (await verificationResponse.json()) as {
           message?: string;
           status?: string;
@@ -143,7 +184,9 @@ export function BillingClient({
         );
       }
 
-      const response = await fetch("/api/dashboard/billing", { cache: "no-store" });
+      const response = await fetch("/api/dashboard/billing", {
+        cache: "no-store",
+      });
       const data = (await response.json()) as {
         orders?: PaymentOrderRecord[];
         supportTickets?: PaymentSupportTicketRecord[];
@@ -159,30 +202,50 @@ export function BillingClient({
       }
       clearDashboardCache("dashboard:billing");
       if (selectedOrder) {
-        setSelectedOrder(data.orders.find((order) => order.id === selectedOrder.id) ?? selectedOrder);
+        setSelectedOrder(
+          data.orders.find((order) => order.id === selectedOrder.id) ??
+            selectedOrder,
+        );
       }
       if (activeOrder) {
-        const updatedActiveOrder = data.orders.find((order) => order.id === activeOrder.id) ?? null;
+        const updatedActiveOrder =
+          data.orders.find((order) => order.id === activeOrder.id) ?? null;
         setActiveOrder(updatedActiveOrder);
         if (updatedActiveOrder?.status === "approved") {
-          setMessage("Payment approved. Your credit balance has been refreshed.");
+          setMessage(
+            "Payment approved. Your credit balance has been refreshed.",
+          );
         }
       }
     } catch (error) {
       setMessage("Could not refresh payment status. Please try again.");
       console.error("[billing] refreshOrders failed:", error);
     }
-  }, [activeOrder, paymentInfo.autoVerificationEnabled, paymentInfo.checkoutMode, selectedOrder, setTokenBalance]);
+  }, [
+    activeOrder,
+    paymentInfo.autoVerificationEnabled,
+    paymentInfo.checkoutMode,
+    selectedOrder,
+    setTokenBalance,
+  ]);
 
   useEffect(() => {
-    if (!activeOrder || activeOrder.status !== "pending" || !paymentInfo.autoVerificationEnabled) return;
+    if (
+      !activeOrder ||
+      activeOrder.status !== "pending" ||
+      !paymentInfo.autoVerificationEnabled
+    )
+      return;
     const interval = window.setInterval(() => {
       void refreshOrders();
     }, 5000);
     return () => window.clearInterval(interval);
   }, [activeOrder, paymentInfo.autoVerificationEnabled, refreshOrders]);
 
-  async function createOrder(planId: string, options: { openCheckout?: boolean } = {}) {
+  async function createOrder(
+    planId: string,
+    options: { openCheckout?: boolean } = {},
+  ) {
     setLoadingPlan(planId);
     setMessage("");
 
@@ -228,11 +291,14 @@ export function BillingClient({
     setMessage("");
 
     try {
-      const response = await fetch(`/api/payments/orders/${supportOrder.id}/support`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: supportMessage }),
-      });
+      const response = await fetch(
+        `/api/payments/orders/${supportOrder.id}/support`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: supportMessage }),
+        },
+      );
       const data = (await response.json()) as {
         ticket?: PaymentSupportTicketRecord;
         telegram?: { sent: boolean; reason?: "not_configured" | "failed" };
@@ -246,7 +312,9 @@ export function BillingClient({
       }
 
       setSupportTickets((prev) => {
-        const withoutDuplicate = prev.filter((ticket) => ticket.id !== data.ticket!.id);
+        const withoutDuplicate = prev.filter(
+          (ticket) => ticket.id !== data.ticket!.id,
+        );
         return [data.ticket!, ...withoutDuplicate];
       });
       const telegramNote = data.telegram?.sent
@@ -265,22 +333,16 @@ export function BillingClient({
     }
   }
 
-  function openPaymentProof(order: PaymentOrderRecord) {
-    setProofOrder(order);
-    setProofReference(order.paymentReference || order.providerReference || "");
-    setProofNote(order.userNote || "");
-    setProofImageDataUrl(order.proofImageDataUrl);
-    setPhoneProofLink("");
-    setPhoneProofQr("");
-  }
-
   async function createPhoneProofLink(order: PaymentOrderRecord) {
     setPhoneProofLoading(true);
     setMessage("");
     try {
-      const response = await fetch(`/api/payments/orders/${order.id}/proof-link`, {
-        cache: "no-store",
-      });
+      const response = await fetch(
+        `/api/payments/orders/${order.id}/proof-link`,
+        {
+          cache: "no-store",
+        },
+      );
       const data = (await response.json()) as {
         error?: string;
         uploadUrl?: string;
@@ -310,7 +372,11 @@ export function BillingClient({
       return;
     }
     setProofImageDataUrl(image.dataUrl);
-    setMessage(image.compressed ? "Receipt attached. Large screenshot was compressed automatically." : "");
+    setMessage(
+      image.compressed
+        ? "Receipt attached. Large screenshot was compressed automatically."
+        : "",
+    );
   }
 
   async function submitPaymentProof() {
@@ -339,9 +405,17 @@ export function BillingClient({
         return;
       }
 
-      setOrders((prev) => prev.map((order) => (order.id === data.order!.id ? data.order! : order)));
-      setActiveOrder((current) => (current?.id === data.order!.id ? data.order! : current));
-      setSelectedOrder((current) => (current?.id === data.order!.id ? data.order! : current));
+      setOrders((prev) =>
+        prev.map((order) =>
+          order.id === data.order!.id ? data.order! : order,
+        ),
+      );
+      setActiveOrder((current) =>
+        current?.id === data.order!.id ? data.order! : current,
+      );
+      setSelectedOrder((current) =>
+        current?.id === data.order!.id ? data.order! : current,
+      );
       setMessage(
         data.telegram?.sent
           ? "Payment confirmation sent. Admin will approve after matching the receipt."
@@ -378,16 +452,30 @@ export function BillingClient({
       if (!response.ok || !data.order) {
         setMessage(data.error ?? "Could not cancel payment order.");
         if (data.order) {
-          setOrders((prev) => prev.map((item) => (item.id === data.order!.id ? data.order! : item)));
-          setActiveOrder((current) => (current?.id === data.order!.id ? data.order! : current));
+          setOrders((prev) =>
+            prev.map((item) =>
+              item.id === data.order!.id ? data.order! : item,
+            ),
+          );
+          setActiveOrder((current) =>
+            current?.id === data.order!.id ? data.order! : current,
+          );
         }
         return;
       }
 
-      setOrders((prev) => prev.map((item) => (item.id === data.order!.id ? data.order! : item)));
-      setSelectedOrder((current) => (current?.id === data.order!.id ? data.order! : current));
-      setProofOrder((current) => (current?.id === data.order!.id ? null : current));
-      setActiveOrder((current) => (current?.id === data.order!.id ? null : current));
+      setOrders((prev) =>
+        prev.map((item) => (item.id === data.order!.id ? data.order! : item)),
+      );
+      setSelectedOrder((current) =>
+        current?.id === data.order!.id ? data.order! : current,
+      );
+      setProofOrder((current) =>
+        current?.id === data.order!.id ? null : current,
+      );
+      setActiveOrder((current) =>
+        current?.id === data.order!.id ? null : current,
+      );
       setCancelConfirmOrder(null);
       setMessage("Payment order cancelled. No tokens were charged.");
       clearDashboardCache("dashboard:billing");
@@ -406,7 +494,8 @@ export function BillingClient({
         </div>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 mt-2">
           <p className="text-sm text-[#4a4a4a] font-body min-w-0 flex-1">
-            Choose one plan per payment. You can buy the same plan again or switch to another plan later.
+            Choose one plan per payment. You can buy the same plan again or
+            switch to another plan later.
           </p>
           <button
             type="button"
@@ -418,13 +507,29 @@ export function BillingClient({
         </div>
 
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-          <BillingStatusCard label="Token balance" value={displayedBalance.toLocaleString()} note="Available now" />
-          <BillingStatusCard label="Pending orders" value={pendingOrders.length.toLocaleString()} note={`${pendingOrders.reduce((sum, order) => sum + order.tokens, 0).toLocaleString()} tokens waiting`} />
-          <BillingStatusCard label="Approved orders" value={approvedOrders.length.toLocaleString()} note={`${approvedOrders.reduce((sum, order) => sum + order.tokens, 0).toLocaleString()} tokens credited`} />
+          <BillingStatusCard
+            label="Token balance"
+            value={displayedBalance.toLocaleString()}
+            note="Available now"
+          />
+          <BillingStatusCard
+            label="Pending orders"
+            value={pendingOrders.length.toLocaleString()}
+            note={`${pendingOrders.reduce((sum, order) => sum + order.tokens, 0).toLocaleString()} tokens waiting`}
+          />
+          <BillingStatusCard
+            label="Approved orders"
+            value={approvedOrders.length.toLocaleString()}
+            note={`${approvedOrders.reduce((sum, order) => sum + order.tokens, 0).toLocaleString()} tokens credited`}
+          />
           <BillingStatusCard
             label="Support"
             value={openSupportTickets.length.toLocaleString()}
-            note={openSupportTickets.length === 1 ? "Open payment ticket" : "Open payment tickets"}
+            note={
+              openSupportTickets.length === 1
+                ? "Open payment ticket"
+                : "Open payment tickets"
+            }
           />
         </div>
         <div className="mt-6 flex flex-col lg:grid lg:grid-cols-[1fr_1.25fr] gap-4 border-3 border-primary bg-[#faf7f2] p-4 shadow-[3px_3px_0px_0px_#1a1a1a]">
@@ -434,11 +539,15 @@ export function BillingClient({
             </p>
             <p className="flex justify-between gap-3 border-b border-primary/10 pb-1">
               <span className="text-[#4a4a4a]">Name</span>
-              <span className="font-bold text-primary">{paymentInfo.khqrName}</span>
+              <span className="font-bold text-primary">
+                {paymentInfo.khqrName}
+              </span>
             </p>
             <p className="flex justify-between gap-3 border-b border-primary/10 pb-1">
               <span className="text-[#4a4a4a]">Account</span>
-              <span className="font-bold text-primary">{paymentInfo.khqrAccount}</span>
+              <span className="font-bold text-primary">
+                {paymentInfo.khqrAccount}
+              </span>
             </p>
             <p className="flex justify-between gap-3">
               <span className="text-[#4a4a4a]">Support</span>
@@ -460,8 +569,6 @@ export function BillingClient({
           </div>
         </div>
 
-
-
         {message ? (
           <p className="mt-4 border-2 border-primary bg-[#faf7f2] p-3 text-xs font-bold text-primary shadow-[2px_2px_0px_0px_#1a1a1a]">
             {message}
@@ -479,34 +586,39 @@ export function BillingClient({
             disabled={true}
             isCurrent={currentPlanKey === "free"}
           />
-          {plans.filter((plan) => !plan.id.startsWith("pack_")).map((plan) => {
-            const isCurrent = currentPlanKey === plan.id;
-            return (
-              <PlanCard
-                key={plan.id}
-                title={plan.name}
-                price={formatUsd(plan.priceCents)}
-                unit=" / pack"
-                note={`${plan.tokens.toLocaleString()} tokens per pack. ${plan.description}`}
-                planKey={plan.id as PlanKey}
-                action={
-                  isCurrent
-                    ? "Buy Again"
-                    : loadingPlan === plan.id
-                      ? "Preparing..."
-                      : currentPlanKey === "free"
-                        ? "Select Plan"
-                        : "Switch Plan"
-                }
-                totalPrice={formatUsd(plan.priceCents)}
-                totalTokens={plan.tokens}
-                onAction={() => createOrder(plan.id, { openCheckout: true })}
-                disabled={loadingPlan !== ""}
-                isCurrent={isCurrent}
-              />
-            );
-          })}
-          <BusinessPlanCard supportContact={supportContact} isCurrent={currentPlanKey === "business"} />
+          {plans
+            .filter((plan) => !plan.id.startsWith("pack_"))
+            .map((plan) => {
+              const isCurrent = currentPlanKey === plan.id;
+              return (
+                <PlanCard
+                  key={plan.id}
+                  title={plan.name}
+                  price={formatUsd(plan.priceCents)}
+                  unit=" / pack"
+                  note={`${plan.tokens.toLocaleString()} tokens per pack. ${plan.description}`}
+                  planKey={plan.id as PlanKey}
+                  action={
+                    isCurrent
+                      ? "Buy Again"
+                      : loadingPlan === plan.id
+                        ? "Preparing..."
+                        : currentPlanKey === "free"
+                          ? "Select Plan"
+                          : "Switch Plan"
+                  }
+                  totalPrice={formatUsd(plan.priceCents)}
+                  totalTokens={plan.tokens}
+                  onAction={() => createOrder(plan.id, { openCheckout: true })}
+                  disabled={loadingPlan !== ""}
+                  isCurrent={isCurrent}
+                />
+              );
+            })}
+          <BusinessPlanCard
+            supportContact={supportContact}
+            isCurrent={currentPlanKey === "business"}
+          />
         </div>
         <PlanComparisonTable />
       </section>
@@ -517,7 +629,8 @@ export function BillingClient({
         </div>
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6 mt-2">
           <p className="text-sm text-[#4a4a4a] font-body">
-            Pending orders wait for payment matching. Approved orders have already credited tokens.
+            Pending orders wait for payment matching. Approved orders have
+            already credited tokens.
           </p>
         </div>
         <div className="smooth-scroll-region overflow-auto border-4 border-primary shadow-[4px_4px_0px_0px_#1a1a1a] bg-white w-full min-w-0">
@@ -543,7 +656,10 @@ export function BillingClient({
             <tbody className="font-body text-sm font-semibold">
               {orders.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="p-8 text-center text-[#4a4a4a] bg-white">
+                  <td
+                    colSpan={14}
+                    className="p-8 text-center text-[#4a4a4a] bg-white"
+                  >
                     No payment orders yet.
                   </td>
                 </tr>
@@ -553,18 +669,35 @@ export function BillingClient({
                     (ticket) => ticket.paymentOrderId === order.id,
                   );
                   return (
-                    <tr key={order.id} className="border-b-4 border-primary hover:bg-[#eee9e0]/40 transition-colors">
-                      <td className="p-3 border-r border-primary/20">{formatDateTime(order.createdAt)}</td>
-                      <td className="p-3 border-r border-primary/20 max-w-[140px] truncate font-mono text-xs">{order.id}</td>
-                      <td className="p-3 border-r border-primary/20">{order.planName}</td>
-                      <td className="p-3 border-r border-primary/20">{order.quantity}</td>
-                      <td className="p-3 border-r border-primary/20">{formatUsd(order.totalPriceCents)}</td>
-                      <td className="p-3 border-r border-primary/20">{order.tokens.toLocaleString()}</td>
+                    <tr
+                      key={order.id}
+                      className="border-b-4 border-primary hover:bg-[#eee9e0]/40 transition-colors"
+                    >
+                      <td className="p-3 border-r border-primary/20">
+                        {formatDateTime(order.createdAt)}
+                      </td>
+                      <td className="p-3 border-r border-primary/20 max-w-[140px] truncate font-mono text-xs">
+                        {order.id}
+                      </td>
+                      <td className="p-3 border-r border-primary/20">
+                        {order.planName}
+                      </td>
+                      <td className="p-3 border-r border-primary/20">
+                        {order.quantity}
+                      </td>
+                      <td className="p-3 border-r border-primary/20">
+                        {formatUsd(order.totalPriceCents)}
+                      </td>
+                      <td className="p-3 border-r border-primary/20">
+                        {order.tokens.toLocaleString()}
+                      </td>
                       <td className="p-3 border-r border-primary/20 max-w-[180px] truncate font-mono text-xs">
                         {order.khqrMd5 || order.paymentReference || "-"}
                       </td>
                       <td className="p-3 border-r border-primary/20">
-                        {order.khqrExpiresAt ? formatDateTime(order.khqrExpiresAt) : "-"}
+                        {order.khqrExpiresAt
+                          ? formatDateTime(order.khqrExpiresAt)
+                          : "-"}
                       </td>
                       <td className="p-3 border-r border-primary/20">
                         <StatusPill status={order.status} />
@@ -575,16 +708,26 @@ export function BillingClient({
                       <td className="p-3 border-r border-primary/20 max-w-[180px]">
                         {order.approvedAt ? (
                           <div className="grid gap-0.5">
-                            <span className="font-headline font-bold uppercase text-xs text-emerald-600">Approved</span>
-                            <span className="text-[10px] text-[#4a4a4a] font-mono">{formatDateTime(order.approvedAt)}</span>
+                            <span className="font-headline font-bold uppercase text-xs text-emerald-600">
+                              Approved
+                            </span>
+                            <span className="text-[10px] text-[#4a4a4a] font-mono">
+                              {formatDateTime(order.approvedAt)}
+                            </span>
                           </div>
                         ) : order.rejectedAt ? (
                           <div className="grid gap-0.5">
-                            <span className="font-headline font-bold uppercase text-xs text-red-600">Rejected</span>
-                            <span className="text-[10px] text-[#4a4a4a] font-mono">{formatDateTime(order.rejectedAt)}</span>
+                            <span className="font-headline font-bold uppercase text-xs text-red-600">
+                              Rejected
+                            </span>
+                            <span className="text-[10px] text-[#4a4a4a] font-mono">
+                              {formatDateTime(order.rejectedAt)}
+                            </span>
                           </div>
                         ) : (
-                          <span className="text-[#4a4a4a] font-bold uppercase text-xs">Waiting</span>
+                          <span className="text-[#4a4a4a] font-bold uppercase text-xs">
+                            Waiting
+                          </span>
                         )}
                       </td>
                       <td className="p-3 border-r border-primary/20 max-w-[220px] truncate text-xs">
@@ -599,7 +742,9 @@ export function BillingClient({
                                 {supportTicket.adminNote}
                               </span>
                             ) : (
-                              <span className="text-xs text-[#4a4a4a]">Reviewing</span>
+                              <span className="text-xs text-[#4a4a4a]">
+                                Reviewing
+                              </span>
                             )}
                           </div>
                         ) : (
@@ -661,7 +806,9 @@ export function BillingClient({
         onOpenOrder={setSelectedOrder}
         onReportIssue={(order) => {
           setSupportOrder(order);
-          setSupportMessage(`I need help with this ${order.status} payment order.`);
+          setSupportMessage(
+            `I need help with this ${order.status} payment order.`,
+          );
         }}
       />
       {supportOrder ? (
@@ -706,7 +853,11 @@ export function BillingClient({
       {selectedOrder ? (
         <OrderDetailModal
           order={selectedOrder}
-          supportTicket={supportTickets.find((ticket) => ticket.paymentOrderId === selectedOrder.id) ?? null}
+          supportTicket={
+            supportTickets.find(
+              (ticket) => ticket.paymentOrderId === selectedOrder.id,
+            ) ?? null
+          }
           autoVerificationEnabled={paymentInfo.autoVerificationEnabled}
           onClose={() => setSelectedOrder(null)}
           onCopy={(value, label) => void copyText(value, label)}
@@ -714,7 +865,9 @@ export function BillingClient({
           onReportIssue={(order) => {
             setSelectedOrder(null);
             setSupportOrder(order);
-            setSupportMessage(`I need help with this ${order.status} payment order.`);
+            setSupportMessage(
+              `I need help with this ${order.status} payment order.`,
+            );
           }}
         />
       ) : null}
@@ -744,611 +897,6 @@ export function BillingClient({
   );
 }
 
-function CheckoutPanel({
-  order,
-  autoVerificationEnabled,
-  checkoutMode,
-  staticQrImageUrl,
-  merchantName,
-  onRefresh,
-  onCopyOrderId,
-  onCancelOrder,
-  cancelLoading,
-}: {
-  order: PaymentOrderRecord;
-  autoVerificationEnabled: boolean;
-  checkoutMode: CheckoutMode;
-  staticQrImageUrl: string;
-  merchantName: string;
-  onRefresh: () => Promise<void>;
-  onCopyOrderId: (orderId: string) => void;
-  onCancelOrder: (order: PaymentOrderRecord) => void;
-  cancelLoading: boolean;
-}) {
-  const [transactionId, setTransactionId] = useState("");
-  const [proofImageBase64, setProofImageBase64] = useState<string | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [infoMessage, setInfoMessage] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [selectedBank, setSelectedBank] = useState<"ABA" | "ACLEDA">("ABA");
-  const [orderIdCopied, setOrderIdCopied] = useState(false);
-
-  const handleCopyOrderIdLocal = async (id: string) => {
-    try {
-      await navigator.clipboard.writeText(id);
-      setOrderIdCopied(true);
-      setTimeout(() => setOrderIdCopied(false), 2000);
-      onCopyOrderId(id);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // Price calculations matching tax-inclusive database price
-  const total = order.totalPriceCents / 100;
-  const subtotal = total / 1.1;
-  const tax = total - subtotal;
-
-  const isStaticPayway = checkoutMode === "static_payway_qr";
-  const isKhqrcc = checkoutMode === "khqrcc_qr";
-  const manualProofRequired = !isKhqrcc;
-  const qrImageSrc = isStaticPayway ? staticQrImageUrl : order.khqrImageDataUrl ?? "";
-  const [checkingPayment, setCheckingPayment] = useState(false);
-
-  const hasSubmittedProof = manualProofRequired
-    ? order.proofImageDataUrl !== null || success || order.status !== "pending"
-    : order.status !== "pending";
-
-  async function handleRefreshPayment() {
-    setCheckingPayment(true);
-    try {
-      await onRefresh();
-    } finally {
-      setCheckingPayment(false);
-    }
-  }
-
-  async function processImageFile(file: File) {
-    setError(null);
-    setInfoMessage("Compressing screenshot file...");
-
-    const preview = URL.createObjectURL(file);
-    setPreviewUrl(preview);
-
-    const result = await preparePaymentProofImage(file);
-    if (!result.ok) {
-      setError(result.error);
-      setPreviewUrl(null);
-      setProofImageBase64(null);
-      setInfoMessage(null);
-      return;
-    }
-
-    setProofImageBase64(result.dataUrl);
-    setInfoMessage(
-      result.compressed
-        ? "Receipt screenshot attached (compressed automatically to fit size limit)."
-        : "Receipt screenshot attached successfully."
-    );
-  }
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      void processImageFile(file);
-    }
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(true);
-  };
-
-  const handleDragLeave = () => {
-    setDragOver(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      void processImageFile(file);
-    }
-  };
-
-  const handleSubmitProof = async () => {
-    if (!proofImageBase64) {
-      setError("Please upload your payment receipt screenshot.");
-      return;
-    }
-
-    setSubmitting(true);
-    setError(null);
-
-    try {
-      const response = await fetch(`/api/payments/orders/${order.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          paymentReference: transactionId.trim() || null,
-          userNote: `Prepaid checkout for ${order.planName}`,
-          paymentMethod: selectedBank,
-          proofImageDataUrl: proofImageBase64,
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok || !data.order) {
-        setError(data.error ?? "Failed to submit payment proof.");
-        return;
-      }
-
-      setSuccess(true);
-      setInfoMessage("Payment proof submitted successfully!");
-      void onRefresh();
-    } catch (err) {
-      console.error(err);
-      setError("Network error while submitting payment verification.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="w-full mt-6 dashboard-enter border-t-4 border-primary pt-6">
-      <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary/70">
-            Active Checkout
-          </p>
-          <h2 className="mt-1 text-[28px] font-semibold tracking-tight text-primary">
-            Pay for your order
-          </h2>
-        </div>
-      </div>
-
-      {isStaticPayway && !hasSubmittedProof && (
-        <div className="border-4 border-primary bg-[#fff4cc] p-4 text-sm font-bold text-primary shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] mb-6 flex items-start gap-3">
-          <span className="material-symbols-outlined text-amber-600 font-bold shrink-0">warning</span>
-          <div>
-            <p className="font-sans font-black uppercase text-xs tracking-wider text-amber-800">Crucial Payment Remark Required</p>
-            <p className="mt-1 text-xs text-primary/80 font-semibold leading-relaxed">
-              To auto-approve your tokens instantly, you <strong className="text-[#e63b2e]">MUST</strong> copy the Order ID below and paste it into the <strong className="text-primary">Remark/Description</strong> field of your banking app before sending the money.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="border-4 border-primary bg-[#ffdad6] p-4 text-sm font-bold text-[#93000a] shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] mb-6">
-          {error}
-        </div>
-      )}
-
-      {infoMessage && (
-        <div className="border-2 border-primary bg-[#def3e5] p-3 text-xs font-bold text-emerald-800 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] mb-6">
-          {infoMessage}
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left Side: Order summary and Verification form */}
-        <div className="lg:col-span-7 flex flex-col gap-6">
-          {/* Order ID Copy block (Static PayWay only) */}
-          {isStaticPayway && !hasSubmittedProof && (
-            <div className="bg-white border-4 border-primary p-6 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]">
-              <h3 className="font-sans font-black text-lg uppercase mb-3 border-b-2 border-primary pb-2 flex items-center gap-2">
-                <span className="material-symbols-outlined font-bold text-primary">content_copy</span>
-                1. Copy Order ID
-              </h3>
-              <p className="text-xs text-[#4a4a4a] font-bold mb-3">
-                Click copy and paste this into your bank transfer remark/description.
-              </p>
-              <div className="flex gap-2 items-center">
-                <div className="flex-1 bg-[#faf7f2] border-2 border-primary font-mono text-sm font-bold p-3 select-all truncate">
-                  {order.id}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleCopyOrderIdLocal(order.id)}
-                  className={`px-5 py-3 border-2 border-primary font-sans font-black text-xs uppercase shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
-                    orderIdCopied 
-                      ? "bg-[#def3e5] text-emerald-800" 
-                      : "bg-[#ffcc00] text-primary hover:bg-[#ebd578]"
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-sm font-bold">
-                    {orderIdCopied ? "check_circle" : "content_copy"}
-                  </span>
-                  <span>{orderIdCopied ? "Copied!" : "Copy"}</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Bank Selector Switcher (Static PayWay only) */}
-          {isStaticPayway && !hasSubmittedProof && (
-            <div className="bg-white border-4 border-primary p-6 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]">
-              <h3 className="font-sans font-black text-lg uppercase mb-3 border-b-2 border-primary pb-2 flex items-center gap-2">
-                <span className="material-symbols-outlined font-bold text-primary">account_balance</span>
-                2. Choose Bank App
-              </h3>
-              <p className="text-xs text-[#4a4a4a] font-bold mb-4">
-                Select your banking app to view step-by-step payment instructions.
-              </p>
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <button
-                  type="button"
-                  onClick={() => setSelectedBank("ABA")}
-                  className={`flex flex-col items-center justify-center p-4 border-4 transition-all cursor-pointer ${
-                    selectedBank === "ABA"
-                      ? "border-primary bg-primary text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
-                      : "border-primary/20 bg-white hover:border-primary hover:bg-[#eee9e0]/20 text-primary"
-                  }`}
-                >
-                  <span className="font-sans font-black text-base tracking-wider">ABA Mobile</span>
-                  <span className={`text-[10px] mt-1 font-semibold ${selectedBank === "ABA" ? "text-primary-fixed/80" : "text-primary/60"}`}>
-                    ABA PayWay QR
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedBank("ACLEDA")}
-                  className={`flex flex-col items-center justify-center p-4 border-4 transition-all cursor-pointer ${
-                    selectedBank === "ACLEDA"
-                      ? "border-primary bg-primary text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
-                      : "border-primary/20 bg-white hover:border-primary hover:bg-[#eee9e0]/20 text-primary"
-                  }`}
-                >
-                  <span className="font-sans font-black text-base tracking-wider">ACLEDA Mobile</span>
-                  <span className={`text-[10px] mt-1 font-semibold ${selectedBank === "ACLEDA" ? "text-primary-fixed/80" : "text-primary/60"}`}>
-                    ACLEDA Unity
-                  </span>
-                </button>
-              </div>
-
-              {/* Step-by-step instructions based on selected bank */}
-              <div className="bg-[#faf7f2] border-2 border-primary p-4 text-xs font-semibold space-y-3 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                <p className="font-sans font-black uppercase text-[10px] text-primary/70 tracking-wider">
-                  Payment Guideline:
-                </p>
-                {selectedBank === "ABA" ? (
-                  <ol className="list-decimal list-inside space-y-2 leading-relaxed text-primary/80">
-                    <li>
-                      Copy the Order ID above: <span className="font-mono bg-[#eee9e0] px-1 py-0.5 rounded font-bold text-primary select-all">{order.id}</span>
-                    </li>
-                    <li>
-                      Open your **ABA Mobile** app and select **Scan QR**.
-                    </li>
-                    <li>
-                      Scan the KHQR Code displayed on the right.
-                    </li>
-                    <li>
-                      On the transfer screen, tap the <strong className="text-primary">&quot;Remark to Receiver&quot;</strong> field and paste the copied Order ID.
-                    </li>
-                    <li>
-                      Press Send. The system will auto-approve the order in seconds.
-                    </li>
-                  </ol>
-                ) : (
-                  <ol className="list-decimal list-inside space-y-2 leading-relaxed text-primary/80">
-                    <li>
-                      Copy the Order ID above: <span className="font-mono bg-[#eee9e0] px-1 py-0.5 rounded font-bold text-primary select-all">{order.id}</span>
-                    </li>
-                    <li>
-                      Open your **ACLEDA Mobile** app and select **Scan QR**.
-                    </li>
-                    <li>
-                      Scan the KHQR Code displayed on the right.
-                    </li>
-                    <li>
-                      On the transfer screen, tap the <strong className="text-primary">&quot;Remark&quot;</strong> or <strong className="text-primary">&quot;Payment Description&quot;</strong> field and paste the copied Order ID.
-                    </li>
-                    <li>
-                      Press Confirm. The system will auto-approve the order in seconds.
-                    </li>
-                  </ol>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Order Summary */}
-          <div className="bg-white border-4 border-primary p-6 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]">
-            <h3 className="font-sans font-black text-xl uppercase border-b-4 border-primary pb-3 mb-4">
-              Order Summary
-            </h3>
-            <ul className="space-y-3 mb-6">
-              <li className="flex justify-between items-center font-sans font-black text-base border-b-2 border-primary pb-2">
-                <span>{order.planName} x {order.quantity}</span>
-                <span>${total.toFixed(2)}</span>
-              </li>
-              <li className="flex justify-between items-center text-xs font-bold">
-                <span className="text-primary/70 flex items-center gap-2">
-                  <span className="material-symbols-outlined text-sm font-bold text-emerald-600">check</span>
-                  {order.tokens.toLocaleString()} tokens package
-                </span>
-              </li>
-              <li className="flex justify-between items-center text-xs font-bold">
-                <span className="text-primary/70 flex items-center gap-2">
-                  <span className="material-symbols-outlined text-sm font-bold text-emerald-600">check</span>
-                  API access credentials support
-                </span>
-              </li>
-            </ul>
-
-            <div className="bg-primary text-white p-4 border-4 border-primary">
-              <div className="flex justify-between items-center mb-1 text-sm font-semibold">
-                <span>Subtotal</span>
-                <span>${subtotal.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between items-center text-xs text-primary-fixed/80">
-                <span>Tax (10%)</span>
-                <span>${tax.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between items-center mt-3 pt-3 border-t border-white/20 font-sans font-black text-xl uppercase text-primary-fixed">
-                <span>Total</span>
-                <span>${total.toFixed(2)}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Verification Form */}
-          {!manualProofRequired && order.status === "pending" ? (
-            <div className="bg-white border-4 border-primary p-6 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
-              <h3 className="font-sans font-black text-lg uppercase mb-4 border-b-2 border-primary pb-2">
-                Automatic Verification
-              </h3>
-              <p className="text-sm font-semibold text-primary/80 leading-6">
-                Pay with the ABA QR code. The account is credited automatically after payment confirmation.
-              </p>
-              <div className="mt-4 border-4 border-primary bg-[#faf7f2] p-4 text-xs font-mono space-y-2 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                <div className="flex justify-between border-b border-primary/20 pb-1">
-                  <span className="text-primary/60 font-sans font-bold">Order ID:</span>
-                  <span className="font-bold truncate max-w-[280px]">{order.id}</span>
-                </div>
-                <div className="flex justify-between border-b border-primary/20 pb-1">
-                  <span className="text-primary/60 font-sans font-bold">Method:</span>
-                  <span className="font-bold">ABA QR payment</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-primary/60 font-sans font-bold">Status:</span>
-                  <span className="font-bold text-amber-700 uppercase">Waiting for payment</span>
-                </div>
-              </div>
-            </div>
-          ) : !hasSubmittedProof ? (
-            <div className="bg-white border-4 border-primary p-6 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
-              <h3 className="font-sans font-black text-lg uppercase mb-4 border-b-2 border-primary pb-2">
-                Verify Payment
-              </h3>
-              
-              <div className="mb-5">
-                <label className="block font-sans font-black mb-2 uppercase text-xs text-primary/70" htmlFor="transaction_id">
-                  Transaction ID (Optional - Fill to get faster approval)
-                </label>
-                <input
-                  value={transactionId}
-                  onChange={(e) => setTransactionId(e.target.value)}
-                  className="w-full bg-[#faf7f2] border-x-0 border-t-0 border-b-4 border-primary p-3 font-bold focus:ring-0 focus:border-[#0055ff] focus:outline-none transition-colors text-sm"
-                  id="transaction_id"
-                  placeholder="Enter ID from receipt"
-                  type="text"
-                  disabled={submitting}
-                />
-              </div>
-
-              <div>
-                <span className="block font-sans font-black mb-2 uppercase text-xs text-primary/70">
-                  Upload Receipt screenshot
-                </span>
-                <div
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  className={`border-4 border-dashed border-primary bg-[#faf7f2] p-6 text-center cursor-pointer hover:bg-primary hover:text-white transition-colors group relative ${
-                    dragOver ? "bg-primary text-white border-solid" : ""
-                  }`}
-                >
-                  <input
-                    type="file"
-                    id="receipt-file"
-                    accept="image/png, image/jpeg, image/webp"
-                    onChange={handleFileChange}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    disabled={submitting}
-                  />
-                  
-                  {previewUrl ? (
-                    <div className="flex flex-col items-center">
-                      <img
-                        src={previewUrl}
-                        alt="Receipt Preview"
-                        className="max-h-40 object-contain border-2 border-primary shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] mb-2"
-                      />
-                      <span className="font-sans font-black uppercase text-xs block group-hover:text-primary-fixed">
-                        Click or drag to replace receipt screenshot
-                      </span>
-                    </div>
-                  ) : (
-                    <>
-                      <span className="material-symbols-outlined text-4xl mb-1 block group-hover:text-primary-fixed">
-                        upload_file
-                      </span>
-                      <span className="font-sans font-black uppercase text-xs block">
-                        Click to upload or drag & drop
-                      </span>
-                      <span className="text-[10px] mt-1 block opacity-70">
-                        JPG, PNG, WEBP up to 4MB
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="bg-white border-4 border-primary p-6 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
-              <h3 className="font-sans font-black text-lg uppercase mb-4 border-b-2 border-primary pb-2 text-emerald-600 flex items-center gap-2">
-                <span className="material-symbols-outlined font-bold">check_circle</span>
-                {manualProofRequired ? "Proof Submitted" : "Payment Status"}
-              </h3>
-              <p className="text-sm font-semibold text-primary/80 leading-6 mb-4">
-                {manualProofRequired
-                  ? "Your payment confirmation has been saved. The administrator will review and match the transaction."
-                  : "This payment order is no longer pending. Refresh the billing page to view the latest account balance."}
-              </p>
-              <div className="border-4 border-primary bg-[#faf7f2] p-4 text-xs font-mono space-y-2 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                <div className="flex justify-between border-b border-primary/20 pb-1">
-                  <span className="text-primary/60 font-sans font-bold">Order ID:</span>
-                  <span className="font-bold truncate max-w-[280px]">{order.id}</span>
-                </div>
-                <div className="flex justify-between border-b border-primary/20 pb-1">
-                  <span className="text-primary/60 font-sans font-bold">Transaction ID:</span>
-                  <span className="font-bold">{order.paymentReference || transactionId || "Attached"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-primary/60 font-sans font-bold">Status:</span>
-                  <span className="font-bold text-amber-700 uppercase">{order.status}</span>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Right Side: QR scanner and action buttons */}
-        <div className="lg:col-span-5 flex flex-col">
-          <div className="bg-white border-4 border-primary p-6 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] h-full flex flex-col items-center justify-center relative overflow-hidden min-h-[460px]">
-            {/* Accent background element */}
-            <div className="absolute -top-10 -right-10 w-32 h-32 bg-[#e63b2e] border-4 border-primary rounded-full"></div>
-
-            <div className="text-center mb-6 relative z-10 w-full">
-              <div className="bg-primary text-primary-fixed font-sans font-black text-2xl uppercase py-3 px-6 border-4 border-primary inline-block mb-4 transform -rotate-2 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
-                {isKhqrcc ? "Subscription Payment" : "KHQR Payment"}
-              </div>
-              <p className="font-sans font-black text-sm">Scan with your banking app to pay.</p>
-              <p className="text-[10px] mt-1 font-semibold text-primary/60">
-                {isKhqrcc ? "Automatic ABA QR checkout" : "Supported by Bakong"}
-              </p>
-            </div>
-
-            {/* QR Code Container */}
-            <div className="bg-white border-4 border-primary p-4 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] mb-8 relative z-10 w-80 h-80 flex items-center justify-center">
-              {qrImageSrc ? (
-                <img
-                  src={qrImageSrc}
-                  alt="KHQR Code"
-                  className="w-full h-full object-contain"
-                />
-              ) : (
-                <div className="w-full h-full border-2 border-dashed border-primary flex items-center justify-center bg-[#faf7f2]">
-                  <p className="text-xs font-bold text-primary/50 text-center px-4">
-                    QR invoice not generated.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {order && qrImageSrc && (
-              <a
-                href={qrImageSrc}
-                download={`khqr-order-${order.id}.png`}
-                className="mb-6 bg-white text-primary border-2 border-primary font-sans font-bold text-xs uppercase py-2.5 px-5 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#faf7f2] flex items-center justify-center gap-1.5 cursor-pointer relative z-10 hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[1px_1px_0px_0px_rgba(26,26,26,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-none transition-all"
-              >
-                <span className="material-symbols-outlined text-sm font-bold">download</span>
-                <span>Save QR to Gallery</span>
-              </a>
-            )}
-
-            {/* Complete Purchase Button */}
-            {isKhqrcc && order.status === "pending" ? (
-              <button
-                type="button"
-                onClick={() => void handleRefreshPayment()}
-                disabled={!autoVerificationEnabled || checkingPayment}
-                className="w-full bg-[#ffcc00] text-primary font-sans font-black text-xl uppercase py-4 border-4 border-primary shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] transition-all cursor-pointer disabled:bg-[#dcd8cf] disabled:text-primary/30 disabled:border-primary/30 disabled:shadow-none disabled:pointer-events-none active:translate-x-[4px] active:translate-y-[4px] active:shadow-none flex items-center justify-center gap-2 relative z-10"
-              >
-                <span>
-                  {checkingPayment
-                    ? "Checking..."
-                    : autoVerificationEnabled
-                      ? "Check Payment"
-                      : "Payment Not Configured"}
-                </span>
-                {checkingPayment ? <ButtonSpinner /> : <span className="material-symbols-outlined font-bold">payments</span>}
-              </button>
-            ) : !hasSubmittedProof ? (
-              <button
-                type="button"
-                onClick={handleSubmitProof}
-                disabled={submitting || !proofImageBase64}
-                className="w-full bg-[#ffcc00] text-primary font-sans font-black text-xl uppercase py-4 border-4 border-primary shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] transition-all cursor-pointer disabled:bg-[#dcd8cf] disabled:text-primary/30 disabled:border-primary/30 disabled:shadow-none disabled:pointer-events-none active:translate-x-[4px] active:translate-y-[4px] active:shadow-none flex items-center justify-center gap-2 relative z-10"
-              >
-                <span>{submitting ? "Verifying..." : "Complete Purchase"}</span>
-                <span className="material-symbols-outlined font-bold">arrow_forward</span>
-              </button>
-            ) : (
-              <div className="w-full flex gap-3 relative z-10 flex-wrap justify-center">
-                <button
-                  type="button"
-                  onClick={() => void handleRefreshPayment()}
-                  disabled={checkingPayment}
-                  className="bg-primary text-[#faf7f2] font-sans font-bold uppercase text-xs py-3 px-5 border-4 border-primary shadow-[3px_3px_0px_0px_rgba(26,26,26,1)] hover:bg-[#0055ff] hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
-                >
-                  {checkingPayment ? "Checking..." : "Refresh Status"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onCancelOrder(order)}
-                  disabled={cancelLoading}
-                  className="bg-white text-red-700 font-sans font-bold uppercase text-xs py-3 px-5 border-4 border-primary shadow-[3px_3px_0px_0px_rgba(26,26,26,1)] hover:bg-red-50 transition-colors cursor-pointer"
-                >
-                  {cancelLoading ? "Cancelling..." : "Cancel Order"}
-                </button>
-              </div>
-            )}
-
-            <div className="flex gap-2 justify-center mt-4 relative z-10 flex-wrap">
-              <button
-                type="button"
-                onClick={() => onCopyOrderId(order.id)}
-                className="bg-white text-primary font-sans font-bold uppercase text-[10px] py-1.5 px-3 border-2 border-primary shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-[#eee9e0] transition-colors cursor-pointer"
-              >
-                Copy Order ID
-              </button>
-              {order.status === "pending" && !hasSubmittedProof && (
-                <button
-                  type="button"
-                  onClick={() => onCancelOrder(order)}
-                  className="bg-white text-red-700 font-sans font-bold uppercase text-[10px] py-1.5 px-3 border-2 border-primary shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-red-50 transition-colors cursor-pointer"
-                >
-                  Cancel Order
-                </button>
-              )}
-            </div>
-
-            <p className="text-[9px] font-sans font-black text-center mt-5 uppercase tracking-widest text-primary/50 relative z-10">
-              Secure transaction encrypted
-            </p>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ButtonSpinner() {
-  return (
-    <span
-      aria-hidden="true"
-      className="h-5 w-5 rounded-full border-3 border-primary/35 border-t-primary animate-spin"
-    />
-  );
-}
-
 function SupportHistorySection({
   orders,
   supportTickets,
@@ -1372,25 +920,37 @@ function SupportHistorySection({
       </div>
       <div className="flex flex-wrap items-center justify-between gap-4 mb-6 mt-2">
         <p className="text-sm text-[#4a4a4a] font-body">
-          Track payment help requests, admin replies, and the linked order status.
+          Track payment help requests, admin replies, and the linked order
+          status.
         </p>
         <span className="border-2 border-primary bg-[#f5f0e8] px-3 py-1 text-xs font-headline font-bold uppercase text-primary shadow-[2px_2px_0px_0px_#1a1a1a]">
-          {supportTickets.filter((ticket) => ticket.status === "open").length} open /{" "}
-          {supportTickets.filter((ticket) => ticket.status === "resolved").length} resolved
+          {supportTickets.filter((ticket) => ticket.status === "open").length}{" "}
+          open /{" "}
+          {
+            supportTickets.filter((ticket) => ticket.status === "resolved")
+              .length
+          }{" "}
+          resolved
         </span>
       </div>
 
       {ticketRows.length === 0 ? (
         <div className="border-4 border-dashed border-primary bg-[#faf7f2] p-8 text-center mt-4 shadow-[2px_2px_0px_0px_#1a1a1a]">
-          <p className="text-sm font-headline font-bold uppercase text-primary">No support tickets yet</p>
+          <p className="text-sm font-headline font-bold uppercase text-primary">
+            No support tickets yet
+          </p>
           <p className="mt-2 text-xs text-[#4a4a4a] font-body">
-            If a payment needs help, use Report Issue from the payment order row.
+            If a payment needs help, use Report Issue from the payment order
+            row.
           </p>
         </div>
       ) : (
         <div className="mt-4 grid gap-4">
           {ticketRows.map(({ ticket, order }) => (
-            <article key={ticket.id} className="border-3 border-primary bg-white p-4 shadow-[3px_3px_0px_0px_#1a1a1a]">
+            <article
+              key={ticket.id}
+              className="border-3 border-primary bg-white p-4 shadow-[3px_3px_0px_0px_#1a1a1a]"
+            >
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-primary/10 pb-3">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -1398,10 +958,13 @@ function SupportHistorySection({
                     {order ? <StatusPill status={order.status} /> : null}
                   </div>
                   <h3 className="mt-2 text-lg font-headline font-black uppercase text-primary">
-                    {order ? `${order.planName} x ${order.quantity}` : "Payment order"}
+                    {order
+                      ? `${order.planName} x ${order.quantity}`
+                      : "Payment order"}
                   </h3>
                   <p className="mt-1 text-xs text-[#4a4a4a] font-body">
-                    Ticket {ticket.id.slice(0, 8)} / Created {formatDateTime(ticket.createdAt)}
+                    Ticket {ticket.id.slice(0, 8)} / Created{" "}
+                    {formatDateTime(ticket.createdAt)}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -1427,16 +990,25 @@ function SupportHistorySection({
               </div>
               <div className="mt-4 grid gap-3 lg:grid-cols-2">
                 <div className="border-2 border-primary bg-[#faf7f2] p-3 text-xs font-body shadow-[1px_1px_0px_0px_#1a1a1a]">
-                  <p className="font-headline font-black uppercase text-[10px] text-primary border-b border-primary/10 pb-1 mb-2">Your message</p>
-                  <p className="leading-relaxed font-semibold">{ticket.userMessage}</p>
+                  <p className="font-headline font-black uppercase text-[10px] text-primary border-b border-primary/10 pb-1 mb-2">
+                    Your message
+                  </p>
+                  <p className="leading-relaxed font-semibold">
+                    {ticket.userMessage}
+                  </p>
                 </div>
                 <div className="border-2 border-primary bg-[#faf7f2] p-3 text-xs font-body shadow-[1px_1px_0px_0px_#1a1a1a]">
-                  <p className="font-headline font-black uppercase text-[10px] text-primary border-b border-primary/10 pb-1 mb-2">Admin reply</p>
+                  <p className="font-headline font-black uppercase text-[10px] text-primary border-b border-primary/10 pb-1 mb-2">
+                    Admin reply
+                  </p>
                   {ticket.adminNote ? (
-                    <p className="leading-relaxed font-semibold">{ticket.adminNote}</p>
+                    <p className="leading-relaxed font-semibold">
+                      {ticket.adminNote}
+                    </p>
                   ) : (
                     <p className="leading-relaxed text-[#4a4a4a]">
-                      Admin has not replied yet. The ticket is still being reviewed.
+                      Admin has not replied yet. The ticket is still being
+                      reviewed.
                     </p>
                   )}
                   {ticket.resolvedAt ? (
@@ -1500,41 +1072,87 @@ function OrderDetailModal({
           <div className="mt-5 grid gap-4 md:grid-cols-2">
             <div className="grid gap-2 border-3 border-primary bg-white p-4 text-xs font-body shadow-[2px_2px_0px_0px_#1a1a1a]">
               <DetailRow label="Order ID" value={order.id} mono />
-              <DetailRow label="Status" value={order.status} pill={<StatusPill status={order.status} />} />
-              <DetailRow label="Total" value={formatUsd(order.totalPriceCents)} />
+              <DetailRow
+                label="Status"
+                value={order.status}
+                pill={<StatusPill status={order.status} />}
+              />
+              <DetailRow
+                label="Total"
+                value={formatUsd(order.totalPriceCents)}
+              />
               <DetailRow label="Tokens" value={order.tokens.toLocaleString()} />
               <DetailRow label="KHQR amount" value={formatKhqrAmount(order)} />
-              <DetailRow label="KHQR hash" value={order.khqrMd5 || order.paymentReference || "-"} mono />
-              <DetailRow label="Expires" value={formatDateTime(order.khqrExpiresAt)} />
+              <DetailRow
+                label="KHQR hash"
+                value={order.khqrMd5 || order.paymentReference || "-"}
+                mono
+              />
+              <DetailRow
+                label="Expires"
+                value={formatDateTime(order.khqrExpiresAt)}
+              />
             </div>
 
             <div className="grid gap-2 border-3 border-primary bg-white p-4 text-xs font-body shadow-[2px_2px_0px_0px_#1a1a1a]">
-              <DetailRow label="Provider" value={order.paymentProvider ?? "-"} />
-              <DetailRow label="Payment method" value={paymentMethodLabel(order)} />
-              <DetailRow label="Provider amount" value={formatProviderAmount(order)} />
-              <DetailRow label="Provider transaction" value={order.providerTransactionId || order.providerReference || "-"} mono />
+              <DetailRow
+                label="Provider"
+                value={order.paymentProvider ?? "-"}
+              />
+              <DetailRow
+                label="Payment method"
+                value={paymentMethodLabel(order)}
+              />
+              <DetailRow
+                label="Provider amount"
+                value={formatProviderAmount(order)}
+              />
+              <DetailRow
+                label="Provider transaction"
+                value={
+                  order.providerTransactionId || order.providerReference || "-"
+                }
+                mono
+              />
               <DetailRow label="Paid at" value={formatDateTime(order.paidAt)} />
-              <DetailRow label="Approved at" value={formatDateTime(order.approvedAt)} />
-              <DetailRow label="Rejected at" value={formatDateTime(order.rejectedAt)} />
-              <DetailRow label="Expired at" value={formatDateTime(order.expiredAt)} />
+              <DetailRow
+                label="Approved at"
+                value={formatDateTime(order.approvedAt)}
+              />
+              <DetailRow
+                label="Rejected at"
+                value={formatDateTime(order.rejectedAt)}
+              />
+              <DetailRow
+                label="Expired at"
+                value={formatDateTime(order.expiredAt)}
+              />
             </div>
           </div>
 
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <div className="border-3 border-primary bg-white p-4 text-xs font-body shadow-[2px_2px_0px_0px_#1a1a1a]">
-              <p className="font-headline font-bold uppercase text-xs text-primary border-b border-primary/10 pb-1 mb-2">Payment notes</p>
+              <p className="font-headline font-bold uppercase text-xs text-primary border-b border-primary/10 pb-1 mb-2">
+                Payment notes
+              </p>
               <div className="grid gap-2">
                 <DetailRow label="Your note" value={order.userNote || "-"} />
                 <DetailRow label="Admin note" value={order.adminNote || "-"} />
                 <DetailRow
                   label="Credit status"
-                  value={order.tokenTransactionId ? "Tokens credited" : "Not credited yet"}
+                  value={
+                    order.tokenTransactionId
+                      ? "Tokens credited"
+                      : "Not credited yet"
+                  }
                 />
               </div>
             </div>
 
             <div className="border-3 border-primary bg-white p-4 text-xs font-body shadow-[2px_2px_0px_0px_#1a1a1a]">
-              <p className="font-headline font-bold uppercase text-xs text-primary border-b border-primary/10 pb-1 mb-2">Support status</p>
+              <p className="font-headline font-bold uppercase text-xs text-primary border-b border-primary/10 pb-1 mb-2">
+                Support status
+              </p>
               {supportTicket ? (
                 <div className="grid gap-3">
                   <div className="flex flex-wrap items-center gap-2">
@@ -1547,7 +1165,9 @@ function OrderDetailModal({
                     <p className="text-[10px] font-headline font-black uppercase text-[#4a4a4a]">
                       Your message
                     </p>
-                    <p className="mt-1 leading-relaxed font-semibold">{supportTicket.userMessage}</p>
+                    <p className="mt-1 leading-relaxed font-semibold">
+                      {supportTicket.userMessage}
+                    </p>
                   </div>
                   <div>
                     <p className="text-[10px] font-headline font-black uppercase text-[#4a4a4a]">
@@ -1573,7 +1193,9 @@ function OrderDetailModal({
                 className="bg-[#ffcc00] text-primary border-2 border-primary font-headline font-bold uppercase text-xs py-2 px-4 shadow-[2px_2px_0px_0px_#1a1a1a] hover:bg-[#1a1a1a] hover:text-[#ffcc00] transition-all cursor-pointer inline-flex items-center gap-1"
               >
                 <span>Continue to Pay</span>
-                <span className="material-symbols-outlined text-sm font-bold">arrow_forward</span>
+                <span className="material-symbols-outlined text-sm font-bold">
+                  arrow_forward
+                </span>
               </Link>
             )}
             <button
@@ -1622,7 +1244,9 @@ function DetailRow({
     <p className="flex items-center justify-between gap-4">
       <span className="text-[#4a4a4a] font-semibold">{label}</span>
       {pill ?? (
-        <span className={`max-w-[180px] sm:max-w-[300px] md:max-w-[390px] truncate text-right font-bold ${mono ? "font-mono text-xs" : ""}`}>
+        <span
+          className={`max-w-[180px] sm:max-w-[300px] md:max-w-[390px] truncate text-right font-bold ${mono ? "font-mono text-xs" : ""}`}
+        >
           {value}
         </span>
       )}
@@ -1649,16 +1273,23 @@ function CancelPaymentModal({
             Cancel Order
           </div>
 
-          <h2 className="mt-4 text-2xl font-headline font-black uppercase text-primary">Cancel this payment?</h2>
+          <h2 className="mt-4 text-2xl font-headline font-black uppercase text-primary">
+            Cancel this payment?
+          </h2>
           <p className="mt-2 text-sm leading-6 text-[#4a4a4a] font-body">
-            Use this only if you have not paid yet. If you already paid, do not cancel; click I Paid and upload the receipt.
+            Use this only if you have not paid yet. If you already paid, do not
+            cancel; click I Paid and upload the receipt.
           </p>
 
           <div className="mt-4 grid gap-2 border-3 border-primary bg-white p-4 text-xs font-body shadow-[2px_2px_0px_0px_#1a1a1a]">
             <DetailRow label="Order ID" value={order.id} mono />
             <DetailRow label="Total" value={formatUsd(order.totalPriceCents)} />
             <DetailRow label="Tokens" value={order.tokens.toLocaleString()} />
-            <DetailRow label="Status" value={order.status} pill={<StatusPill status={order.status} />} />
+            <DetailRow
+              label="Status"
+              value={order.status}
+              pill={<StatusPill status={order.status} />}
+            />
           </div>
 
           <div className="mt-6 flex flex-wrap justify-end gap-3">
@@ -1728,24 +1359,34 @@ function PaymentProofModal({
             Payment Confirmation
           </div>
 
-          <h2 className="mt-4 text-2xl font-headline font-black uppercase text-primary">Upload receipt for this order</h2>
+          <h2 className="mt-4 text-2xl font-headline font-black uppercase text-primary">
+            Upload receipt for this order
+          </h2>
           <p className="mt-2 text-xs leading-5 text-[#4a4a4a] font-body font-semibold">
-            Best path: scan the phone upload QR and attach the ABA receipt from your phone. No transaction ID or note is required.
+            Best path: scan the phone upload QR and attach the ABA receipt from
+            your phone. No transaction ID or note is required.
           </p>
 
           <div className="mt-4 grid gap-2 border-3 border-primary bg-white p-4 text-xs font-body shadow-[2px_2px_0px_0px_#1a1a1a]">
             <DetailRow label="Order ID" value={order.id} mono />
             <DetailRow label="Total" value={formatUsd(order.totalPriceCents)} />
             <DetailRow label="Tokens" value={order.tokens.toLocaleString()} />
-            <DetailRow label="Status" value={order.status} pill={<StatusPill status={order.status} />} />
+            <DetailRow
+              label="Status"
+              value={order.status}
+              pill={<StatusPill status={order.status} />}
+            />
           </div>
 
           <div className="mt-4 border-3 border-primary bg-white p-4 shadow-[2px_2px_0px_0px_#1a1a1a]">
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-primary/10 pb-3">
               <div>
-                <p className="text-sm font-headline font-black uppercase text-primary">Upload receipt from phone</p>
+                <p className="text-sm font-headline font-black uppercase text-primary">
+                  Upload receipt from phone
+                </p>
                 <p className="mt-1 text-xs text-[#4a4a4a] font-body font-semibold">
-                  Generate a QR, scan it with the phone that made the payment, then upload the ABA receipt directly.
+                  Generate a QR, scan it with the phone that made the payment,
+                  then upload the ABA receipt directly.
                 </p>
               </div>
               <button
@@ -1754,23 +1395,35 @@ function PaymentProofModal({
                 disabled={phoneLoading || order.status !== "pending"}
                 className="bg-[#1a1a1a] text-white border-2 border-primary font-headline font-bold uppercase text-xs py-2 px-4 shadow-[2px_2px_0px_0px_#1a1a1a] hover:bg-[#ffcc00] hover:text-primary transition-all cursor-pointer disabled:opacity-50"
               >
-                {phoneLoading ? "Creating..." : phoneQrDataUrl ? "Refresh QR" : "Phone Upload QR"}
+                {phoneLoading
+                  ? "Creating..."
+                  : phoneQrDataUrl
+                    ? "Refresh QR"
+                    : "Phone Upload QR"}
               </button>
             </div>
             {phoneQrDataUrl ? (
               <div className="mt-4 grid gap-3 md:grid-cols-[190px_1fr]">
                 <div className="border-2 border-primary bg-white p-3 shadow-[2px_2px_0px_0px_#1a1a1a] aspect-square w-full max-w-[180px]">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={phoneQrDataUrl} alt="Phone proof upload QR" className="aspect-square w-full" />
+                  <img
+                    src={phoneQrDataUrl}
+                    alt="Phone proof upload QR"
+                    className="aspect-square w-full"
+                  />
                 </div>
                 <div className="grid content-center gap-2 text-xs font-body font-semibold">
-                  <p className="font-headline font-black uppercase text-xs text-primary">Scan this QR on your phone.</p>
+                  <p className="font-headline font-black uppercase text-xs text-primary">
+                    Scan this QR on your phone.
+                  </p>
                   <p className="break-all border-2 border-primary bg-white p-3 font-mono text-xs shadow-[1px_1px_0px_0px_#1a1a1a]">
                     {phoneUploadUrl}
                   </p>
                   <button
                     type="button"
-                    onClick={() => void navigator.clipboard.writeText(phoneUploadUrl)}
+                    onClick={() =>
+                      void navigator.clipboard.writeText(phoneUploadUrl)
+                    }
                     className="w-fit bg-white text-primary border-2 border-primary font-headline font-bold uppercase text-xs py-1.5 px-3 shadow-[2px_2px_0px_0px_#1a1a1a] hover:bg-[#eee9e0] transition-all cursor-pointer"
                   >
                     Copy Link
@@ -1783,11 +1436,14 @@ function PaymentProofModal({
           <details className="mt-4 border-3 border-primary bg-white p-4 shadow-[2px_2px_0px_0px_#1a1a1a] group">
             <summary className="cursor-pointer text-sm font-headline font-black uppercase text-primary list-none flex items-center justify-between">
               <span>Backup: upload from this computer</span>
-              <span className="text-xs font-bold transition-transform group-open:rotate-180">▼</span>
+              <span className="text-xs font-bold transition-transform group-open:rotate-180">
+                ▼
+              </span>
             </summary>
             <div className="mt-4 border-t border-primary/10 pt-4">
               <p className="text-xs leading-5 text-[#4a4a4a] font-body font-semibold">
-                Use this only if the phone upload is not possible. The receipt screenshot is enough.
+                Use this only if the phone upload is not possible. The receipt
+                screenshot is enough.
               </p>
 
               <label className="mt-4 grid gap-1 text-xs font-headline font-bold uppercase text-primary">
@@ -1803,7 +1459,9 @@ function PaymentProofModal({
               {imageDataUrl ? (
                 <div className="mt-4 border-2 border-primary bg-[#faf7f2] p-3 shadow-[2px_2px_0px_0px_#1a1a1a]">
                   <div className="flex items-center justify-between gap-3 border-b border-primary/10 pb-2 mb-2">
-                    <p className="text-xs font-headline font-bold uppercase text-primary">Receipt attached</p>
+                    <p className="text-xs font-headline font-bold uppercase text-primary">
+                      Receipt attached
+                    </p>
                     <button
                       type="button"
                       onClick={onClearImage}
@@ -1825,14 +1483,19 @@ function PaymentProofModal({
               <details className="mt-4 border-2 border-primary bg-[#faf7f2] p-4 shadow-[2px_2px_0px_0px_#1a1a1a] group/opt">
                 <summary className="cursor-pointer text-xs font-headline font-bold uppercase text-primary list-none flex items-center justify-between">
                   <span>Optional: transaction ID or note</span>
-                  <span className="text-xs transition-transform group-open/opt:rotate-180">▼</span>
+                  <span className="text-xs transition-transform group-open/opt:rotate-180">
+                    ▼
+                  </span>
                 </summary>
                 <div className="mt-4 grid gap-4 border-t border-primary/10 pt-4">
                   <label className="grid gap-1 text-[11px] font-headline font-bold uppercase text-primary">
-                    ABA transaction ID or reference (Optional - Recommended for faster approval)
+                    ABA transaction ID or reference (Optional - Recommended for
+                    faster approval)
                     <input
                       value={reference}
-                      onChange={(event) => onReferenceChange(event.target.value)}
+                      onChange={(event) =>
+                        onReferenceChange(event.target.value)
+                      }
                       maxLength={200}
                       placeholder="Optional"
                       className="border-2 border-primary px-3 py-2 outline-none shadow-[1px_1px_0px_0px_#1a1a1a] focus:bg-white transition-colors w-full font-body text-xs mt-1"
@@ -1903,14 +1566,19 @@ function SupportRequestModal({
             Payment Support
           </div>
 
-          <h2 className="mt-4 text-2xl font-headline font-black uppercase text-primary">Report a payment problem</h2>
+          <h2 className="mt-4 text-2xl font-headline font-black uppercase text-primary">
+            Report a payment problem
+          </h2>
           <p className="mt-2 text-xs leading-5 text-[#4a4a4a] font-body font-semibold">
-            Send the admin a clear note for this order. Include your Telegram name or payment time if it helps.
+            Send the admin a clear note for this order. Include your Telegram
+            name or payment time if it helps.
           </p>
           <div className="mt-4 grid gap-2 border-3 border-primary bg-white p-4 text-xs font-body shadow-[2px_2px_0px_0px_#1a1a1a]">
             <p className="flex justify-between gap-4">
               <span className="text-[#4a4a4a] font-semibold">Order</span>
-              <span className="max-w-[180px] sm:max-w-[300px] truncate font-mono text-xs font-bold text-primary">{order.id}</span>
+              <span className="max-w-[180px] sm:max-w-[300px] truncate font-mono text-xs font-bold text-primary">
+                {order.id}
+              </span>
             </p>
             <p className="flex justify-between gap-4">
               <span className="text-[#4a4a4a] font-semibold">Plan</span>
@@ -1920,7 +1588,9 @@ function SupportRequestModal({
             </p>
             <p className="flex justify-between gap-4">
               <span className="text-[#4a4a4a] font-semibold">Total</span>
-              <span className="font-bold text-primary">{formatUsd(order.totalPriceCents)}</span>
+              <span className="font-bold text-primary">
+                {formatUsd(order.totalPriceCents)}
+              </span>
             </p>
             <p className="flex justify-between gap-4">
               <span className="text-[#4a4a4a] font-semibold">Status</span>
@@ -1938,7 +1608,9 @@ function SupportRequestModal({
               className="border-2 border-primary px-3 py-2 outline-none shadow-[1px_1px_0px_0px_#1a1a1a] focus:bg-[#faf7f2] transition-colors w-full font-body text-xs mt-1"
             />
           </label>
-          <p className="mt-1 text-[10px] text-[#4a4a4a] font-semibold">{value.length}/500 characters</p>
+          <p className="mt-1 text-[10px] text-[#4a4a4a] font-semibold">
+            {value.length}/500 characters
+          </p>
           <div className="mt-5 flex flex-wrap justify-end gap-3">
             <button
               type="button"
@@ -1963,12 +1635,26 @@ function SupportRequestModal({
   );
 }
 
-function BillingStatusCard({ label, value, note }: { label: string; value: string; note: string }) {
+function BillingStatusCard({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: string;
+  note: string;
+}) {
   return (
     <article className="border-3 border-primary bg-[#faf7f2] p-4 shadow-[2px_2px_0px_0px_#1a1a1a]">
-      <p className="text-xs font-headline font-black uppercase tracking-wider text-[#4a4a4a]">{label}</p>
-      <p className="mt-2 text-2xl font-headline font-black uppercase text-primary leading-none">{value}</p>
-      <p className="mt-1 text-xs text-[#4a4a4a] font-body font-semibold">{note}</p>
+      <p className="text-xs font-headline font-black uppercase tracking-wider text-[#4a4a4a]">
+        {label}
+      </p>
+      <p className="mt-2 text-2xl font-headline font-black uppercase text-primary leading-none">
+        {value}
+      </p>
+      <p className="mt-1 text-xs text-[#4a4a4a] font-body font-semibold">
+        {note}
+      </p>
     </article>
   );
 }
@@ -1999,25 +1685,33 @@ function PlanCard({
   isCurrent?: boolean;
 }) {
   const audioEstimates =
-    typeof totalTokens === "number" ? getAudioDurationEstimates(totalTokens) : null;
+    typeof totalTokens === "number"
+      ? getAudioDurationEstimates(totalTokens)
+      : null;
 
   return (
-    <article className={`border-4 border-primary p-5 shadow-[4px_4px_0px_0px_#1a1a1a] transition-all relative flex flex-col justify-between ${
-      isCurrent
-        ? "bg-[#ffcc00]/10"
-        : "bg-white"
-    }`}>
+    <article
+      className={`border-4 border-primary p-5 shadow-[4px_4px_0px_0px_#1a1a1a] transition-all relative flex flex-col justify-between ${
+        isCurrent ? "bg-[#ffcc00]/10" : "bg-white"
+      }`}
+    >
       {isCurrent && (
         <span className="absolute -top-3.5 -left-3.5 border-2 border-primary bg-[#10b981] px-2.5 py-0.5 text-[10px] font-headline font-bold uppercase text-primary shadow-[2px_2px_0px_0px_#1a1a1a] z-10">
           Current Plan
         </span>
       )}
       <div>
-        <h3 className="text-3xl font-headline font-black uppercase text-primary">{title}</h3>
-        <p className="mt-2 text-xs text-[#4a4a4a] font-body min-h-[48px]">{note}</p>
+        <h3 className="text-3xl font-headline font-black uppercase text-primary">
+          {title}
+        </h3>
+        <p className="mt-2 text-xs text-[#4a4a4a] font-body min-h-[48px]">
+          {note}
+        </p>
         <p className="mt-4 text-4xl font-headline font-black uppercase text-primary">
           {price}
-          <span className="text-sm font-bold lowercase text-[#4a4a4a] ml-1">{unit}</span>
+          <span className="text-sm font-bold lowercase text-[#4a4a4a] ml-1">
+            {unit}
+          </span>
         </p>
         {typeof totalTokens === "number" ? (
           <div className="mt-4 grid gap-2 border-2 border-primary bg-[#faf7f2] p-3 text-xs font-body shadow-[1px_1px_0px_0px_#1a1a1a]">
@@ -2027,17 +1721,23 @@ function PlanCard({
             </p>
             <p className="flex justify-between font-semibold border-t border-primary/10 pt-1 font-body">
               <span>Tokens</span>
-              <span className="font-bold text-primary">{totalTokens?.toLocaleString()}</span>
+              <span className="font-bold text-primary">
+                {totalTokens?.toLocaleString()}
+              </span>
             </p>
             {audioEstimates ? (
               <>
                 <p className="flex justify-between gap-3 border-t border-primary/10 pt-1 font-semibold font-body">
                   <span>Standard voice</span>
-                  <span className="text-right font-bold text-primary">~{audioEstimates.standard}</span>
+                  <span className="text-right font-bold text-primary">
+                    ~{audioEstimates.standard}
+                  </span>
                 </p>
                 <p className="flex justify-between gap-3 font-semibold font-body">
                   <span>Clone voice</span>
-                  <span className="text-right font-bold text-primary">~{audioEstimates.clone}</span>
+                  <span className="text-right font-bold text-primary">
+                    ~{audioEstimates.clone}
+                  </span>
                 </p>
               </>
             ) : null}
@@ -2078,11 +1778,11 @@ function BusinessPlanCard({
   ];
 
   return (
-    <article className={`border-4 border-primary p-5 shadow-[4px_4px_0px_0px_#1a1a1a] transition-all relative flex flex-col justify-between ${
-      isCurrent
-        ? "bg-[#0c1e15] text-white"
-        : "bg-[#1a1a1a] text-white"
-    }`}>
+    <article
+      className={`border-4 border-primary p-5 shadow-[4px_4px_0px_0px_#1a1a1a] transition-all relative flex flex-col justify-between ${
+        isCurrent ? "bg-[#0c1e15] text-white" : "bg-[#1a1a1a] text-white"
+      }`}
+    >
       {isCurrent && (
         <span className="absolute -top-3.5 -left-3.5 border-2 border-primary bg-[#10b981] px-2.5 py-0.5 text-[10px] font-headline font-bold uppercase text-primary shadow-[2px_2px_0px_0px_#1a1a1a] z-10">
           Current Plan
@@ -2091,9 +1791,12 @@ function BusinessPlanCard({
       <div>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 className="text-3xl font-headline font-black uppercase text-[#ffcc00]">Business</h3>
+            <h3 className="text-3xl font-headline font-black uppercase text-[#ffcc00]">
+              Business
+            </h3>
             <p className="mt-2 text-xs text-[#c9d2df] font-body min-h-[48px]">
-              For companies, dubbing teams, and customer systems that need reliable clone voice generation.
+              For companies, dubbing teams, and customer systems that need
+              reliable clone voice generation.
             </p>
           </div>
           <span className="border border-white/20 bg-white/10 px-2 py-0.5 text-[10px] font-headline font-bold uppercase">
@@ -2103,7 +1806,9 @@ function BusinessPlanCard({
 
         <p className="mt-4 text-3xl font-headline font-black uppercase text-white leading-none">
           Talk to us
-          <span className="block pt-1 text-xs font-body font-semibold text-[#c9d2df] normal-case">review before payment</span>
+          <span className="block pt-1 text-xs font-body font-semibold text-[#c9d2df] normal-case">
+            review before payment
+          </span>
         </p>
 
         <ul className="mt-4 grid gap-2 border border-white/10 bg-white/[0.06] p-3 text-xs font-body shadow-[1px_1px_0px_0px_rgba(255,255,255,0.1)]">
@@ -2115,9 +1820,15 @@ function BusinessPlanCard({
           ))}
         </ul>
         <div className="mt-3 border border-white/10 bg-white/[0.06] p-3 text-xs font-body shadow-[1px_1px_0px_0px_rgba(255,255,255,0.1)]">
-          <p className="font-bold text-[#ffcc00] uppercase font-headline">Business clone rate</p>
-          <p className="mt-1 font-semibold">Only Business plan accounts can use this rate.</p>
-          <p className="mt-1 font-semibold text-[#c9d2df]">Paid token packs use standard clone at 2 tokens/sec.</p>
+          <p className="font-bold text-[#ffcc00] uppercase font-headline">
+            Business clone rate
+          </p>
+          <p className="mt-1 font-semibold">
+            Only Business plan accounts can use this rate.
+          </p>
+          <p className="mt-1 font-semibold text-[#c9d2df]">
+            Paid token packs use standard clone at 2 tokens/sec.
+          </p>
         </div>
         <PlanDetailBlock planKey="business" dark />
       </div>
@@ -2162,13 +1873,23 @@ function PlanDetailBlock({
   const labelClass = dark ? "text-[#ffcc00]" : "text-primary";
 
   return (
-    <div className={`mt-4 grid gap-3 border-2 p-3 text-xs font-body ${containerClass}`}>
+    <div
+      className={`mt-4 grid gap-3 border-2 p-3 text-xs font-body ${containerClass}`}
+    >
       <div>
-        <p className={`font-headline font-black uppercase text-[10px] tracking-wider ${labelClass}`}>Best for</p>
+        <p
+          className={`font-headline font-black uppercase text-[10px] tracking-wider ${labelClass}`}
+        >
+          Best for
+        </p>
         <p className="mt-1 leading-relaxed font-semibold">{detail.bestFor}</p>
       </div>
       <div>
-        <p className={`font-headline font-black uppercase text-[10px] tracking-wider ${labelClass}`}>Can use</p>
+        <p
+          className={`font-headline font-black uppercase text-[10px] tracking-wider ${labelClass}`}
+        >
+          Can use
+        </p>
         <ul className="mt-1.5 grid gap-1 font-semibold">
           {detail.canUse.map((item) => (
             <li key={item} className="flex gap-2">
@@ -2179,7 +1900,9 @@ function PlanDetailBlock({
         </ul>
       </div>
       <div>
-        <p className={`font-headline font-black uppercase text-[10px] tracking-wider ${labelClass}`}>
+        <p
+          className={`font-headline font-black uppercase text-[10px] tracking-wider ${labelClass}`}
+        >
           {planKey === "business" ? "Requires" : "Not included"}
         </p>
         <ul className="mt-1.5 grid gap-1 font-semibold">
@@ -2199,9 +1922,12 @@ function PlanComparisonTable() {
   return (
     <div className="mt-6 border-4 border-primary bg-white shadow-[4px_4px_0px_0px_#1a1a1a] min-w-0 w-full">
       <div className="border-b-4 border-primary bg-[#eee9e0] p-4">
-        <h3 className="text-xl font-headline font-black uppercase text-primary">Full plan details</h3>
+        <h3 className="text-xl font-headline font-black uppercase text-primary">
+          Full plan details
+        </h3>
         <p className="mt-1 text-xs text-[#4a4a4a] font-body font-semibold">
-          Compare what each plan can use before buying tokens or requesting Business API access.
+          Compare what each plan can use before buying tokens or requesting
+          Business API access.
         </p>
       </div>
       <div className="smooth-scroll-region overflow-x-auto w-full min-w-0">
@@ -2217,10 +1943,17 @@ function PlanComparisonTable() {
           </thead>
           <tbody className="font-body text-xs font-semibold text-[#2f3746]">
             {PLAN_COMPARISON_ROWS.map((row) => (
-              <tr key={row.feature} className="border-b-2 border-primary/20 hover:bg-[#eee9e0]/20 transition-colors">
-                <td className="p-3 border-r border-primary/20 font-headline font-black uppercase text-primary">{row.feature}</td>
+              <tr
+                key={row.feature}
+                className="border-b-2 border-primary/20 hover:bg-[#eee9e0]/20 transition-colors"
+              >
+                <td className="p-3 border-r border-primary/20 font-headline font-black uppercase text-primary">
+                  {row.feature}
+                </td>
                 <td className="p-3 border-r border-primary/20">{row.free}</td>
-                <td className="p-3 border-r border-primary/20">{row.creator}</td>
+                <td className="p-3 border-r border-primary/20">
+                  {row.creator}
+                </td>
                 <td className="p-3 border-r border-primary/20">{row.pro}</td>
                 <td className="p-3">{row.business}</td>
               </tr>
@@ -2239,50 +1972,6 @@ function formatDateTime(input: string | null): string {
   return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 
-const FALLBACK_PAYMENT_ORDER_LIFETIME_MS = 15 * 60 * 1000;
-
-function useOrderClock(order: PaymentOrderRecord): number {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  const expiresAt = getOrderExpiryMs(order);
-
-  useEffect(() => {
-    if (order.status !== "pending" || !expiresAt) return;
-
-    const interval = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(interval);
-  }, [expiresAt, order.id, order.status]);
-
-  return nowMs;
-}
-
-function getOrderExpiryMs(order: PaymentOrderRecord): number | null {
-  if (order.khqrExpiresAt) {
-    const explicitExpiresAt = new Date(order.khqrExpiresAt).getTime();
-    if (!Number.isNaN(explicitExpiresAt)) return explicitExpiresAt;
-  }
-  if (order.status === "pending" && order.createdAt) {
-    const createdAt = new Date(order.createdAt).getTime();
-    if (!Number.isNaN(createdAt)) return createdAt + FALLBACK_PAYMENT_ORDER_LIFETIME_MS;
-  }
-  return null;
-}
-
-function formatOrderExpiry(order: PaymentOrderRecord): string {
-  const expiresAt = getOrderExpiryMs(order);
-  if (!expiresAt) return "-";
-  return formatDateTime(new Date(expiresAt).toISOString());
-}
-
-function formatRemainingTime(order: PaymentOrderRecord, nowMs: number): string {
-  const expiresAt = getOrderExpiryMs(order);
-  if (!expiresAt) return "No expiry";
-  const remainingSeconds = Math.max(0, Math.ceil((expiresAt - nowMs) / 1000));
-  if (remainingSeconds <= 0) return "Expired";
-  const minutes = Math.floor(remainingSeconds / 60);
-  const seconds = remainingSeconds % 60;
-  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
-}
-
 function formatProviderAmount(order: PaymentOrderRecord): string {
   if (order.providerAmount === null || !order.providerCurrency) return "-";
   return order.providerCurrency === "USD"
@@ -2291,83 +1980,11 @@ function formatProviderAmount(order: PaymentOrderRecord): string {
 }
 
 function formatKhqrAmount(order: PaymentOrderRecord): string {
-  if (order.khqrAmount === null || !order.khqrCurrency) return formatUsd(order.totalPriceCents);
+  if (order.khqrAmount === null || !order.khqrCurrency)
+    return formatUsd(order.totalPriceCents);
   return order.khqrCurrency === "USD"
     ? `$${order.khqrAmount.toFixed(2)}`
     : `${Math.round(order.khqrAmount).toLocaleString()} KHR`;
-}
-
-function getPaymentStatusInfo(
-  order: PaymentOrderRecord,
-  autoVerificationEnabled: boolean,
-  checkoutMode: CheckoutMode,
-): {
-  title: string;
-  description: string;
-  panelClass: string;
-  labelClass: string;
-} {
-  if (order.status === "approved") {
-    return {
-      title: "Payment confirmed",
-      description: "Credits were added to your balance.",
-      panelClass: "border-[#c8ead7] bg-[#f6fffa]",
-      labelClass: "text-[#14884d]",
-    };
-  }
-  if (order.status === "expired") {
-    return {
-      title: "QR expired",
-      description: "This QR is no longer valid. Create a new payment order before paying.",
-      panelClass: "border-red-200 bg-red-50",
-      labelClass: "text-red-700",
-    };
-  }
-  if (order.status === "rejected") {
-    return {
-      title: "Payment rejected",
-      description: "This order was rejected. Create a new order or contact support.",
-      panelClass: "border-red-200 bg-red-50",
-      labelClass: "text-red-700",
-    };
-  }
-  if (order.status === "cancelled") {
-    return {
-      title: "Payment cancelled",
-      description: "This order was cancelled before payment confirmation. Create a new order if you still want to buy tokens.",
-      panelClass: "border-zinc-200 bg-zinc-50",
-      labelClass: "text-zinc-700",
-    };
-  }
-
-  if (checkoutMode === "static_payway_qr") {
-    return {
-      title: "PayWay QR checkout",
-      description: `${order.planName} x ${order.quantity} pack, ${order.tokens.toLocaleString()} tokens. Enter the amount manually, then upload the ABA receipt.`,
-      panelClass: "border-[#c8ead7] bg-[#f6fffa]",
-      labelClass: "text-[#14884d]",
-    };
-  }
-
-  if (checkoutMode === "khqrcc_qr") {
-    return {
-      title: autoVerificationEnabled ? "Automatic checkout" : "Payment not configured",
-      description: autoVerificationEnabled
-        ? `${order.planName} x ${order.quantity} pack, ${order.tokens.toLocaleString()} credits. Pay with the QR, then wait for automatic confirmation.`
-        : "Automatic checkout is selected, but the server payment credentials are missing.",
-      panelClass: "border-[#c8ead7] bg-[#f6fffa]",
-      labelClass: autoVerificationEnabled ? "text-[#14884d]" : "text-red-700",
-    };
-  }
-
-  return {
-    title: autoVerificationEnabled ? "Scan to pay" : "Local KHQR checkout",
-    description: autoVerificationEnabled
-      ? `${order.planName} x ${order.quantity} pack, ${order.tokens.toLocaleString()} tokens`
-      : `${order.planName} x ${order.quantity} pack, ${order.tokens.toLocaleString()} tokens. Admin will approve after payment notice.`,
-    panelClass: "border-[#c8ead7] bg-[#f6fffa]",
-    labelClass: "text-[#14884d]",
-  };
 }
 
 function StatusPill({ status }: { status: PaymentOrderRecord["status"] }) {
@@ -2379,19 +1996,27 @@ function StatusPill({ status }: { status: PaymentOrderRecord["status"] }) {
     cancelled: "border-primary bg-[#eee9e0] text-[#4a4a4a]",
   };
   return (
-    <span className={`w-fit border-2 font-headline font-bold uppercase text-[10px] px-2 py-0.5 shadow-[1px_1px_0px_0px_#1a1a1a] ${styles[status]}`}>
+    <span
+      className={`w-fit border-2 font-headline font-bold uppercase text-[10px] px-2 py-0.5 shadow-[1px_1px_0px_0px_#1a1a1a] ${styles[status]}`}
+    >
       {status}
     </span>
   );
 }
 
-function SupportStatusPill({ status }: { status: PaymentSupportTicketRecord["status"] }) {
+function SupportStatusPill({
+  status,
+}: {
+  status: PaymentSupportTicketRecord["status"];
+}) {
   const styles: Record<PaymentSupportTicketRecord["status"], string> = {
     open: "border-primary bg-[#ffcc00] text-primary",
     resolved: "border-primary bg-[#10b981] text-primary",
   };
   return (
-    <span className={`w-fit border-2 font-headline font-bold uppercase text-[10px] px-2 py-0.5 shadow-[1px_1px_0px_0px_#1a1a1a] ${styles[status]}`}>
+    <span
+      className={`w-fit border-2 font-headline font-bold uppercase text-[10px] px-2 py-0.5 shadow-[1px_1px_0px_0px_#1a1a1a] ${styles[status]}`}
+    >
       support {status}
     </span>
   );
@@ -2419,7 +2044,9 @@ function AddMoreTokensModal({
           </div>
 
           <div className="mt-4 flex justify-between items-center border-b-4 border-primary pb-3">
-            <h2 className="text-2xl font-headline font-black uppercase text-primary">Select Token Pack</h2>
+            <h2 className="text-2xl font-headline font-black uppercase text-primary">
+              Select Token Pack
+            </h2>
             <button
               type="button"
               onClick={onClose}
@@ -2437,7 +2064,8 @@ function AddMoreTokensModal({
           )}
 
           <p className="mt-4 text-xs font-body text-[#4a4a4a] leading-relaxed">
-            Select one of our token add-on packages to credit your balance. Your payment request will generate instantly.
+            Select one of our token add-on packages to credit your balance. Your
+            payment request will generate instantly.
           </p>
 
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -2449,7 +2077,9 @@ function AddMoreTokensModal({
                   className="border-3 border-primary bg-white p-4 shadow-[3px_3px_0px_0px_#1a1a1a] flex flex-col justify-between"
                 >
                   <div>
-                    <h3 className="font-headline font-black uppercase text-lg text-primary">{plan.name}</h3>
+                    <h3 className="font-headline font-black uppercase text-lg text-primary">
+                      {plan.name}
+                    </h3>
                     <p className="mt-1 text-2xl font-headline font-black text-[#10b981]">
                       {formatUsd(plan.priceCents)}
                     </p>
@@ -2459,11 +2089,15 @@ function AddMoreTokensModal({
                     <div className="mt-3 grid gap-1 border-t border-primary/15 pt-2 text-xs font-body font-semibold text-[#4a4a4a]">
                       <p className="flex justify-between gap-3">
                         <span>Standard voice</span>
-                        <span className="text-primary">~{audioEstimates.standard}</span>
+                        <span className="text-primary">
+                          ~{audioEstimates.standard}
+                        </span>
                       </p>
                       <p className="flex justify-between gap-3">
                         <span>Clone voice</span>
-                        <span className="text-primary">~{audioEstimates.clone}</span>
+                        <span className="text-primary">
+                          ~{audioEstimates.clone}
+                        </span>
                       </p>
                     </div>
                   </div>

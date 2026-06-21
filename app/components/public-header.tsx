@@ -44,8 +44,9 @@ export function PublicHeader() {
             onClick={() => setMenuOpen(true)}
             className="md:hidden flex h-10 w-10 items-center justify-center border-2 border-outline bg-white text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#eee9e0] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all cursor-pointer shrink-0"
             title="Open Menu"
+            aria-label="Open navigation menu"
           >
-            <span className="material-symbols-outlined font-black">menu</span>
+            <span className="material-symbols-outlined font-black" aria-hidden="true">menu</span>
           </button>
 
           <Link href="/" className="group flex items-center gap-3">
@@ -115,8 +116,9 @@ export function PublicHeader() {
                 onClick={() => setMenuOpen(false)}
                 className="flex h-10 w-10 items-center justify-center border-2 border-outline bg-white text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#ffdad6] hover:text-[#93000a] transition-colors cursor-pointer"
                 title="Close Menu"
+                aria-label="Close navigation menu"
               >
-                <span className="material-symbols-outlined font-black">close</span>
+                <span className="material-symbols-outlined font-black" aria-hidden="true">close</span>
               </button>
             </div>
 

@@ -93,7 +93,7 @@ export async function GET(request: Request, context: RouteContext) {
   } catch (error) {
     console.error(`[v2-audio] Failed to build audio for job ${id}:`, error);
     return jsonWithCors(
-      { error: error instanceof Error ? error.message : "Failed to build audio." },
+      { error: "Failed to build audio." },
       { status: 500 },
     );
   }

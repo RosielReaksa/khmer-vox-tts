@@ -46,7 +46,10 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
   const [responseText, setResponseText] = useState("");
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
-  const activeMode = useMemo(() => modes.find((item) => item.id === mode) ?? modes[1], [mode]);
+  const activeMode = useMemo(
+    () => modes.find((item) => item.id === mode) ?? modes[1],
+    [mode],
+  );
   const fullUrl = `${baseUrl}${activeMode.endpoint}`;
   const needsReference = mode === "clone" || mode === "batch_clone";
 
@@ -59,12 +62,16 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
   async function runTest() {
     if (!apiKey.trim()) {
       setStatus("Missing API key");
-      setResponseText("Create a paid API key from Dashboard > API, then paste it here.");
+      setResponseText(
+        "Create a paid API key from Dashboard > API, then paste it here.",
+      );
       return;
     }
     if (needsReference && !referenceFile) {
       setStatus("Missing reference audio");
-      setResponseText("Clone requests need a WAV or MP3 reference sample from the speaker.");
+      setResponseText(
+        "Clone requests need a WAV or MP3 reference sample from the speaker.",
+      );
       return;
     }
 
@@ -120,23 +127,30 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
         const contentType = response.headers.get("content-type") || "";
         if (contentType.includes("audio/")) {
           try {
-            const blob = new Blob([new Uint8Array(Array.from(text, (c) => c.charCodeAt(0)))], {
-              type: "audio/mp3",
+            const rawResponse = await fetch(fullUrl, {
+              method: "POST",
+              headers,
+              body,
             });
-            const rawResponse = await fetch(fullUrl, { method: "POST", headers, body });
             const audioBlob = await rawResponse.blob();
             const url = URL.createObjectURL(audioBlob);
             setAudioUrl(url);
-            setResponseText(`Success! Audio bytes received.\nRemaining-Tokens: ${response.headers.get("X-Remaining-Tokens") || "-"}`);
+            setResponseText(
+              `Success! Audio bytes received.\nRemaining-Tokens: ${response.headers.get("X-Remaining-Tokens") || "-"}`,
+            );
             return;
           } catch (err) {
-            setResponseText(`Audio binary parsed with error: ${err instanceof Error ? err.message : "Unknown"}`);
+            setResponseText(
+              `Audio binary parsed with error: ${err instanceof Error ? err.message : "Unknown"}`,
+            );
             return;
           }
         }
 
         try {
-          const json = JSON.parse(text) as { job?: { id: string; status: string; download_url?: string } };
+          const json = JSON.parse(text) as {
+            job?: { id: string; status: string; download_url?: string };
+          };
           if (json.job) {
             setResponseText(
               [
@@ -158,22 +172,32 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
       setResponseText(text || "No response body.");
     } catch (error) {
       setStatus("Request failed");
-      setResponseText(error instanceof Error ? error.message : "Could not send request.");
+      setResponseText(
+        error instanceof Error ? error.message : "Could not send request.",
+      );
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <section id="test-console" className="scroll-mt-24 overflow-hidden border-4 border-outline bg-white shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]">
+    <section
+      id="test-console"
+      className="scroll-mt-24 overflow-hidden border-4 border-outline bg-white shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]"
+    >
       <div className="border-b-4 border-outline bg-[#1a1a1a] p-6 text-white text-left">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="font-headline text-xs font-black uppercase tracking-widest text-[#ffcc00] mb-1">Live API test</p>
-            <h2 className="text-3xl font-headline font-black uppercase tracking-tighter text-white">Test Console</h2>
+            <p className="font-headline text-xs font-black uppercase tracking-widest text-[#ffcc00] mb-1">
+              Live API test
+            </p>
+            <h2 className="text-3xl font-headline font-black uppercase tracking-tighter text-white">
+              Test Console
+            </h2>
             <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[#e8e3da] font-body">
-              Paste a paid API key and send a real request from this browser. The key stays only in this
-              form state and is not saved. Requests can use tokens.
+              Paste a paid API key and send a real request from this browser.
+              The key stays only in this form state and is not saved. Requests
+              can use tokens.
             </p>
           </div>
           <a
@@ -204,12 +228,19 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
         </div>
 
         <div className="border-2 border-outline bg-[#faf7f2] p-4 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-          <p className="break-all font-mono text-xs font-bold text-tertiary">{fullUrl}</p>
-          <p className="mt-2 text-xs font-body font-medium text-on-surface-variant">{activeMode.note}</p>
+          <p className="break-all font-mono text-xs font-bold text-tertiary">
+            {fullUrl}
+          </p>
+          <p className="mt-2 text-xs font-body font-medium text-on-surface-variant">
+            {activeMode.note}
+          </p>
         </div>
 
         <div className="flex flex-col gap-2">
-          <label className="font-headline font-black uppercase text-xs text-primary" htmlFor="console-api-key">
+          <label
+            className="font-headline font-black uppercase text-xs text-primary"
+            htmlFor="console-api-key"
+          >
             API key
           </label>
           <input
@@ -226,7 +257,10 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
 
         {mode === "speech" ? (
           <div className="flex flex-col gap-2">
-            <label className="font-headline font-black uppercase text-xs text-primary" htmlFor="console-voice">
+            <label
+              className="font-headline font-black uppercase text-xs text-primary"
+              htmlFor="console-voice"
+            >
               Voice style
             </label>
             <select
@@ -242,7 +276,10 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
         ) : null}
 
         <div className="flex flex-col gap-2">
-          <label className="font-headline font-black uppercase text-xs text-primary" htmlFor="console-text-input">
+          <label
+            className="font-headline font-black uppercase text-xs text-primary"
+            htmlFor="console-text-input"
+          >
             Text input
           </label>
           <textarea
@@ -257,28 +294,38 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
         {needsReference ? (
           <div className="grid gap-3">
             <div className="flex flex-col gap-2">
-              <label className="font-headline font-black uppercase text-xs text-primary" htmlFor="console-ref-audio">
+              <label
+                className="font-headline font-black uppercase text-xs text-primary"
+                htmlFor="console-ref-audio"
+              >
                 Reference audio
               </label>
               <input
                 id="console-ref-audio"
                 type="file"
                 accept="audio/*"
-                onChange={(event) => setReferenceFile(event.target.files?.[0] ?? null)}
+                onChange={(event) =>
+                  setReferenceFile(event.target.files?.[0] ?? null)
+                }
                 className="w-full p-4 border-2 border-outline bg-surface text-[#1a1a1a] font-body text-sm rounded-none focus:outline-none focus:bg-white"
               />
             </div>
             <p className="border-2 border-outline bg-[#def3e5] px-4 py-3 text-xs leading-5 text-[#0d5f2e] font-bold">
-              This console uses the production clone format: multipart/form-data with
+              This console uses the production clone format: multipart/form-data
+              with
               <code> sample</code>, <code> input</code>, <code> model</code>,
-              <code> voice_consent=true</code>, and <code> output_format=mp3</code>.
+              <code> voice_consent=true</code>, and{" "}
+              <code> output_format=mp3</code>.
             </p>
           </div>
         ) : null}
 
         {mode === "batch_clone" ? (
           <div className="flex flex-col gap-2">
-            <label className="font-headline font-black uppercase text-xs text-primary" htmlFor="console-webhook-url">
+            <label
+              className="font-headline font-black uppercase text-xs text-primary"
+              htmlFor="console-webhook-url"
+            >
               Webhook URL (optional)
             </label>
             <input

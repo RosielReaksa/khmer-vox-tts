@@ -2,14 +2,12 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { isAdminEmail } from "@/lib/admin";
-import { formatCloneCreditRate } from "@/lib/credit-rates";
 import { getCurrentUser } from "@/lib/current-user";
 import {
   listBusinessApiRequestsForAdmin,
   reviewBusinessApiRequest,
   updateBusinessApiRequestSalesState,
 } from "@/lib/store";
-import type { BusinessApiRequestWithUser } from "@/lib/store";
 import type { BusinessApiRequestStatus, BusinessSalesStage } from "@/lib/types";
 import { AdminBusinessClient } from "./admin-business-client";
 
@@ -23,9 +21,24 @@ type AdminBusinessPageProps = {
   }>;
 };
 
-const statusOptions: Array<BusinessApiRequestStatus | "all"> = ["all", "pending", "approved", "rejected"];
-const salesStageValues: BusinessSalesStage[] = ["new", "contacted", "qualified", "proposal", "won", "lost"];
-const salesStageOptions: Array<BusinessSalesStage | "all"> = ["all", ...salesStageValues];
+const statusOptions: Array<BusinessApiRequestStatus | "all"> = [
+  "all",
+  "pending",
+  "approved",
+  "rejected",
+];
+const salesStageValues: BusinessSalesStage[] = [
+  "new",
+  "contacted",
+  "qualified",
+  "proposal",
+  "won",
+  "lost",
+];
+const salesStageOptions: Array<BusinessSalesStage | "all"> = [
+  "all",
+  ...salesStageValues,
+];
 
 import { MetricCard, AdminAccessRequired } from "@/app/app/admin/admin-shared";
 
@@ -38,7 +51,12 @@ async function reviewBusinessRequestAction(formData: FormData) {
 
   const requestId = readFormText(formData, "requestId");
   const statusValue = readFormText(formData, "status");
-  const status = statusValue === "rejected" ? "rejected" : statusValue === "approved" ? "approved" : null;
+  const status =
+    statusValue === "rejected"
+      ? "rejected"
+      : statusValue === "approved"
+        ? "approved"
+        : null;
   if (!requestId || !status) {
     redirect("/app/admin/business?status=all");
   }
@@ -51,7 +69,10 @@ async function reviewBusinessRequestAction(formData: FormData) {
     limits: {
       dailyTokenLimit: readOptionalLimit(formData, "dailyTokenLimit"),
       monthlyTokenLimit: readOptionalLimit(formData, "monthlyTokenLimit"),
-      maxConcurrentRequests: readOptionalLimit(formData, "maxConcurrentRequests"),
+      maxConcurrentRequests: readOptionalLimit(
+        formData,
+        "maxConcurrentRequests",
+      ),
       maxConcurrentJobs: readOptionalLimit(formData, "maxConcurrentJobs"),
       maxQueuedJobs: readOptionalLimit(formData, "maxQueuedJobs"),
       cloneCreditRate: readCloneCreditRate(formData),
@@ -88,7 +109,9 @@ async function updateBusinessSalesAction(formData: FormData) {
   redirect(appendQueryFlag(returnTo, "crm", "updated"));
 }
 
-export default async function AdminBusinessPage({ searchParams }: AdminBusinessPageProps) {
+export default async function AdminBusinessPage({
+  searchParams,
+}: AdminBusinessPageProps) {
   const user = await getCurrentUser();
   if (!user) {
     redirect("/app/signin");
@@ -98,33 +121,59 @@ export default async function AdminBusinessPage({ searchParams }: AdminBusinessP
   }
 
   const params = await searchParams;
-  const status = statusOptions.includes(params?.status as BusinessApiRequestStatus | "all")
+  const status = statusOptions.includes(
+    params?.status as BusinessApiRequestStatus | "all",
+  )
     ? (params?.status as BusinessApiRequestStatus | "all")
     : "all";
-  const salesStage = salesStageOptions.includes(params?.stage as BusinessSalesStage | "all")
+  const salesStage = salesStageOptions.includes(
+    params?.stage as BusinessSalesStage | "all",
+  )
     ? (params?.stage as BusinessSalesStage | "all")
     : "all";
   const q = params?.q?.trim() ?? "";
-  const requests = await listBusinessApiRequestsForAdmin({ limit: 200, status, salesStage, q });
+  const requests = await listBusinessApiRequestsForAdmin({
+    limit: 200,
+    status,
+    salesStage,
+    q,
+  });
   const returnTo = buildBusinessReturnTo(status, salesStage, q);
 
-  const pending = requests.filter((request) => request.status === "pending").length;
-  const approved = requests.filter((request) => request.status === "approved").length;
-  const rejected = requests.filter((request) => request.status === "rejected").length;
-  const followUpDue = requests.filter((request) => isFollowUpDue(request.followUpAt)).length;
+  const pending = requests.filter(
+    (request) => request.status === "pending",
+  ).length;
+  const approved = requests.filter(
+    (request) => request.status === "approved",
+  ).length;
+  const rejected = requests.filter(
+    (request) => request.status === "rejected",
+  ).length;
+  const followUpDue = requests.filter((request) =>
+    isFollowUpDue(request.followUpAt),
+  ).length;
   const activePipeline = requests.filter((request) =>
     ["new", "contacted", "qualified", "proposal"].includes(request.salesStage),
   ).length;
-  const expectedTokens = requests.reduce((sum, request) => sum + request.expectedMonthlyTokens, 0);
-  const peakConcurrency = requests.reduce((max, request) => Math.max(max, request.expectedPeakConcurrency), 0);
+  const expectedTokens = requests.reduce(
+    (sum, request) => sum + request.expectedMonthlyTokens,
+    0,
+  );
+  const peakConcurrency = requests.reduce(
+    (max, request) => Math.max(max, request.expectedPeakConcurrency),
+    0,
+  );
 
   return (
     <section className="grid min-w-0 gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b-4 border-primary pb-5">
         <div>
-          <h1 className="text-[38px] font-headline font-black uppercase tracking-tight text-primary leading-none">Business API</h1>
+          <h1 className="text-[38px] font-headline font-black uppercase tracking-tight text-primary leading-none">
+            Business API
+          </h1>
           <p className="mt-2 text-sm font-body text-on-surface-variant">
-            Review high-volume API requests and apply per-key token, concurrency, and queue controls.
+            Review high-volume API requests and apply per-key token,
+            concurrency, and queue controls.
           </p>
         </div>
         <Link
@@ -138,12 +187,36 @@ export default async function AdminBusinessPage({ searchParams }: AdminBusinessP
       <ReviewNotice state={params?.reviewed} crm={params?.crm} />
 
       <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <MetricCard label="Shown" value={requests.length.toLocaleString()} note="Latest 200 max" />
-        <MetricCard label="Pending" value={pending.toLocaleString()} note="Need review" />
-        <MetricCard label="Approved" value={approved.toLocaleString()} note="Limits applied" />
-        <MetricCard label="Rejected" value={rejected.toLocaleString()} note="Not approved" />
-        <MetricCard label="Pipeline" value={activePipeline.toLocaleString()} note="Open sales stages" />
-        <MetricCard label="Due" value={followUpDue.toLocaleString()} note="Follow-ups due" />
+        <MetricCard
+          label="Shown"
+          value={requests.length.toLocaleString()}
+          note="Latest 200 max"
+        />
+        <MetricCard
+          label="Pending"
+          value={pending.toLocaleString()}
+          note="Need review"
+        />
+        <MetricCard
+          label="Approved"
+          value={approved.toLocaleString()}
+          note="Limits applied"
+        />
+        <MetricCard
+          label="Rejected"
+          value={rejected.toLocaleString()}
+          note="Not approved"
+        />
+        <MetricCard
+          label="Pipeline"
+          value={activePipeline.toLocaleString()}
+          note="Open sales stages"
+        />
+        <MetricCard
+          label="Due"
+          value={followUpDue.toLocaleString()}
+          note="Follow-ups due"
+        />
       </section>
 
       <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
@@ -151,18 +224,26 @@ export default async function AdminBusinessPage({ searchParams }: AdminBusinessP
           <MetricCard
             key={stage}
             label={stage}
-            value={requests.filter((request) => request.salesStage === stage).length.toLocaleString()}
+            value={requests
+              .filter((request) => request.salesStage === stage)
+              .length.toLocaleString()}
             note="Shown requests"
           />
         ))}
       </section>
 
       <section className="grid gap-3 md:grid-cols-2">
-        <MetricCard label="Demand" value={expectedTokens.toLocaleString()} note={`${peakConcurrency} peak concurrency`} />
+        <MetricCard
+          label="Demand"
+          value={expectedTokens.toLocaleString()}
+          note={`${peakConcurrency} peak concurrency`}
+        />
         <MetricCard
           label="CRM Filter"
           value={salesStage === "all" ? "All" : salesStage}
-          note={status === "all" ? "All request statuses" : `${status} requests`}
+          note={
+            status === "all" ? "All request statuses" : `${status} requests`
+          }
         />
       </section>
 

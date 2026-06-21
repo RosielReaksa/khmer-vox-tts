@@ -109,7 +109,7 @@ export default function HomePlayground() {
         }
       }, 50);
 
-    } catch (e) {
+    } catch {
       setError("Failed to connect. Please try again.");
       setBusy(false);
     }
@@ -149,7 +149,7 @@ export default function HomePlayground() {
 
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center border-b-4 border-primary pb-4 mb-2 gap-3 sm:gap-0">
         <h2 className="font-headline font-black text-xl md:text-2xl uppercase tracking-tighter flex items-center gap-2">
-          <span className="material-symbols-outlined text-tertiary" style={{ fontVariationSettings: "'FILL' 1" }}>
+          <span className="material-symbols-outlined text-tertiary" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
             graphic_eq
           </span>
           Playground
@@ -190,7 +190,7 @@ export default function HomePlayground() {
                   : "bg-surface text-primary border-primary hover:bg-[#faf7f2]"
               } disabled:opacity-50 disabled:cursor-not-allowed`}
             >
-              <span className="material-symbols-outlined text-sm md:text-base shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>
+              <span className="material-symbols-outlined text-sm md:text-base shrink-0" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
                 face_3
               </span>
               <span className="truncate">Female (Sokha)</span>
@@ -205,7 +205,7 @@ export default function HomePlayground() {
                   : "bg-surface text-primary border-primary hover:bg-[#faf7f2]"
               } disabled:opacity-50 disabled:cursor-not-allowed`}
             >
-              <span className="material-symbols-outlined text-sm md:text-base shrink-0" style={{ fontVariationSettings: "'FILL' 1" }}>
+              <span className="material-symbols-outlined text-sm md:text-base shrink-0" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
                 face
               </span>
               <span className="truncate">Male (Piseth)</span>
@@ -238,7 +238,7 @@ export default function HomePlayground() {
         disabled={busy || !text.trim()}
         className="w-full font-headline text-xl md:text-2xl uppercase font-black bg-primary text-primary-fixed border-4 border-primary py-3 md:py-4 mt-2 hover:bg-primary-fixed hover:text-primary transition-colors duration-100 ease-linear active:translate-y-1 active:bg-tertiary active:text-on-tertiary group flex items-center justify-center gap-2 md:gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        <span className="material-symbols-outlined group-hover:animate-pulse" style={{ fontVariationSettings: "'FILL' 1" }}>
+        <span className="material-symbols-outlined group-hover:animate-pulse" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
           {busy ? "hourglass_empty" : "play_circle"}
         </span>
         {busy ? "Generating..." : "Generate Speech"}
@@ -249,9 +249,10 @@ export default function HomePlayground() {
           onClick={togglePlay}
           disabled={!audioUrl}
           type="button"
+          aria-label={isPlaying ? "Pause preview audio" : "Play preview audio"}
           className="w-10 h-10 md:w-12 md:h-12 bg-primary text-surface rounded-none border-2 border-primary flex items-center justify-center hover:bg-tertiary hover:text-white transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
+          <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
             {isPlaying ? "pause" : "play_arrow"}
           </span>
         </button>

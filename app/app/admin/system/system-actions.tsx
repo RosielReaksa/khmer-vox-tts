@@ -102,7 +102,9 @@ export function WebhookCopyBox({ webhookUrl }: { webhookUrl: string | null }) {
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 rounded-none border-2 border-primary bg-[#f2ede5] p-2">
-      <p className="min-w-0 flex-1 break-all px-2 font-mono text-sm text-primary">{webhookUrl}</p>
+      <p className="min-w-0 flex-1 break-all px-2 font-mono text-sm text-primary">
+        {webhookUrl}
+      </p>
       <button
         type="button"
         onClick={copy}
@@ -116,7 +118,9 @@ export function WebhookCopyBox({ webhookUrl }: { webhookUrl: string | null }) {
 
 export function SystemTestPanel() {
   const [loadingAction, setLoadingAction] = useState<SystemAction | null>(null);
-  const [results, setResults] = useState<Partial<Record<SystemAction, TestResult>>>({});
+  const [results, setResults] = useState<
+    Partial<Record<SystemAction, TestResult>>
+  >({});
 
   async function run(action: SystemAction) {
     setLoadingAction(action);
@@ -126,7 +130,9 @@ export function SystemTestPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
-      const data = (await response.json()) as Partial<TestResult> & { error?: string };
+      const data = (await response.json()) as Partial<TestResult> & {
+        error?: string;
+      };
       const result: TestResult = {
         ok: Boolean(data.ok),
         status: data.status ?? "error",
@@ -154,7 +160,9 @@ export function SystemTestPanel() {
     <section className="rounded-none border-3 border-primary bg-[#faf7f2] p-5 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-headline font-black uppercase text-primary">Live Tests</h2>
+          <h2 className="text-2xl font-headline font-black uppercase text-primary">
+            Live Tests
+          </h2>
           <p className="mt-1 text-sm font-body text-primary/70">
             Run these after changing production settings.
           </p>
@@ -166,10 +174,17 @@ export function SystemTestPanel() {
           const result = results[item.action];
           const loading = loadingAction === item.action;
           return (
-            <article key={item.action} className="rounded-none border-2 border-primary bg-white p-5 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
+            <article
+              key={item.action}
+              className="rounded-none border-2 border-primary bg-white p-5 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]"
+            >
               <div className="flex min-h-[140px] flex-col">
-                <h3 className="font-headline font-bold uppercase text-primary">{item.label}</h3>
-                <p className="mt-2 text-xs font-body text-primary/70">{item.note}</p>
+                <h3 className="font-headline font-bold uppercase text-primary">
+                  {item.label}
+                </h3>
+                <p className="mt-2 text-xs font-body text-primary/70">
+                  {item.note}
+                </p>
                 <button
                   type="button"
                   onClick={() => run(item.action)}
@@ -180,22 +195,49 @@ export function SystemTestPanel() {
                 </button>
               </div>
               {result ? (
-                <div className={`mt-4 rounded-none border-2 px-3 py-2 text-sm font-body ${resultClass(result.status)}`}>
-                  <p className="font-bold uppercase tracking-wider text-xs">{result.status}</p>
-                  <p className="mt-1 text-xs break-all leading-relaxed">{result.detail}</p>
+                <div
+                  className={`mt-4 rounded-none border-2 px-3 py-2 text-sm font-body ${resultClass(result.status)}`}
+                >
+                  <p className="font-bold uppercase tracking-wider text-xs">
+                    {result.status}
+                  </p>
+                  <p className="mt-1 text-xs break-all leading-relaxed">
+                    {result.detail}
+                  </p>
                   {Array.isArray(result.endpoints) && (
                     <div className="mt-3 border-t border-primary/20 pt-3 grid gap-2">
-                      {(result.endpoints as EndpointTestResult[]).map((ep, idx) => (
-                        <div key={idx} className="text-[11px] border border-primary/10 bg-white/40 p-2 font-mono">
-                          <div className="flex justify-between font-bold gap-2">
-                            <span className="truncate max-w-[130px]" title={ep.label}>{ep.label}</span>
-                            <span className={ep.ok ? "text-emerald-700 font-bold" : "text-red-700 font-bold"}>
-                              {ep.ok ? `OK (${ep.latency}ms)` : "FAIL"}
-                            </span>
+                      {(result.endpoints as EndpointTestResult[]).map(
+                        (ep, idx) => (
+                          <div
+                            key={idx}
+                            className="text-[11px] border border-primary/10 bg-white/40 p-2 font-mono"
+                          >
+                            <div className="flex justify-between font-bold gap-2">
+                              <span
+                                className="truncate max-w-[130px]"
+                                title={ep.label}
+                              >
+                                {ep.label}
+                              </span>
+                              <span
+                                className={
+                                  ep.ok
+                                    ? "text-emerald-700 font-bold"
+                                    : "text-red-700 font-bold"
+                                }
+                              >
+                                {ep.ok ? `OK (${ep.latency}ms)` : "FAIL"}
+                              </span>
+                            </div>
+                            <p
+                              className="mt-1 opacity-80 truncate text-[10px]"
+                              title={ep.detail}
+                            >
+                              {ep.detail}
+                            </p>
                           </div>
-                          <p className="mt-1 opacity-80 truncate text-[10px]" title={ep.detail}>{ep.detail}</p>
-                        </div>
-                      ))}
+                        ),
+                      )}
                     </div>
                   )}
                 </div>
@@ -209,7 +251,8 @@ export function SystemTestPanel() {
 }
 
 function resultClass(status: TestResult["status"]): string {
-  if (status === "ok") return "border-emerald-900 bg-[#def3e5] text-emerald-900";
+  if (status === "ok")
+    return "border-emerald-900 bg-[#def3e5] text-emerald-900";
   if (status === "warn") return "border-amber-900 bg-amber-100 text-amber-900";
   return "border-red-900 bg-red-100 text-red-900";
 }
@@ -248,11 +291,13 @@ export function AdminStatusPanel() {
       if (res.ok) {
         const data = await res.json();
         setActive(data.active);
-        setMessage(`Admin status updated to ${data.active ? "ONLINE" : "OFFLINE"}.`);
+        setMessage(
+          `Admin status updated to ${data.active ? "ONLINE" : "OFFLINE"}.`,
+        );
       } else {
         setMessage("Failed to update status.");
       }
-    } catch (err) {
+    } catch {
       setMessage("Network error.");
     } finally {
       setLoading(false);
@@ -261,10 +306,15 @@ export function AdminStatusPanel() {
 
   return (
     <article className="rounded-none border-3 border-primary bg-[#faf7f2] p-5 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
-      <p className="text-xs font-headline font-bold uppercase tracking-[0.12em] text-primary/70">Support & Verification</p>
-      <h2 className="mt-2 text-2xl font-headline font-black uppercase text-primary">Admin Online status</h2>
+      <p className="text-xs font-headline font-bold uppercase tracking-[0.12em] text-primary/70">
+        Support & Verification
+      </p>
+      <h2 className="mt-2 text-2xl font-headline font-black uppercase text-primary">
+        Admin Online status
+      </h2>
       <p className="mt-1 text-sm font-body text-primary/80">
-        Toggle whether you are currently active to verify payments. Users see this on the billing/checkout page.
+        Toggle whether you are currently active to verify payments. Users see
+        this on the billing/checkout page.
       </p>
       <div className="mt-4 flex items-center gap-3">
         <button
@@ -275,14 +325,21 @@ export function AdminStatusPanel() {
             active ? "bg-[#10b981]" : "bg-neutral-400"
           }`}
         >
-          {active === null ? "Loading..." : active ? "Admin: Online" : "Admin: Offline"}
+          {active === null
+            ? "Loading..."
+            : active
+              ? "Admin: Online"
+              : "Admin: Offline"}
         </button>
         <span className="text-sm font-body font-semibold text-primary/60">
-          {active ? "Users see: Fast Approval active" : "Users see: Delayed Approval warning"}
+          {active
+            ? "Users see: Fast Approval active"
+            : "Users see: Delayed Approval warning"}
         </span>
       </div>
-      {message && <p className="mt-3 text-xs font-body text-primary/70">{message}</p>}
+      {message && (
+        <p className="mt-3 text-xs font-body text-primary/70">{message}</p>
+      )}
     </article>
   );
 }
-

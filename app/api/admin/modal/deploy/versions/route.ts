@@ -9,15 +9,21 @@ export const dynamic = "force-dynamic";
 async function requireAdmin() {
   const session = await readSessionFromCookie();
   if (!session) {
-    return { ok: false as const, response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+    return {
+      ok: false as const,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
   }
   if (!isAdminEmail(session.email)) {
-    return { ok: false as const, response: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
+    return {
+      ok: false as const,
+      response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+    };
   }
   return { ok: true as const, session };
 }
 
-export async function GET(request: Request) {
+export async function GET() {
   const admin = await requireAdmin();
   if (!admin.ok) return admin.response;
 
@@ -26,8 +32,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: true, versions });
   } catch (error) {
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Failed to load model file versions" },
-      { status: 500 }
+      {
+        ok: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to load model file versions",
+      },
+      { status: 500 },
     );
   }
 }

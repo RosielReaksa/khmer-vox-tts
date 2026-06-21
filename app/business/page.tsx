@@ -1,9 +1,11 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { PublicHeader } from "@/app/components/public-header";
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "Business API | Khmer Vox TTS",
   description: "High-volume Khmer clone voice and batch text-to-speech API for business customers.",
+  alternates: { canonical: "/business" },
 };
 
 const businessFeatures = [

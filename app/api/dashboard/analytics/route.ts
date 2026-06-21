@@ -6,8 +6,6 @@ import {
   getUserTokenBalance,
   getUserTotalCreditsEarned,
 } from "@/lib/store";
-import type { GenerationRecord } from "@/lib/types";
-
 export async function GET(request: Request) {
   const user = await getCurrentUser();
   if (!user) {
@@ -18,12 +16,13 @@ export async function GET(request: Request) {
   const period = searchParams.get("period") || "24h"; // "24h", "7d", "30d"
 
   try {
-    const [apiKeys, generations, currentBalance, totalCreditsEarned] = await Promise.all([
-      listUserApiKeys(user.id),
-      listUserGenerations(user.id, { limit: 1000 }),
-      getUserTokenBalance(user.id),
-      getUserTotalCreditsEarned(user.id),
-    ]);
+    const [apiKeys, generations, currentBalance, totalCreditsEarned] =
+      await Promise.all([
+        listUserApiKeys(user.id),
+        listUserGenerations(user.id, { limit: 1000 }),
+        getUserTokenBalance(user.id),
+        getUserTotalCreditsEarned(user.id),
+      ]);
 
     const activeKeysCount = apiKeys.filter((k) => !k.revokedAt).length;
 
@@ -41,17 +40,27 @@ export async function GET(request: Request) {
     });
 
     const totalRequests = filteredGenerations.length;
-    const successfulRequests = filteredGenerations.filter((g) => g.status === "success");
+    const successfulRequests = filteredGenerations.filter(
+      (g) => g.status === "success",
+    );
     const successRatePercent =
       totalRequests > 0
         ? Math.round((successfulRequests.length / totalRequests) * 1000) / 10
         : 100.0;
 
-    const totalLatency = successfulRequests.reduce((acc, g) => acc + (g.latencyMs || 0), 0);
+    const totalLatency = successfulRequests.reduce(
+      (acc, g) => acc + (g.latencyMs || 0),
+      0,
+    );
     const avgLatencyMs =
-      successfulRequests.length > 0 ? Math.round(totalLatency / successfulRequests.length) : 0;
+      successfulRequests.length > 0
+        ? Math.round(totalLatency / successfulRequests.length)
+        : 0;
 
-    const tokensUsedInPeriod = filteredGenerations.reduce((acc, g) => acc + (g.creditsCharged || 0), 0);
+    const tokensUsedInPeriod = filteredGenerations.reduce(
+      (acc, g) => acc + (g.creditsCharged || 0),
+      0,
+    );
 
     // Prepare line chart and bar chart data
     let requestsOverTime: Array<{ label: string; value: number }> = [];
@@ -75,8 +84,18 @@ export async function GET(request: Request) {
       id: g.id,
       endpoint: g.mode === "clone" ? "/v1/synthesize/stream" : "/v1/synthesize",
       method: "POST",
-      status: g.status === "success" ? "200 OK" : g.errorMessage?.includes("rate") ? "429 Rate Limit" : "500 Error",
-      statusCode: g.status === "success" ? 200 : g.errorMessage?.includes("rate") ? 429 : 500,
+      status:
+        g.status === "success"
+          ? "200 OK"
+          : g.errorMessage?.includes("rate")
+            ? "429 Rate Limit"
+            : "500 Error",
+      statusCode:
+        g.status === "success"
+          ? 200
+          : g.errorMessage?.includes("rate")
+            ? 429
+            : 500,
       latency: g.status === "success" ? `${g.latencyMs || 120}ms` : "--",
       time: formatRelativeTime(new Date(g.createdAt)),
       rawTime: g.createdAt,
@@ -88,24 +107,52 @@ export async function GET(request: Request) {
       displayRequests = period === "24h" ? 245 : period === "7d" ? 1720 : 8420;
       displaySuccessRate = 99.8;
       displayAvgLatency = 245;
-      displayTokensUsed = period === "24h" ? 45000 : period === "7d" ? 312000 : 1500000;
+      displayTokensUsed =
+        period === "24h" ? 45000 : period === "7d" ? 312000 : 1500000;
 
       // Seed chart data
       if (period === "24h") {
         const hours = [
-          "22:00", "00:00", "02:00", "04:00", "06:00", "08:00",
-          "10:00", "12:00", "14:00", "16:00", "18:00", "20:00"
+          "22:00",
+          "00:00",
+          "02:00",
+          "04:00",
+          "06:00",
+          "08:00",
+          "10:00",
+          "12:00",
+          "14:00",
+          "16:00",
+          "18:00",
+          "20:00",
         ];
         const values = [12, 8, 5, 4, 15, 22, 35, 28, 42, 30, 25, 19];
-        requestsOverTime = hours.map((h, i) => ({ label: h, value: values[i] }));
+        requestsOverTime = hours.map((h, i) => ({
+          label: h,
+          value: values[i],
+        }));
       } else if (period === "7d") {
         const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
         const values = [210, 245, 195, 280, 310, 260, 220];
         requestsOverTime = days.map((d, i) => ({ label: d, value: values[i] }));
       } else {
-        const intervals = ["1-3", "4-6", "7-9", "10-12", "13-15", "16-18", "19-21", "22-24", "25-27", "28-30"];
+        const intervals = [
+          "1-3",
+          "4-6",
+          "7-9",
+          "10-12",
+          "13-15",
+          "16-18",
+          "19-21",
+          "22-24",
+          "25-27",
+          "28-30",
+        ];
         const values = [780, 810, 720, 890, 940, 860, 910, 790, 850, 870];
-        requestsOverTime = intervals.map((int, i) => ({ label: `Day ${int}`, value: values[i] }));
+        requestsOverTime = intervals.map((int, i) => ({
+          label: `Day ${int}`,
+          value: values[i],
+        }));
       }
 
       latencyDistribution = [
@@ -118,11 +165,56 @@ export async function GET(request: Request) {
       ];
 
       recentActivity = [
-        { id: "demo-1", endpoint: "/v1/synthesize", method: "POST", status: "200 OK", statusCode: 200, latency: "124ms", time: "Just now", rawTime: new Date().toISOString() },
-        { id: "demo-2", endpoint: "/v1/voices", method: "GET", status: "200 OK", statusCode: 200, latency: "45ms", time: "2 mins ago", rawTime: new Date(now.getTime() - 2 * 60 * 1000).toISOString() },
-        { id: "demo-3", endpoint: "/v1/synthesize", method: "POST", status: "429 Rate Limit", statusCode: 429, latency: "--", time: "15 mins ago", rawTime: new Date(now.getTime() - 15 * 60 * 1000).toISOString() },
-        { id: "demo-4", endpoint: "/v1/synthesize/stream", method: "POST", status: "500 Error", statusCode: 500, latency: "1250ms", time: "1 hour ago", rawTime: new Date(now.getTime() - 60 * 60 * 1000).toISOString() },
-        { id: "demo-5", endpoint: "/v1/synthesize", method: "POST", status: "200 OK", statusCode: 200, latency: "185ms", time: "2 hours ago", rawTime: new Date(now.getTime() - 120 * 60 * 1000).toISOString() },
+        {
+          id: "demo-1",
+          endpoint: "/v1/synthesize",
+          method: "POST",
+          status: "200 OK",
+          statusCode: 200,
+          latency: "124ms",
+          time: "Just now",
+          rawTime: new Date().toISOString(),
+        },
+        {
+          id: "demo-2",
+          endpoint: "/v1/voices",
+          method: "GET",
+          status: "200 OK",
+          statusCode: 200,
+          latency: "45ms",
+          time: "2 mins ago",
+          rawTime: new Date(now.getTime() - 2 * 60 * 1000).toISOString(),
+        },
+        {
+          id: "demo-3",
+          endpoint: "/v1/synthesize",
+          method: "POST",
+          status: "429 Rate Limit",
+          statusCode: 429,
+          latency: "--",
+          time: "15 mins ago",
+          rawTime: new Date(now.getTime() - 15 * 60 * 1000).toISOString(),
+        },
+        {
+          id: "demo-4",
+          endpoint: "/v1/synthesize/stream",
+          method: "POST",
+          status: "500 Error",
+          statusCode: 500,
+          latency: "1250ms",
+          time: "1 hour ago",
+          rawTime: new Date(now.getTime() - 60 * 60 * 1000).toISOString(),
+        },
+        {
+          id: "demo-5",
+          endpoint: "/v1/synthesize",
+          method: "POST",
+          status: "200 OK",
+          statusCode: 200,
+          latency: "185ms",
+          time: "2 hours ago",
+          rawTime: new Date(now.getTime() - 120 * 60 * 1000).toISOString(),
+        },
       ];
     } else {
       // Use real data to group into chart intervals
@@ -132,7 +224,9 @@ export async function GET(request: Request) {
 
       for (let i = 0; i < intervalsCount; i++) {
         const intervalStart = new Date(cutoffDate.getTime() + i * intervalMs);
-        const intervalEnd = new Date(cutoffDate.getTime() + (i + 1) * intervalMs);
+        const intervalEnd = new Date(
+          cutoffDate.getTime() + (i + 1) * intervalMs,
+        );
 
         const count = filteredGenerations.filter((g) => {
           const d = new Date(g.createdAt);
@@ -141,7 +235,11 @@ export async function GET(request: Request) {
 
         let label = "";
         if (period === "24h") {
-          label = intervalStart.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+          label = intervalStart.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          });
         } else if (period === "7d") {
           label = intervalStart.toLocaleDateString([], { weekday: "short" });
         } else {
@@ -167,7 +265,15 @@ export async function GET(request: Request) {
     // Determine token limits for the progress card
     const totalCredits = Math.max(totalCreditsEarned, currentBalance, 10000); // minimum baseline
     const remainingCredits = currentBalance;
-    const usedPercent = totalCredits > 0 ? Math.min(100, Math.round(((totalCredits - remainingCredits) / totalCredits) * 100)) : 0;
+    const usedPercent =
+      totalCredits > 0
+        ? Math.min(
+            100,
+            Math.round(
+              ((totalCredits - remainingCredits) / totalCredits) * 100,
+            ),
+          )
+        : 0;
 
     return NextResponse.json({
       activeKeysCount,
@@ -185,7 +291,10 @@ export async function GET(request: Request) {
     });
   } catch (error) {
     console.error("Failed to load analytics:", error);
-    return NextResponse.json({ error: "Failed to load analytics data" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to load analytics data" },
+      { status: 500 },
+    );
   }
 }
 

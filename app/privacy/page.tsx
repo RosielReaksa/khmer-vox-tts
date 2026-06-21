@@ -1,4 +1,12 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+export const metadata: Metadata = {
+  title: "Privacy Policy",
+  description:
+    "How Khmer Vox TTS collects, stores, and protects account data, generation metadata, and voice samples.",
+  alternates: { canonical: "/privacy" },
+};
 
 const sections = [
   {

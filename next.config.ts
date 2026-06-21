@@ -1,4 +1,9 @@
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import type { NextConfig } from "next";
+
+const projectRoot = dirname(fileURLToPath(import.meta.url));
 
 const securityHeaders = [
   {
@@ -21,8 +26,12 @@ const securityHeaders = [
     value: "nosniff",
   },
   {
+    // OWASP now recommends disabling the legacy XSS auditor: it has been removed
+    // from modern browsers and the `1; mode=block` filter can introduce XS-Leak
+    // vulnerabilities in older ones. The Content-Security-Policy above is the
+    // real XSS protection. See owasp.org/www-project-secure-headers.
     key: "X-XSS-Protection",
-    value: "1; mode=block",
+    value: "0",
   },
   {
     key: "X-Frame-Options",
@@ -47,6 +56,7 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   turbopack: {
+    root: projectRoot,
     ignoreIssue: [
       {
         path: "**/lib/tts-provider.ts",
@@ -55,10 +65,22 @@ const nextConfig: NextConfig = {
   },
   outputFileTracingIncludes: {
     "/api/admin/system/test": ["./node_modules/ffmpeg-static/ffmpeg*"],
-    "/api/generate": ["./node_modules/ffmpeg-static/ffmpeg*", "./lib/preset-voices/**/*"],
-    "/api/generate-clone": ["./node_modules/ffmpeg-static/ffmpeg*", "./lib/preset-voices/**/*"],
-    "/api/internal/jobs/process": ["./node_modules/ffmpeg-static/ffmpeg*", "./lib/preset-voices/**/*"],
-    "/api/v1/audio/**/*": ["./node_modules/ffmpeg-static/ffmpeg*", "./lib/preset-voices/**/*"],
+    "/api/generate": [
+      "./node_modules/ffmpeg-static/ffmpeg*",
+      "./lib/preset-voices/**/*",
+    ],
+    "/api/generate-clone": [
+      "./node_modules/ffmpeg-static/ffmpeg*",
+      "./lib/preset-voices/**/*",
+    ],
+    "/api/internal/jobs/process": [
+      "./node_modules/ffmpeg-static/ffmpeg*",
+      "./lib/preset-voices/**/*",
+    ],
+    "/api/v1/audio/**/*": [
+      "./node_modules/ffmpeg-static/ffmpeg*",
+      "./lib/preset-voices/**/*",
+    ],
   },
   outputFileTracingExcludes: {
     "*": [
@@ -95,7 +117,7 @@ const nextConfig: NextConfig = {
       ".antigravitycli/**/*",
       "**/*.log",
       "**/*.jpg",
-      "**/*.png"
+      "**/*.png",
     ],
   },
   async headers() {

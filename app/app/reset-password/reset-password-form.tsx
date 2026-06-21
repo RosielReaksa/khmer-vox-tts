@@ -79,7 +79,7 @@ export function ResetPasswordForm({
 
           {!tokenLooksValid ? (
             <div className="space-y-6">
-              <div className="border-4 border-[#1a1a1a] bg-[#ffdad6] p-4 font-bold text-[#93000a]">
+              <div role="alert" className="border-4 border-[#1a1a1a] bg-[#ffdad6] p-4 font-bold text-[#93000a]">
                 This recovery link is invalid. Request a new link to continue.
               </div>
               <Link className="inline-block brutal-button bg-[#1a1a1a] text-white px-5 py-3" href="/app/forgot-password">
@@ -88,7 +88,7 @@ export function ResetPasswordForm({
             </div>
           ) : success ? (
             <div className="space-y-6">
-              <div className="border-4 border-[#1a1a1a] bg-[#d8f8e7] p-4 font-bold text-[#075e3b]">
+              <div role="status" className="border-4 border-[#1a1a1a] bg-[#d8f8e7] p-4 font-bold text-[#075e3b]">
                 Password updated. Your recovery link cannot be used again.
               </div>
               <Link className="inline-block brutal-button bg-[#10b981] text-[#1a1a1a] px-5 py-3" href="/app/signin">
@@ -134,7 +134,7 @@ export function ResetPasswordForm({
               </div>
 
               {error && (
-                <div className="border-4 border-[#1a1a1a] bg-[#ffdad6] p-3 text-sm font-bold text-[#93000a]">
+                <div role="alert" className="border-4 border-[#1a1a1a] bg-[#ffdad6] p-3 text-sm font-bold text-[#93000a]">
                   {error}
                 </div>
               )}
@@ -142,6 +142,7 @@ export function ResetPasswordForm({
               <button
                 type="submit"
                 disabled={submitting}
+                aria-busy={submitting}
                 className="w-full brutal-button bg-[#1a1a1a] text-white p-4 disabled:opacity-50"
               >
                 {submitting ? "UPDATING..." : "UPDATE PASSWORD"}

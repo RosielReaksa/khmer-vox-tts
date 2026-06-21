@@ -1,7 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { SupportActions } from "@/app/support/support-actions";
 import { PublicHeader } from "@/app/components/public-header";
+
+export const metadata: Metadata = {
+  title: "Support",
+  description:
+    "Get help with Khmer Vox TTS — billing, API keys, voice cloning, and account questions. Contact our team on Telegram.",
+  alternates: { canonical: "/support" },
+};
 
 function telegramHandle(): string {
   return (process.env.TELEGRAM_ADMIN_HANDLE ?? "https://t.me/OfficalVoxTTS").trim() || "https://t.me/OfficalVoxTTS";

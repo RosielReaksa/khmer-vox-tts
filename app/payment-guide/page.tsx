@@ -1,5 +1,13 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { PublicHeader } from "@/app/components/public-header";
+
+export const metadata: Metadata = {
+  title: "Payment Guide",
+  description:
+    "How to buy Khmer Vox TTS token packs: choose a pack, scan the KHQRcc ABA Pay QR, and get tokens credited to your account.",
+  alternates: { canonical: "/payment-guide" },
+};
 
 const steps = [
   {
@@ -72,7 +80,7 @@ export default function PaymentGuidePage() {
             <div className="border-4 border-outline bg-[#faf7f2] p-4 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] self-center">
               <div className="grid aspect-square place-items-center border-2 border-outline bg-white p-3 text-center">
                 <div>
-                  <span className="material-symbols-outlined text-6xl text-primary">qr_code_2</span>
+                  <span className="material-symbols-outlined text-6xl text-primary" aria-hidden="true">qr_code_2</span>
                   <p className="mt-3 font-headline text-xl font-black uppercase text-primary">Dynamic QR</p>
                   <p className="mt-2 text-xs font-bold text-on-surface-variant">Generated per checkout</p>
                 </div>

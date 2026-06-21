@@ -78,6 +78,10 @@ export async function GET(request: Request) {
         });
       }
     } catch (err) {
+      // Admin diagnostic endpoint: the error detail is the point (timeout, DNS,
+      // connection refused, etc.), and this is admin-gated, so surface it — but
+      // also log server-side for observability.
+      console.error(`[admin/modal] Ping failed for "${pingLabel}":`, err);
       return NextResponse.json({
         ok: false,
         status: err instanceof Error ? err.message : String(err),
@@ -93,6 +97,7 @@ export async function GET(request: Request) {
     const accounts = await getModalAccounts(forceRefresh);
     return NextResponse.json({ ok: true, accounts });
   } catch (error) {
+    console.error("[admin/modal] Failed to load Modal accounts:", error);
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "Failed to load Modal accounts" },
       { status: 500 }
@@ -130,6 +135,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
+    console.error("[admin/modal] Failed to save account configuration:", error);
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : "Failed to save account configuration" },
       { status: 500 }

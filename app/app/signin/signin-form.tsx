@@ -135,7 +135,7 @@ export function SigninForm({
                   className="font-label font-bold text-[#1a1a1a] uppercase text-sm flex items-center gap-2"
                   htmlFor="email"
                 >
-                  <span className="material-symbols-outlined text-sm">mail</span>
+                  <span className="material-symbols-outlined text-sm" aria-hidden="true">mail</span>
                   Email Address
                 </label>
                 <input
@@ -144,6 +144,7 @@ export function SigninForm({
                   placeholder="user@domain.com"
                   required
                   type="email"
+                  autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={loading}
@@ -156,7 +157,7 @@ export function SigninForm({
                     className="font-label font-bold text-[#1a1a1a] uppercase text-sm flex items-center gap-2"
                     htmlFor="password"
                   >
-                    <span className="material-symbols-outlined text-sm">key</span>
+                    <span className="material-symbols-outlined text-sm" aria-hidden="true">key</span>
                     Password
                   </label>
                   <Link
@@ -172,6 +173,7 @@ export function SigninForm({
                   placeholder="••••••••"
                   required
                   type="password"
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={loading}
@@ -179,7 +181,7 @@ export function SigninForm({
               </div>
 
               {error && (
-                <div className="border-4 border-[#1a1a1a] bg-[#ffdad6] p-3 text-xs font-bold text-[#93000a] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+                <div role="alert" className="border-4 border-[#1a1a1a] bg-[#ffdad6] p-3 text-xs font-bold text-[#93000a] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
                   {error}
                 </div>
               )}
@@ -188,16 +190,17 @@ export function SigninForm({
                 className="brutal-button w-full bg-[#10b981] text-[#1a1a1a] p-4 mt-8 text-xl flex items-center justify-center gap-3 hover:bg-[#1a1a1a] hover:text-[#10b981] disabled:opacity-50 group"
                 type="submit"
                 disabled={loading}
+                aria-busy={loading}
               >
                 {loading ? (
                   <>
-                    <span className="material-symbols-outlined animate-spin">sync</span>
+                    <span className="material-symbols-outlined animate-spin" aria-hidden="true">sync</span>
                     AUTHENTICATING...
                   </>
                 ) : (
                   <>
                     SIGN IN
-                    <span className="material-symbols-outlined group-hover:translate-x-2 transition-transform">
+                    <span className="material-symbols-outlined group-hover:translate-x-2 transition-transform" aria-hidden="true">
                       arrow_forward
                     </span>
                   </>

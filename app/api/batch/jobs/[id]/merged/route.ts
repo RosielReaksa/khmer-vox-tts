@@ -51,7 +51,7 @@ export async function GET(
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
     return NextResponse.json({
-      error: error instanceof Error ? error.message : "Failed to merge audio segments.",
+      error: "Failed to merge audio segments.",
     }, { status: 500 });
   }
 }

@@ -5,14 +5,15 @@ import { useEffect, useMemo } from "react";
 import { ApiTabs } from "@/app/app/dashboard/api/api-tabs";
 import { useCachedJson } from "@/app/app/dashboard/dashboard-data-cache";
 import { VoxLoader } from "@/app/components/vox-loader";
-import { formatCloneCreditRate, TTS_CREDITS_PER_SECOND, STANDARD_CLONE_CREDITS_PER_SECOND } from "@/lib/credit-rates";
+import {
+  formatCloneCreditRate,
+  TTS_CREDITS_PER_SECOND,
+  STANDARD_CLONE_CREDITS_PER_SECOND,
+} from "@/lib/credit-rates";
 import type {
-  BatchJobRecord,
-  BusinessApiRequestRecord,
   GenerationMode,
   GenerationSource,
   GenerationStatus,
-  WebhookTestEventRecord,
 } from "@/lib/types";
 
 type ApiDashboardData = {
@@ -61,9 +62,6 @@ type ApiDashboardData = {
     creditsCharged: number;
     errorMessage: string | null;
   }>;
-  batchJobs: BatchJobRecord[];
-  businessRequests: BusinessApiRequestRecord[];
-  webhookTests: WebhookTestEventRecord[];
 };
 
 export function ApiDashboardClient() {
@@ -78,7 +76,7 @@ export function ApiDashboardClient() {
         (key) =>
           key.maxConcurrentRequests === null &&
           key.maxConcurrentJobs === null &&
-          key.maxQueuedJobs === null
+          key.maxQueuedJobs === null,
       ) ?? []
     );
   }, [data?.apiKeys]);
@@ -88,7 +86,8 @@ export function ApiDashboardClient() {
     successRatePercent: 100,
     last30DaysRequests: 0,
   };
-  const hasProcessingRequest = data?.requestLogs.some((item) => item.status === "processing") ?? false;
+  const hasProcessingRequest =
+    data?.requestLogs.some((item) => item.status === "processing") ?? false;
 
   useEffect(() => {
     if (!hasProcessingRequest) return;
@@ -99,12 +98,16 @@ export function ApiDashboardClient() {
   }, [hasProcessingRequest, refresh]);
 
   const handleCreateKeyClick = () => {
-    const tabButton = document.querySelector('button[aria-controls="api-keys-panel"]') as HTMLButtonElement | null;
-    if (tabButton && tabButton.getAttribute('aria-selected') !== 'true') {
+    const tabButton = document.querySelector(
+      'button[aria-controls="api-keys-panel"]',
+    ) as HTMLButtonElement | null;
+    if (tabButton && tabButton.getAttribute("aria-selected") !== "true") {
       tabButton.click();
     }
     setTimeout(() => {
-      const input = document.getElementById("new-key-name") as HTMLInputElement | null;
+      const input = document.getElementById(
+        "new-key-name",
+      ) as HTMLInputElement | null;
       if (input) {
         input.focus();
         input.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -116,8 +119,12 @@ export function ApiDashboardClient() {
     <section className="dashboard-enter grid gap-8 pb-12">
       <header className="flex flex-col md:flex-row justify-between items-start md:items-end pb-6 border-b-4 border-primary">
         <div>
-          <h2 className="text-xs font-label font-bold text-[#4a4a4a] uppercase tracking-widest mb-2">Security &amp; Access</h2>
-          <h1 className="text-5xl md:text-6xl font-headline font-black uppercase tracking-tighter text-primary">API KEYS</h1>
+          <h2 className="text-xs font-label font-bold text-[#4a4a4a] uppercase tracking-widest mb-2">
+            Security &amp; Access
+          </h2>
+          <h1 className="text-5xl md:text-6xl font-headline font-black uppercase tracking-tighter text-primary">
+            API KEYS
+          </h1>
         </div>
         <button
           onClick={handleCreateKeyClick}
@@ -129,13 +136,19 @@ export function ApiDashboardClient() {
       </header>
 
       {error ? <InlineError message={error} /> : null}
-      {loading && !data ? <VoxLoader variant="panel" label="Loading API dashboard..." /> : null}
+      {loading && !data ? (
+        <VoxLoader variant="panel" label="Loading API dashboard..." />
+      ) : null}
 
-      <section className={`bg-white border-4 border-primary p-6 md:p-8 shadow-[4px_4px_0px_0px_#1a1a1a] relative ${loading && !data ? "hidden" : ""}`}>
+      <section
+        className={`bg-white border-4 border-primary p-6 md:p-8 shadow-[4px_4px_0px_0px_#1a1a1a] relative ${loading && !data ? "hidden" : ""}`}
+      >
         <div className="absolute -top-4 -left-4 bg-[#ffcc00] border-3 border-primary px-4 py-1 z-10 shadow-[4px_4px_0px_0px_#1a1a1a] font-headline font-bold uppercase text-primary">
           API Usage
         </div>
-        <p className="text-sm text-[#4a4a4a] font-body mb-6 mt-2">Monitor your API request statistics</p>
+        <p className="text-sm text-[#4a4a4a] font-body mb-6 mt-2">
+          Monitor your API request statistics
+        </p>
         <div className="grid gap-6 md:grid-cols-3">
           <StatCard
             title="REQUESTS TODAY"
@@ -155,26 +168,38 @@ export function ApiDashboardClient() {
         </div>
       </section>
 
-      <section className={`bg-white border-4 border-primary p-6 md:p-8 shadow-[4px_4px_0px_0px_#1a1a1a] relative ${loading && !data ? "hidden" : ""}`}>
+      <section
+        className={`bg-white border-4 border-primary p-6 md:p-8 shadow-[4px_4px_0px_0px_#1a1a1a] relative ${loading && !data ? "hidden" : ""}`}
+      >
         <div className="absolute -top-4 -left-4 bg-[#0055ff] text-[#f5f0e8] border-3 border-primary px-4 py-1 z-10 shadow-[4px_4px_0px_0px_#1a1a1a] font-headline font-bold uppercase">
           Credit Pricing
         </div>
-        <p className="text-sm text-[#4a4a4a] font-body mb-6 mt-2">How credits are deducted when using the API</p>
+        <p className="text-sm text-[#4a4a4a] font-body mb-6 mt-2">
+          How credits are deducted when using the API
+        </p>
         <div className="grid gap-6 md:grid-cols-2">
           <article className="bg-[#f5f0e8] border-4 border-primary p-6 shadow-[4px_4px_0px_0px_#1a1a1a]">
-            <p className="text-xs font-headline font-bold uppercase tracking-wider text-[#4a4a4a]">STANDARD SPEECH</p>
-            <p className="mt-2 text-4xl font-headline font-black leading-none text-primary">{TTS_CREDITS_PER_SECOND}x</p>
+            <p className="text-xs font-headline font-bold uppercase tracking-wider text-[#4a4a4a]">
+              STANDARD SPEECH
+            </p>
+            <p className="mt-2 text-4xl font-headline font-black leading-none text-primary">
+              {TTS_CREDITS_PER_SECOND}x
+            </p>
             <p className="mt-2 text-sm text-[#4a4a4a] font-body">
-              {TTS_CREDITS_PER_SECOND} credits per generated audio second via API
+              {TTS_CREDITS_PER_SECOND} credits per generated audio second via
+              API
             </p>
           </article>
           <article className="bg-[#f5f0e8] border-4 border-primary p-6 shadow-[4px_4px_0px_0px_#1a1a1a]">
-            <p className="text-xs font-headline font-bold uppercase tracking-wider text-[#4a4a4a]">VOICE CLONING</p>
+            <p className="text-xs font-headline font-bold uppercase tracking-wider text-[#4a4a4a]">
+              VOICE CLONING
+            </p>
             <p className="mt-2 text-4xl font-headline font-black leading-none text-primary">
               {STANDARD_CLONE_CREDITS_PER_SECOND}x
             </p>
             <p className="mt-2 text-sm text-[#4a4a4a] font-body">
-              {formatCloneCreditRate(STANDARD_CLONE_CREDITS_PER_SECOND)} with clone mode
+              {formatCloneCreditRate(STANDARD_CLONE_CREDITS_PER_SECOND)} with
+              clone mode
             </p>
           </article>
         </div>
@@ -184,10 +209,14 @@ export function ApiDashboardClient() {
         <ApiTabs
           initialKeys={normalKeys}
           requestLogs={data?.requestLogs ?? []}
-          batchJobs={data?.batchJobs ?? []}
-          businessRequests={data?.businessRequests ?? []}
-          webhookTests={data?.webhookTests ?? []}
-          apiAccess={data?.apiAccess ?? { hasPaidApiAccess: false, currentPlanName: "Free", cloneCreditsPerSecond: STANDARD_CLONE_CREDITS_PER_SECOND, businessLimits: null }}
+          apiAccess={
+            data?.apiAccess ?? {
+              hasPaidApiAccess: false,
+              currentPlanName: "Free",
+              cloneCreditsPerSecond: STANDARD_CLONE_CREDITS_PER_SECOND,
+              businessLimits: null,
+            }
+          }
         />
       )}
     </section>
@@ -205,8 +234,12 @@ function StatCard({
 }) {
   return (
     <article className="bg-white border-4 border-primary p-6 shadow-[4px_4px_0px_0px_#1a1a1a] relative">
-      <p className="text-xs font-headline font-bold uppercase tracking-wider text-[#4a4a4a]">{title}</p>
-      <p className="mt-2 text-4xl font-headline font-black leading-none text-primary">{value}</p>
+      <p className="text-xs font-headline font-bold uppercase tracking-wider text-[#4a4a4a]">
+        {title}
+      </p>
+      <p className="mt-2 text-4xl font-headline font-black leading-none text-primary">
+        {value}
+      </p>
       <p className="mt-2 text-sm text-[#4a4a4a] font-body">{subtitle}</p>
     </article>
   );

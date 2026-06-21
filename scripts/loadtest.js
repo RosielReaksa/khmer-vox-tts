@@ -1,5 +1,5 @@
 import http from "k6/http";
-import { check, sleep } from "k6";
+import { sleep } from "k6";
 import { Counter, Trend, Rate } from "k6/metrics";
 
 // ----------------------------------------------------------------------------
@@ -71,7 +71,7 @@ function fakeIp() {
   return `100.${(__VU >> 8) & 255}.${__VU & 255}.${(__ITER % 254) + 1}`;
 }
 
-export default function () {
+export default function loadTestScenario() {
   const jar = http.cookieJar();
   const ip = fakeIp();
   const ipHeaders = { "X-Forwarded-For": ip };
@@ -86,7 +86,11 @@ export default function () {
     signupOk.add(false);
     return;
   }
-  const headers = { "Content-Type": "application/json", "x-csrf-token": csrf, "X-Forwarded-For": ip };
+  const headers = {
+    "Content-Type": "application/json",
+    "x-csrf-token": csrf,
+    "X-Forwarded-For": ip,
+  };
 
   // 2) Signup (unique email -> unique user, gets 100 free tokens).
   const email = `load_${Date.now()}_${__VU}_${__ITER}_${Math.floor(Math.random() * 1e6)}@example.com`;
@@ -120,7 +124,9 @@ export default function () {
   );
   enqueueDur.add(gres.timings.duration);
   if (gres.status === 429) rateLimited.add(1);
-  const queued = gres.status === 202 || (gres.status === 200 && gres.body.includes('"queued":true'));
+  const queued =
+    gres.status === 202 ||
+    (gres.status === 200 && gres.body.includes('"queued":true'));
   enqueueOk.add(queued);
   if (!queued) {
     jobFail.add(1);
@@ -129,7 +135,7 @@ export default function () {
   let jobId = "";
   try {
     jobId = JSON.parse(gres.body).jobId || "";
-  } catch (e) {
+  } catch {
     jobId = "";
   }
   if (!jobId) {
@@ -140,12 +146,14 @@ export default function () {
   const startedAt = Date.now();
   for (let i = 0; i < 150; i++) {
     sleep(2);
-    const pr = http.get(`${BASE}/api/batch/jobs/${jobId}`, { headers: ipHeaders });
+    const pr = http.get(`${BASE}/api/batch/jobs/${jobId}`, {
+      headers: ipHeaders,
+    });
     if (pr.status !== 200) continue;
     let job;
     try {
       job = JSON.parse(pr.body).job;
-    } catch (e) {
+    } catch {
       continue;
     }
     if (!job) continue;

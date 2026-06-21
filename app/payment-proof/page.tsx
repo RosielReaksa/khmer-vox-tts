@@ -1,6 +1,18 @@
+import type { Metadata } from "next";
+
 import { PaymentProofClient } from "@/app/payment-proof/payment-proof-client";
 import { verifyPaymentProofToken } from "@/lib/payment-proof-token";
 import { listUserPaymentOrders } from "@/lib/store";
+
+/**
+ * This page renders transaction-specific payment proof behind a signed token and
+ * must never be indexed. robots.txt already disallows crawling, but a noindex
+ * directive is the robust defense-in-depth: it prevents indexing even if the URL
+ * is discovered via an external link (where robots.txt disallow alone wouldn't).
+ */
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+};
 
 export default async function PaymentProofPage({
   searchParams,

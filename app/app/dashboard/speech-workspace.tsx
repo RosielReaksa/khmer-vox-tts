@@ -45,12 +45,6 @@ type GenerationResponse = {
   upstreamRequestId: string | null;
 };
 
-type GenerationErrorResponse = {
-  error?: string;
-  code?: string;
-  remainingTokens?: number;
-};
-
 type WorkspaceSnapshot = {
   text: string;
   voice: string;
@@ -61,6 +55,7 @@ type WorkspaceSnapshot = {
   result: GenerationResponse | null;
   audioUrl: string;
   error: string;
+  progress: string;
   busy: boolean;
   updatedAtLabel: string;
   showInstructions: boolean;
@@ -77,6 +72,7 @@ function createWorkspaceSnapshot(mode: "tts" | "clone"): WorkspaceSnapshot {
     result: null,
     audioUrl: "",
     error: "",
+    progress: "",
     busy: false,
     updatedAtLabel: "--:--:--",
     showInstructions: false,
@@ -139,12 +135,10 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
   const [sampleFile, setSampleFile] = useState<File | null>(snapshot.sampleFile);
   const [voiceConsent, setVoiceConsent] = useState(snapshot.voiceConsent);
   const [denoiseReference, setDenoiseReference] = useState(false);
-  const [audioSpeed, setAudioSpeed] = useState(1.0);
-  const [audioPitch, setAudioPitch] = useState(0);
-  const [audioVolume, setAudioVolume] = useState(0);
   const [result, setResult] = useState<GenerationResponse | null>(snapshot.result);
   const [audioUrl, setAudioUrl] = useState(snapshot.audioUrl);
   const [error, setError] = useState(snapshot.error);
+  const [progress, setProgress] = useState(snapshot.progress);
   const [busy, setBusy] = useState(snapshot.busy);
   const [updatedAtLabel, setUpdatedAtLabel] = useState(snapshot.updatedAtLabel);
   const [showInstructions, setShowInstructions] = useState(snapshot.showInstructions);
@@ -184,6 +178,37 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
     }, 0);
     return () => clearTimeout(timer);
   }, [isCloneMode]);
+
+  // Pre-warm the Modal GPU on a cheap signal (workspace mount / text-box focus)
+  // so the real generation a few seconds later hits a warm container instead of
+  // a ~58s cold start. Client-side throttle avoids redundant pings; the server
+  // route is globally throttled too, so this is safe to call liberally.
+  const lastPrewarmRef = useRef(0);
+  const triggerPrewarm = useCallback(() => {
+    const now = Date.now();
+    if (now - lastPrewarmRef.current < 30_000) return;
+    lastPrewarmRef.current = now;
+    void fetch("/api/prewarm", { method: "POST", keepalive: true }).catch(() => {
+      // Warming is best-effort; never surface an error to the user.
+    });
+  }, []);
+
+  useEffect(() => {
+    triggerPrewarm();
+  }, [triggerPrewarm]);
+
+  // Close the saved-voice library modal on Escape for keyboard accessibility.
+  useEffect(() => {
+    if (!isLibraryOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsLibraryOpen(false);
+        setSaveVoiceError("");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isLibraryOpen]);
 
   const standardSeconds = useMemo(() => estimateSeconds(text.length, 20, 1), [text.length]);
   const cloneSeconds = useMemo(() => estimateSeconds(text.length, 13, 2), [text.length]);
@@ -227,6 +252,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
       setResult(next.result);
       setAudioUrl(next.audioUrl);
       setError(next.error);
+      setProgress(next.progress);
       setBusy(next.busy);
       setUpdatedAtLabel(next.updatedAtLabel);
       setShowInstructions(next.showInstructions);
@@ -244,6 +270,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
       result,
       audioUrl,
       error,
+      progress,
       busy,
       updatedAtLabel,
       showInstructions,
@@ -259,6 +286,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
     result,
     audioUrl,
     error,
+    progress,
     busy,
     updatedAtLabel,
     showInstructions,
@@ -268,7 +296,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
   // Extracted so both a fresh generate and a resume-after-refresh can share it.
   const pollQueuedJob = useCallback(
     async (jobId: string) => {
-      commitWorkspaceSnapshot(mode, { busy: true });
+      commitWorkspaceSnapshot(mode, { busy: true, progress: "Generating: starting..." });
       let completed = false;
       let attempts = 0;
       const maxAttempts = QUEUED_JOB_MAX_POLL_ATTEMPTS;
@@ -290,7 +318,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
             }
             if ([408, 409, 425, 429, 500, 502, 503, 504].includes(pollRes.status)) {
               commitWorkspaceSnapshot(mode, {
-                error: `Waiting for background job status: ${reason}`,
+                progress: `Waiting for background job status: ${reason}`,
               });
               attempts++;
               continue;
@@ -316,6 +344,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
             const updatedAtLabel = new Date().toLocaleTimeString();
             commitWorkspaceSnapshot(mode, {
               busy: false,
+              progress: "",
               error: job.status === "partial"
                 ? `Generated ${job.completedItems} of ${job.totalItems} segments. ${job.failedItems} failed — retry from Batch Jobs.`
                 : "",
@@ -335,10 +364,12 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
           } else {
             const progressMsg = `Generating: Segment ${job.completedItems} of ${job.totalItems} completed...`;
             // Always keep busy:true while processing so the animated equalizer
-            // keeps showing instead of "Needs attention" on transient hiccups.
+            // keeps showing. Progress goes to its own field (not `error`) so it
+            // never renders under the red "Needs attention" header.
             commitWorkspaceSnapshot(mode, {
               busy: true,
-              error: progressMsg,
+              progress: progressMsg,
+              error: "",
             });
           }
         } catch (pollErr: unknown) {
@@ -357,7 +388,8 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
           if (isTransient && attempts < maxAttempts - 1) {
             commitWorkspaceSnapshot(mode, {
               busy: true,
-              error: `Generating: Segment ${0} of ${0} completed...`,
+              progress: "Generating: reconnecting to the background job...",
+              error: "",
             });
             attempts++;
             continue;
@@ -365,6 +397,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
           clearActiveJob(mode);
           commitWorkspaceSnapshot(mode, {
             busy: false,
+            progress: "",
             error: msg || "Failed during background generation polling.",
           });
           return;
@@ -397,7 +430,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
         clearActiveJob(mode);
         return;
       }
-      commitWorkspaceSnapshot(mode, { busy: true, error: "", result: null, audioUrl: "" });
+      commitWorkspaceSnapshot(mode, { busy: true, error: "", progress: "Generating: reconnecting...", result: null, audioUrl: "" });
       void pollQueuedJob(storedJobId);
       return;
     }
@@ -428,6 +461,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
     commitWorkspaceSnapshot(mode, {
       busy: true,
       error: "",
+      progress: "Generating: starting...",
       result: null,
       audioUrl: "",
     });
@@ -748,6 +782,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
               </div>
               <select
                 value={voice}
+                aria-label={isCloneMode ? "Voice source" : "Voice style"}
                 onChange={(event) => {
                   setVoice(event.target.value);
                   setError("");
@@ -879,6 +914,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
               <textarea
                 value={text}
                 onChange={(event) => setText(event.target.value)}
+                onFocus={triggerPrewarm}
                 maxLength={maxInputChars}
                 placeholder="Paste text..."
                 className={`smooth-scroll-region w-full resize-y border-4 border-primary bg-white p-5 text-base leading-7 text-primary outline-none transition focus:bg-[#faf7f2] shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] ${
@@ -940,6 +976,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
           text={text}
           busy={busy}
           error={error}
+          progress={progress}
           result={result}
           audioUrl={audioUrl}
           mode={mode}
@@ -949,24 +986,36 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
 
       {isCloneMode && isLibraryOpen && (
         <Portal>
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 text-[#1a1a1a]">
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 text-[#1a1a1a]"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="voice-library-title"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) {
+                setIsLibraryOpen(false);
+                setSaveVoiceError("");
+              }
+            }}
+          >
           <div className="bg-[#f5f0e8] border-4 border-primary max-w-2xl w-full max-h-[85vh] flex flex-col overflow-hidden shadow-[8px_8px_0px_0px_rgba(26,26,26,1)]">
             <div className="p-6 border-b-4 border-primary flex items-start justify-between bg-primary-fixed">
               <div>
-                <h3 className="font-headline font-black text-xl uppercase tracking-tight text-primary">Saved Voice Library</h3>
+                <h3 id="voice-library-title" className="font-headline font-black text-xl uppercase tracking-tight text-primary">Saved Voice Library</h3>
                 <p className="mt-1 font-body text-xs font-bold uppercase text-[#4a4a4a]">
                   Upload reference samples in MP3 or WAV (up to 8MB) to save them. Saved voices cost 2 tokens/second.
                 </p>
               </div>
               <button
                 type="button"
+                aria-label="Close voice library"
                 onClick={() => {
                   setIsLibraryOpen(false);
                   setSaveVoiceError("");
                 }}
                 className="border-2 border-primary p-1 bg-white hover:bg-[#ffb3ab] shadow-[1px_1px_0px_0px_rgba(26,26,26,1)] active:shadow-none transition-all cursor-pointer"
               >
-                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="h-5 w-5" aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
@@ -983,8 +1032,9 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                 )}
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="grid gap-1">
-                    <label className="text-xs font-headline uppercase font-black text-[#4a4a4a]">Voice Name *</label>
+                    <label htmlFor="new-voice-name" className="text-xs font-headline uppercase font-black text-[#4a4a4a]">Voice Name *</label>
                     <input
+                      id="new-voice-name"
                       type="text"
                       required
                       value={newVoiceName}
@@ -994,8 +1044,9 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                     />
                   </div>
                   <div className="grid gap-1">
-                    <label className="text-xs font-headline uppercase font-black text-[#4a4a4a]">Description (optional)</label>
+                    <label htmlFor="new-voice-desc" className="text-xs font-headline uppercase font-black text-[#4a4a4a]">Description (optional)</label>
                     <input
+                      id="new-voice-desc"
                       type="text"
                       value={newVoiceDesc}
                       onChange={(e) => setNewVoiceDesc(e.target.value)}
@@ -1154,6 +1205,7 @@ function AudioResultPanel({
   text,
   busy,
   error,
+  progress,
   result,
   audioUrl,
   mode,
@@ -1166,6 +1218,7 @@ function AudioResultPanel({
   text: string;
   busy: boolean;
   error: string;
+  progress: string;
   result: GenerationResponse | null;
   audioUrl: string;
   mode: "tts" | "clone";
@@ -1181,6 +1234,9 @@ function AudioResultPanel({
       </div>
 
       <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
         className={`border-4 border-primary p-4 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] ${
           error
             ? "bg-[#ffdad6]"
@@ -1190,7 +1246,7 @@ function AudioResultPanel({
         }`}
       >
         {busy ? (
-          <GeneratingState progress={error && error.startsWith("Generating:") ? error : ""} />
+          <GeneratingState progress={progress} />
         ) : error ? (
           <div className="grid gap-2 text-xs font-headline font-bold uppercase text-red-700">
             <p className="font-black text-sm">Needs attention</p>

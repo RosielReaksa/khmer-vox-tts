@@ -1,14 +1,20 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { ApiTestConsole } from "@/app/docs/api-test-console";
-import { PLAN_COMPARISON_ROWS } from "@/lib/plan-details";
 import { PublicHeader } from "@/app/components/public-header";
-import { TOKEN_PACK_PLANS, formatUsd } from "@/lib/plans";
 import {
   DEFAULT_USAGE_POLICIES,
   MAX_CLONE_SAMPLE_BYTES,
   MAX_TEXT_CHARS,
 } from "@/lib/usage-policy";
+
+export const metadata: Metadata = {
+  title: "API Documentation",
+  description:
+    "Khmer Vox TTS API reference: text-to-speech, voice cloning, and batch generation endpoints with authentication, rate limits, and error codes.",
+  alternates: { canonical: "/docs" },
+};
 
 const baseUrl = process.env.APP_PUBLIC_URL?.replace(/\/$/, "") || "https://voxtts.online";
 
@@ -101,7 +107,7 @@ export default function ApiDocsPage() {
               className="flex items-center justify-between group p-3 border-2 border-outline bg-[#d6e3ff] hover:bg-[#ffcc00] transition-colors font-headline font-bold uppercase text-[10px]"
             >
               Business Setup
-              <span className="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">arrow_forward</span>
+              <span className="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform" aria-hidden="true">arrow_forward</span>
             </Link>
           </div>
         </aside>
@@ -126,7 +132,7 @@ export default function ApiDocsPage() {
             <section id="overview" className="scroll-mt-24 border-4 border-outline bg-white p-6 text-primary shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] lg:p-8 relative text-left">
               <div className="absolute -top-4 -right-4 w-8 h-8 bg-[#ffcc00] border-4 border-outline"></div>
               <h2 className="text-3xl font-headline font-black uppercase mb-6 flex items-center gap-3">
-                <span className="material-symbols-outlined text-4xl">info</span>
+                <span className="material-symbols-outlined text-4xl" aria-hidden="true">info</span>
                 Overview
               </h2>
               <div className="grid gap-8 xl:grid-cols-[1.1fr_0.9fr]">
@@ -520,7 +526,7 @@ function EndpointSection({
   );
 }
 
-function CodeBlock({ title, code, dark = false }: { title: string; code: string; dark?: boolean }) {
+function CodeBlock({ title, code }: { title: string; code: string }) {
   return (
     <div className="border-4 border-outline bg-[#1a1a1a] shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] overflow-hidden">
       <div className="flex items-center justify-between gap-3 border-b-2 border-outline px-4 py-2.5 text-xs font-headline font-bold uppercase text-[#faf7f2] bg-[#2d2d2d]">

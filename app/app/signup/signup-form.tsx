@@ -120,11 +120,12 @@ export function SignupForm({
                   id="fullName"
                   placeholder="JANE DOE"
                   type="text"
+                  autoComplete="name"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   disabled={loading}
                 />
-                <span className="material-symbols-outlined absolute right-0 bottom-3 text-[#1a1a1a] opacity-0 group-focus-within:opacity-100 transition-opacity">
+                <span className="material-symbols-outlined absolute right-0 bottom-3 text-[#1a1a1a] opacity-0 group-focus-within:opacity-100 transition-opacity" aria-hidden="true">
                   person
                 </span>
               </div>
@@ -142,11 +143,12 @@ export function SignupForm({
                   placeholder="CODER@NODE.IO"
                   required
                   type="email"
+                  autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={loading}
                 />
-                <span className="material-symbols-outlined absolute right-0 bottom-3 text-[#1a1a1a] opacity-0 group-focus-within:opacity-100 transition-opacity">
+                <span className="material-symbols-outlined absolute right-0 bottom-3 text-[#1a1a1a] opacity-0 group-focus-within:opacity-100 transition-opacity" aria-hidden="true">
                   alternate_email
                 </span>
               </div>
@@ -165,18 +167,19 @@ export function SignupForm({
                   required
                   minLength={8}
                   type="password"
+                  autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={loading}
                 />
-                <span className="material-symbols-outlined absolute right-0 bottom-3 text-[#1a1a1a] opacity-0 group-focus-within:opacity-100 transition-opacity">
+                <span className="material-symbols-outlined absolute right-0 bottom-3 text-[#1a1a1a] opacity-0 group-focus-within:opacity-100 transition-opacity" aria-hidden="true">
                   key
                 </span>
               </div>
             </div>
 
             {error && (
-              <div className="border-4 border-[#1a1a1a] bg-[#ffdad6] p-3 text-xs font-bold text-[#93000a] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+              <div role="alert" className="border-4 border-[#1a1a1a] bg-[#ffdad6] p-3 text-xs font-bold text-[#93000a] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
                 <p>{error}</p>
                 {error.toLowerCase().includes("already") && (
                   <Link href="/app/signin" className="mt-2 inline-block font-semibold underline underline-offset-2 hover:text-[#0055ff]">
@@ -192,16 +195,17 @@ export function SignupForm({
                 className="w-full bg-[#ffcc00] text-[#1a1a1a] border-4 border-[#1a1a1a] py-5 font-headline font-black uppercase text-2xl tracking-tight shadow-[6px_6px_0_0_#1a1a1a] hover:bg-[#1a1a1a] hover:text-[#ffcc00] active:shadow-none active:translate-x-[6px] active:translate-y-[6px] transition-all flex justify-center items-center gap-3 disabled:opacity-50 disabled:pointer-events-none"
                 type="submit"
                 disabled={loading}
+                aria-busy={loading}
               >
                 {loading ? (
                   <>
-                    <span className="material-symbols-outlined animate-spin">sync</span>
+                    <span className="material-symbols-outlined animate-spin" aria-hidden="true">sync</span>
                     CREATING ACCOUNT...
                   </>
                 ) : (
                   <>
                     Create Account
-                    <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
+                    <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
                       arrow_forward
                     </span>
                   </>

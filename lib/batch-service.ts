@@ -56,7 +56,6 @@ import { safeFetch } from "@/lib/ssrf-guard";
 
 const BATCH_RATE_LIMIT_WAIT_MS = 3_000;
 const BATCH_RATE_LIMIT_MAX_RETRIES = 10;
-const BATCH_ITEM_DELAY_MS = 500;
 const BATCH_WEBHOOK_TIMEOUT_MS = 8_000;
 
 type BatchRateLimitAcquireResult =

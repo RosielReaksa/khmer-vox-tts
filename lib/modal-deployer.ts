@@ -2,7 +2,11 @@ import { spawn, type ChildProcess } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import { forceReloadEndpoints, getUpstreamEndpoints } from "./tts-endpoints";
-import { readAccountsConfig, writeAccountsConfig, clearModalBillingCache } from "./modal-accounts";
+import {
+  readAccountsConfig,
+  writeAccountsConfig,
+  clearModalBillingCache,
+} from "./modal-accounts";
 
 function getModalSrcDir(): string {
   if (process.env.MODAL_SRC_DIR) return process.env.MODAL_SRC_DIR;
@@ -18,13 +22,17 @@ function getModalSrcDir(): string {
 // without any per-account manual step. Override with the env var if needed.
 // 300s (5 min) balances cold-start avoidance (measured ~58s cold vs ~1.2s warm)
 // against idle GPU cost for bursty multi-segment usage.
-const DEPLOY_SCALEDOWN_WINDOW = (process.env.VOXCPM_SCALEDOWN_WINDOW || "300").trim();
+const DEPLOY_SCALEDOWN_WINDOW = (
+  process.env.VOXCPM_SCALEDOWN_WINDOW || "300"
+).trim();
 
 // Diffusion decode steps baked into every deploy. Lower = faster generation
 // with a modest quality tradeoff. Injected here (like the scaledown window) so
 // every account connected through the admin page stays consistent. Default 8
 // (down from the upstream 10). Override with VOXCPM_INFERENCE_TIMESTEPS.
-const DEPLOY_INFERENCE_TIMESTEPS = (process.env.VOXCPM_INFERENCE_TIMESTEPS || "8").trim();
+const DEPLOY_INFERENCE_TIMESTEPS = (
+  process.env.VOXCPM_INFERENCE_TIMESTEPS || "8"
+).trim();
 
 // Builds the environment passed to every spawned `modal` CLI call so deploy
 // settings (like the scaledown window) are applied consistently.
@@ -33,7 +41,8 @@ function buildModalEnv(profile: string): NodeJS.ProcessEnv {
     ...process.env,
     PYTHONIOENCODING: "utf-8",
     MODAL_CONFIG_PATH:
-      process.env.MODAL_CONFIG_PATH || path.join(process.cwd(), "data", ".modal.toml"),
+      process.env.MODAL_CONFIG_PATH ||
+      path.join(process.cwd(), "data", ".modal.toml"),
     MODAL_PROFILE: profile,
     // Force the cost-saving warm window into the deploy regardless of the
     // value baked into the Python default, so all accounts stay consistent.
@@ -58,20 +67,34 @@ export async function listModelFiles(): Promise<string[]> {
   const dirPath = getModalSrcDir();
   try {
     const files = await fs.readdir(dirPath);
-    return files.filter(f => f.endsWith(".py") && (f.startsWith("modal_") || f === "modal_voxcpm_api.py"));
+    return files.filter(
+      (f) =>
+        f.endsWith(".py") &&
+        (f.startsWith("modal_") || f === "modal_voxcpm_api.py"),
+    );
   } catch {
     return ["modal_voxcpm_api.py"];
   }
 }
 
 export interface DeployStatus {
-  status: "idle" | "configuring_token" | "creating_secret" | "deploying" | "success" | "failed";
+  status:
+    | "idle"
+    | "configuring_token"
+    | "creating_secret"
+    | "deploying"
+    | "success"
+    | "failed";
   progress: string;
   error: string | null;
   deployedUrl: string | null;
 }
 
-const STATUS_FILE_PATH = path.join(process.cwd(), "data", "modal-deploy-status.json");
+const STATUS_FILE_PATH = path.join(
+  process.cwd(),
+  "data",
+  "modal-deploy-status.json",
+);
 
 let currentDeployStatus: DeployStatus = {
   status: "idle",
@@ -233,7 +256,10 @@ async function readPoolFile(poolPath: string): Promise<ModalPoolItem[]> {
   }
 }
 
-function updatePoolInEnvContent(content: string, pool: ModalPoolItem[]): string {
+function updatePoolInEnvContent(
+  content: string,
+  pool: ModalPoolItem[],
+): string {
   const newPoolLine = `TTS_UPSTREAM_POOL='${JSON.stringify(pool)}'`;
   const match = content.match(/^TTS_UPSTREAM_POOL=(['"])(.*?)\1/m);
   if (match) {
@@ -244,12 +270,19 @@ function updatePoolInEnvContent(content: string, pool: ModalPoolItem[]): string 
     : `${content}\n${newPoolLine}\n`;
 }
 
-async function writePoolFile(poolPath: string, pool: ModalPoolItem[]): Promise<void> {
+async function writePoolFile(
+  poolPath: string,
+  pool: ModalPoolItem[],
+): Promise<void> {
   await fs.mkdir(path.dirname(poolPath), { recursive: true });
   await fs.writeFile(poolPath, JSON.stringify(pool, null, 2), "utf-8");
 }
 
-async function appendAccountToEnv(url: string, token: string, label: string): Promise<void> {
+async function appendAccountToEnv(
+  url: string,
+  token: string,
+  label: string,
+): Promise<void> {
   const poolPath = path.join(process.cwd(), "data", "tts-upstream-pool.json");
   const envPath = path.join(process.cwd(), ".env");
   const backupPath = path.join(process.cwd(), ".env.backup");
@@ -264,7 +297,9 @@ async function appendAccountToEnv(url: string, token: string, label: string): Pr
     await readPoolFile(poolPath),
   );
   const nextPool = existingPool.filter(
-    (item) => normalizedEndpointUrl(item.url) !== normalizedEndpointUrl(url) && item.label !== label,
+    (item) =>
+      normalizedEndpointUrl(item.url) !== normalizedEndpointUrl(url) &&
+      item.label !== label,
   );
   nextPool.push({ url, token, label });
 
@@ -273,13 +308,20 @@ async function appendAccountToEnv(url: string, token: string, label: string): Pr
   if (!envContent) return;
   try {
     await fs.writeFile(backupPath, envContent, "utf-8");
-    await fs.writeFile(envPath, updatePoolInEnvContent(envContent, nextPool), "utf-8");
+    await fs.writeFile(
+      envPath,
+      updatePoolInEnvContent(envContent, nextPool),
+      "utf-8",
+    );
   } catch (error) {
     console.warn("Could not update the local environment pool.", error);
   }
 }
 
-async function removeAccountFromEnv(label: string, selectedUrl?: string): Promise<string | null> {
+async function removeAccountFromEnv(
+  label: string,
+  selectedUrl?: string,
+): Promise<string | null> {
   const poolPath = path.join(process.cwd(), "data", "tts-upstream-pool.json");
   const envPath = path.join(process.cwd(), ".env");
   const backupPath = path.join(process.cwd(), ".env.backup");
@@ -300,7 +342,9 @@ async function removeAccountFromEnv(label: string, selectedUrl?: string): Promis
       : item.label === label,
   );
   if (!removedItem) {
-    throw new Error(`Selected Modal account "${label}" was not found in the endpoint pool.`);
+    throw new Error(
+      `Selected Modal account "${label}" was not found in the endpoint pool.`,
+    );
   }
 
   const nextPool = currentPool.filter((item) =>
@@ -313,7 +357,11 @@ async function removeAccountFromEnv(label: string, selectedUrl?: string): Promis
   if (envContent) {
     try {
       await fs.writeFile(backupPath, envContent, "utf-8");
-      await fs.writeFile(envPath, updatePoolInEnvContent(envContent, nextPool), "utf-8");
+      await fs.writeFile(
+        envPath,
+        updatePoolInEnvContent(envContent, nextPool),
+        "utf-8",
+      );
     } catch (error) {
       console.warn("Could not update the local environment pool.", error);
     }
@@ -322,7 +370,11 @@ async function removeAccountFromEnv(label: string, selectedUrl?: string): Promis
   return removedItem.url;
 }
 
-export function startUndeploy(params: { label: string; profile: string; url?: string }): void {
+export function startUndeploy(params: {
+  label: string;
+  profile: string;
+  url?: string;
+}): void {
   assertSafeModalArg(params.profile, "Profile name");
 
   if (activeChildProcess) {
@@ -341,7 +393,7 @@ export function startUndeploy(params: { label: string; profile: string; url?: st
   const stopProcess = spawn(
     "modal",
     ["app", "stop", "voxcpm2-nanovllm-tts-api"],
-    { env, shell: true }
+    { env, shell: true },
   );
 
   activeChildProcess = stopProcess;
@@ -394,7 +446,6 @@ export function startUndeploy(params: { label: string; profile: string; url?: st
   });
 }
 
-
 export function startDeploy(params: {
   label: string;
   profile: string;
@@ -431,21 +482,27 @@ export function startDeploy(params: {
   // Run token set
   const tokenProcess = spawn(
     "modal",
-    ["token", "set", "--token-id", params.tokenId, "--token-secret", params.tokenSecret, "--profile", params.profile],
-    { env, shell: true }
+    [
+      "token",
+      "set",
+      "--token-id",
+      params.tokenId,
+      "--token-secret",
+      params.tokenSecret,
+      "--profile",
+      params.profile,
+    ],
+    { env, shell: true },
   );
 
   activeChildProcess = tokenProcess;
 
-  let tokenOutput = "";
   tokenProcess.stdout.on("data", (data) => {
-    tokenOutput += data.toString("utf-8");
     currentDeployStatus.progress += data.toString("utf-8");
     persistStatusDebounced();
   });
 
   tokenProcess.stderr.on("data", (data) => {
-    tokenOutput += data.toString("utf-8");
     currentDeployStatus.progress += data.toString("utf-8");
     persistStatusDebounced();
   });
@@ -469,7 +526,8 @@ export function startDeploy(params: {
       apiKey = await readApiKeyFromConfiguredSources();
     } catch (err: unknown) {
       currentDeployStatus.status = "failed";
-      currentDeployStatus.error = err instanceof Error ? err.message : "VOXCPM_API_KEY is missing.";
+      currentDeployStatus.error =
+        err instanceof Error ? err.message : "VOXCPM_API_KEY is missing.";
       currentDeployStatus.progress += `\n❌ ERROR: ${currentDeployStatus.error}\n`;
       activeChildProcess = null;
       persistStatusImmediate();
@@ -478,8 +536,14 @@ export function startDeploy(params: {
 
     const secretProcess = spawn(
       "modal",
-      ["secret", "create", "--force", "voxcpm-api-key", `VOXCPM_API_KEY=${apiKey}`],
-      { env, shell: true }
+      [
+        "secret",
+        "create",
+        "--force",
+        "voxcpm-api-key",
+        `VOXCPM_API_KEY=${apiKey}`,
+      ],
+      { env, shell: true },
     );
 
     activeChildProcess = secretProcess;
@@ -508,11 +572,11 @@ export function startDeploy(params: {
       currentDeployStatus.progress += `\n[3/3] Secret created successfully! Deploying TTS API to Modal workspace (this can take 3-5 minutes)...\n`;
       persistStatusImmediate();
 
-      const deployProcess = spawn(
-        "modal",
-        ["deploy", modelFileToDeploy],
-        { cwd: getModalSrcDir(), env, shell: true }
-      );
+      const deployProcess = spawn("modal", ["deploy", modelFileToDeploy], {
+        cwd: getModalSrcDir(),
+        env,
+        shell: true,
+      });
 
       activeChildProcess = deployProcess;
 
@@ -521,7 +585,9 @@ export function startDeploy(params: {
         currentDeployStatus.progress += text;
 
         // Parse deployment URL
-        const urlMatch = text.match(/https:\/\/[a-zA-Z0-9-]+--voxcpm2-nanovllm-tts-api-api\.modal\.run/);
+        const urlMatch = text.match(
+          /https:\/\/[a-zA-Z0-9-]+--voxcpm2-nanovllm-tts-api-api\.modal\.run/,
+        );
         if (urlMatch) {
           currentDeployStatus.deployedUrl = urlMatch[0];
         }
@@ -544,7 +610,9 @@ export function startDeploy(params: {
 
         // Successfully deployed! Save config and add to .env
         try {
-          const finalUrl = currentDeployStatus.deployedUrl || `https://${params.profile}--voxcpm2-nanovllm-tts-api-api.modal.run`;
+          const finalUrl =
+            currentDeployStatus.deployedUrl ||
+            `https://${params.profile}--voxcpm2-nanovllm-tts-api-api.modal.run`;
           const finalSpeechUrl = `${finalUrl.replace(/\/$/, "")}/v1/audio/speech`;
 
           // 1. Add to .env pool list

@@ -86,6 +86,7 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
                     placeholder="user@domain.com"
                     required
                     type="email"
+                    autoComplete="email"
                     value={email}
                     onChange={(event) => {
                       setEmail(event.target.value);
@@ -97,13 +98,13 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
                 </div>
 
                 {error && (
-                  <div className="border-4 border-[#1a1a1a] bg-[#ffdad6] p-3 text-sm font-bold text-[#93000a]">
+                  <div role="alert" className="border-4 border-[#1a1a1a] bg-[#ffdad6] p-3 text-sm font-bold text-[#93000a]">
                     {error}
                   </div>
                 )}
 
                 {success && (
-                  <div className="border-4 border-[#1a1a1a] bg-[#d8f8e7] p-3 text-sm font-bold text-[#075e3b]">
+                  <div role="status" className="border-4 border-[#1a1a1a] bg-[#d8f8e7] p-3 text-sm font-bold text-[#075e3b]">
                     If an account exists for this email, the recovery link is on its way. Check spam or junk mail too.
                   </div>
                 )}
@@ -116,21 +117,22 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
                   }`}
                   type="submit"
                   disabled={submitting || success}
+                  aria-busy={submitting}
                 >
                   {submitting ? (
                     <>
                       <span>SENDING LINK...</span>
-                      <span className="material-symbols-outlined animate-spin">sync</span>
+                      <span className="material-symbols-outlined animate-spin" aria-hidden="true">sync</span>
                     </>
                   ) : success ? (
                     <>
                       <span>LINK SENT</span>
-                      <span className="material-symbols-outlined">check</span>
+                      <span className="material-symbols-outlined" aria-hidden="true">check</span>
                     </>
                   ) : (
                     <>
                       <span>SEND RECOVERY LINK</span>
-                      <span className="material-symbols-outlined group-hover:translate-x-1 transition-transform">
+                      <span className="material-symbols-outlined group-hover:translate-x-1 transition-transform" aria-hidden="true">
                         arrow_forward
                       </span>
                     </>
@@ -143,7 +145,7 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
                   className="inline-flex items-center gap-2 font-headline font-bold uppercase text-sm text-[#1a1a1a] hover:text-[#0055ff] transition-colors"
                   href="/app/signin"
                 >
-                  <span className="material-symbols-outlined text-base">arrow_back</span>
+                  <span className="material-symbols-outlined text-base" aria-hidden="true">arrow_back</span>
                   Back to Sign In
                 </Link>
               </div>

@@ -1,7 +1,10 @@
 import "server-only";
 
 import { getApiAccessStatus } from "@/lib/api-access";
-import { calculateCreditsForSeconds, STANDARD_CLONE_CREDITS_PER_SECOND } from "@/lib/credit-rates";
+import {
+  calculateCreditsForSeconds,
+  STANDARD_CLONE_CREDITS_PER_SECOND,
+} from "@/lib/credit-rates";
 import {
   addTokenTransaction,
   consumeUserTokens,
@@ -15,7 +18,11 @@ import {
 import { buildAudioObjectKey, putAudioObject } from "@/lib/audio-storage";
 import { invalidateDashboardCountCache } from "@/lib/dashboard-count-cache";
 import { prepareTextForSpeech } from "@/lib/speech-text-sanitizer";
-import { type CloneSample, synthesizeWithUpstream, TtsProviderError } from "@/lib/tts-provider";
+import {
+  type CloneSample,
+  synthesizeWithUpstream,
+  TtsProviderError,
+} from "@/lib/tts-provider";
 import type { GenerationMode, GenerationSource } from "@/lib/types";
 import { MAX_TEXT_CHARS } from "@/lib/usage-policy";
 import {
@@ -28,7 +35,12 @@ export class GenerationServiceError extends Error {
   code: string;
   remainingTokens?: number;
 
-  constructor(message: string, status: number, code: string, remainingTokens?: number) {
+  constructor(
+    message: string,
+    status: number,
+    code: string,
+    remainingTokens?: number,
+  ) {
     super(message);
     this.status = status;
     this.code = code;
@@ -40,7 +52,10 @@ export function countChars(input: string): number {
   return Array.from(input).length;
 }
 
-export function estimateDurationSeconds(charCount: number, mode: GenerationMode): number {
+export function estimateDurationSeconds(
+  charCount: number,
+  mode: GenerationMode,
+): number {
   if (charCount <= 0) return 1;
   const charsPerSecond = mode === "clone" ? 13 : 20;
   return Math.max(1, Math.ceil(charCount / charsPerSecond));
@@ -82,7 +97,10 @@ function calculateCreditsForOutputSeconds(
   return calculateCreditsForSeconds(outputSeconds, mode, cloneCreditsPerSecond);
 }
 
-function maxReasonableOutputSeconds(estimatedSeconds: number, mode: GenerationMode): number {
+function maxReasonableOutputSeconds(
+  estimatedSeconds: number,
+  mode: GenerationMode,
+): number {
   const multiplier = mode === "clone" ? 4 : 3;
   return Math.max(30, estimatedSeconds * multiplier);
 }
@@ -92,6 +110,7 @@ export async function resolveGenerationCloneCreditRate(
   mode: GenerationMode,
   source: GenerationSource,
 ): Promise<number> {
+  void source;
   if (mode !== "clone") {
     return STANDARD_CLONE_CREDITS_PER_SECOND;
   }
@@ -132,14 +151,27 @@ export async function runGenerationForUser(params: {
 
   const isPreset =
     params.mode === "tts" ||
-    ["male", "female", "sokha", "piseth", "maly", "dara", "natural khmer speech"].includes(voice.toLowerCase().trim());
+    [
+      "male",
+      "female",
+      "sokha",
+      "piseth",
+      "maly",
+      "dara",
+      "natural khmer speech",
+    ].includes(voice.toLowerCase().trim());
   const isDefaultInstruction = voice === DEFAULT_CLONE_VOICE_INSTRUCTION;
-  const isCustomVoice = !isPreset && !isDefaultInstruction && voice.length > 0 && !cloneSample;
+  const isCustomVoice =
+    !isPreset && !isDefaultInstruction && voice.length > 0 && !cloneSample;
 
   if (isCustomVoice) {
     const userVoice = await findUserVoiceById(params.userId, voice);
     if (!userVoice) {
-      throw new GenerationServiceError("Voice not found in library.", 404, "VOICE_NOT_FOUND");
+      throw new GenerationServiceError(
+        "Voice not found in library.",
+        404,
+        "VOICE_NOT_FOUND",
+      );
     }
     const buffer = Buffer.from(userVoice.audioBase64, "base64");
     cloneSample = {
@@ -170,23 +202,47 @@ export async function runGenerationForUser(params: {
   const user = await findUserById(params.userId);
 
   if (!user) {
-    throw new GenerationServiceError("Account not found.", 403, "ACCOUNT_NOT_FOUND");
+    throw new GenerationServiceError(
+      "Account not found.",
+      403,
+      "ACCOUNT_NOT_FOUND",
+    );
   }
   if (user.suspendedAt) {
     const remainingTokens = await getUserTokenBalance(params.userId);
-    throw new GenerationServiceError("Account is suspended.", 403, "ACCOUNT_SUSPENDED", remainingTokens);
+    throw new GenerationServiceError(
+      "Account is suspended.",
+      403,
+      "ACCOUNT_SUSPENDED",
+      remainingTokens,
+    );
   }
 
   if (!text) {
-    throw new GenerationServiceError("Text input is required.", 400, "TEXT_REQUIRED");
+    throw new GenerationServiceError(
+      "Text input is required.",
+      400,
+      "TEXT_REQUIRED",
+    );
   }
   if (effectiveMode === "clone" && !cloneSample) {
-    throw new GenerationServiceError("Clone mode requires a voice sample.", 400, "CLONE_SAMPLE_REQUIRED");
+    throw new GenerationServiceError(
+      "Clone mode requires a voice sample.",
+      400,
+      "CLONE_SAMPLE_REQUIRED",
+    );
   }
 
   const cloneCreditsPerSecond =
-    params.cloneCreditsPerSecond ?? await resolveGenerationCloneCreditRate(params.userId, effectiveMode, params.source);
-  const usage = calculateGenerationUsage(text, effectiveMode, { cloneCreditsPerSecond });
+    params.cloneCreditsPerSecond ??
+    (await resolveGenerationCloneCreditRate(
+      params.userId,
+      effectiveMode,
+      params.source,
+    ));
+  const usage = calculateGenerationUsage(text, effectiveMode, {
+    cloneCreditsPerSecond,
+  });
   const charCount = usage.charCount;
   if (charCount > MAX_TEXT_CHARS) {
     throw new GenerationServiceError(
@@ -222,7 +278,11 @@ export async function runGenerationForUser(params: {
       errorMessage: "Insufficient tokens",
       segmentOfJobId: params.segmentOfJobId ?? null,
     });
-    await invalidateDashboardCountCache(params.userId, ["api", "billing", "history"]);
+    await invalidateDashboardCountCache(params.userId, [
+      "api",
+      "billing",
+      "history",
+    ]);
     throw new GenerationServiceError(
       "Insufficient tokens for this request.",
       402,
@@ -266,8 +326,14 @@ export async function runGenerationForUser(params: {
       denoiseReference: params.denoiseReference === true,
     });
     const latencyMs = Date.now() - startedAtMs;
-    const outputSeconds = Math.max(1, Math.ceil(synthesized.outputSeconds ?? usage.estimatedSeconds));
-    const maxOutputSeconds = maxReasonableOutputSeconds(usage.estimatedSeconds, effectiveMode);
+    const outputSeconds = Math.max(
+      1,
+      Math.ceil(synthesized.outputSeconds ?? usage.estimatedSeconds),
+    );
+    const maxOutputSeconds = maxReasonableOutputSeconds(
+      usage.estimatedSeconds,
+      effectiveMode,
+    );
     if (outputSeconds > maxOutputSeconds) {
       throw new GenerationServiceError(
         `Generated audio was too long (${outputSeconds}s) for this text. Try a cleaner voice sample or shorter text.`,
@@ -275,7 +341,11 @@ export async function runGenerationForUser(params: {
         "OUTPUT_DURATION_TOO_LONG",
       );
     }
-    const creditsCharged = calculateCreditsForOutputSeconds(outputSeconds, effectiveMode, cloneCreditsPerSecond);
+    const creditsCharged = calculateCreditsForOutputSeconds(
+      outputSeconds,
+      effectiveMode,
+      cloneCreditsPerSecond,
+    );
     const audioBase64 = Buffer.from(synthesized.audioBytes).toString("base64");
     const storedAudio = await putAudioObject({
       key: buildAudioObjectKey({
@@ -328,13 +398,21 @@ export async function runGenerationForUser(params: {
       contentType: synthesized.contentType,
     });
     if (!generation) {
-      throw new GenerationServiceError("Generation record could not be finalized.", 500, "GENERATION_RECORD_MISSING");
+      throw new GenerationServiceError(
+        "Generation record could not be finalized.",
+        500,
+        "GENERATION_RECORD_MISSING",
+      );
     }
 
     if (params.apiKeyId) {
       await touchApiKeyLastUsed(params.apiKeyId);
     }
-    await invalidateDashboardCountCache(params.userId, ["api", "billing", "history"]);
+    await invalidateDashboardCountCache(params.userId, [
+      "api",
+      "billing",
+      "history",
+    ]);
 
     // Now that all DB writes succeeded, apply the deferred partial refund.
     let remainingTokens = await getUserTokenBalance(params.userId);
@@ -429,15 +507,29 @@ export async function runGenerationForUser(params: {
     if (params.apiKeyId) {
       await touchApiKeyLastUsed(params.apiKeyId);
     }
-    await invalidateDashboardCountCache(params.userId, ["api", "billing", "history"]);
+    await invalidateDashboardCountCache(params.userId, [
+      "api",
+      "billing",
+      "history",
+    ]);
 
     const remainingTokens = await getUserTokenBalance(params.userId);
     if (error instanceof TtsProviderError) {
-      throw new GenerationServiceError(error.message, error.status, "UPSTREAM_ERROR", remainingTokens);
+      throw new GenerationServiceError(
+        error.message,
+        error.status,
+        "UPSTREAM_ERROR",
+        remainingTokens,
+      );
     }
     if (error instanceof GenerationServiceError) {
       throw error;
     }
-    throw new GenerationServiceError("Generation failed.", 502, "GENERATION_FAILED", remainingTokens);
+    throw new GenerationServiceError(
+      "Generation failed.",
+      502,
+      "GENERATION_FAILED",
+      remainingTokens,
+    );
   }
 }

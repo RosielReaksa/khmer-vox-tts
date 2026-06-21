@@ -17,6 +17,7 @@ const outputDir = join(repoRoot, "test-output");
 
 const baseUrl = (process.env.BASE_URL || "http://localhost:3000").replace(/\/$/, "");
 const apiKey = readFileSync(join(outputDir, "seed-key.txt"), "utf8").trim();
+const voice = (process.env.VOICE || "male").trim().toLowerCase() === "female" ? "female" : "male";
 
 // ~10 seconds of male Khmer voice (same text as the provider test).
 const text =
@@ -27,7 +28,7 @@ const text =
 console.log("=== Website API e2e call ===");
 console.log(`endpoint: POST ${baseUrl}/api/v1/audio/speech`);
 console.log(`key:      ${apiKey.slice(0, 16)}... (Bearer)`);
-console.log(`voice:    male`);
+console.log(`voice:    ${voice}`);
 console.log(`chars:    ${Array.from(text).length}`);
 console.log("");
 
@@ -38,7 +39,7 @@ const response = await fetch(`${baseUrl}/api/v1/audio/speech`, {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
   },
-  body: JSON.stringify({ input: text, voice: "male", model: "voxcpm2" }),
+  body: JSON.stringify({ input: text, voice, model: "voxcpm2" }),
 });
 const elapsedMs = Date.now() - started;
 const contentType = response.headers.get("content-type") ?? "(none)";
@@ -52,7 +53,7 @@ if (!response.ok || !contentType.includes("audio")) {
 
 const bytes = Buffer.from(await response.arrayBuffer());
 mkdirSync(outputDir, { recursive: true });
-const outputPath = join(outputDir, "male-voice-10s-api.wav");
+const outputPath = join(outputDir, `${voice}-voice-10s-api.wav`);
 writeFileSync(outputPath, bytes);
 
 // Validate WAV header sizes (the bug fixed earlier: placeholder 0xFFFFFFFF).

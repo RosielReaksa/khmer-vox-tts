@@ -30,21 +30,23 @@ type AnalyticsData = {
 
 export function AnalyticsClient() {
   const [period, setPeriod] = useState<"24h" | "7d" | "30d">("24h");
-  const { data, error, loading, refresh } = useCachedJson<AnalyticsData>(
+  const { data, error, loading } = useCachedJson<AnalyticsData>(
     `dashboard:analytics:${period}`,
     `/api/dashboard/analytics?period=${period}`,
-    { pollMs: 30000 }
+    { pollMs: 30000 },
   );
 
   const activeKeysCount = data?.activeKeysCount ?? 0;
   const totalRequests = data?.totalRequests ?? 0;
   const successRatePercent = data?.successRatePercent ?? 100;
   const avgLatencyMs = data?.avgLatencyMs ?? 0;
-  const tokensUsed = data?.tokensUsed ?? 0;
   const totalCredits = data?.totalCredits ?? 0;
   const remainingCredits = data?.remainingCredits ?? 0;
   const usedPercent = data?.usedPercent ?? 0;
-  const requestsOverTime = data?.requestsOverTime ?? [];
+  const requestsOverTime = useMemo(
+    () => data?.requestsOverTime ?? [],
+    [data?.requestsOverTime],
+  );
   const latencyDistribution = data?.latencyDistribution ?? [];
   const recentActivity = data?.recentActivity ?? [];
   const isDemo = data?.isDemo ?? false;
@@ -54,7 +56,7 @@ export function AnalyticsClient() {
     if (requestsOverTime.length < 2) return "";
     const values = requestsOverTime.map((d) => d.value);
     const maxVal = Math.max(...values, 1);
-    
+
     // Convert points to SVG coordinates (viewbox 0 0 100 100)
     const points = requestsOverTime.map((d, i) => {
       const x = (i / (requestsOverTime.length - 1)) * 100;
@@ -62,7 +64,11 @@ export function AnalyticsClient() {
       return { x, y };
     });
 
-    const linePath = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+    const linePath = points
+      .map(
+        (p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`,
+      )
+      .join(" ");
     const areaPath = `${linePath} L100,100 L0,100 Z`;
 
     return { linePath, areaPath };
@@ -87,8 +93,11 @@ export function AnalyticsClient() {
       ]);
       const csvContent =
         "data:text/csv;charset=utf-8," +
-        [headers.join(","), ...rows.map((e) => e.map(val => `"${val}"`).join(","))].join("\n");
-      
+        [
+          headers.join(","),
+          ...rows.map((e) => e.map((val) => `"${val}"`).join(",")),
+        ].join("\n");
+
       const encodedUri = encodeURI(csvContent);
       const link = document.createElement("a");
       link.setAttribute("href", encodedUri);
@@ -115,7 +124,8 @@ export function AnalyticsClient() {
             Analytics
           </h1>
           <p className="font-body text-base font-semibold text-primary/70 max-w-xl">
-            Monitor your API performance, token consumption, and system health in real-time.
+            Monitor your API performance, token consumption, and system health
+            in real-time.
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -138,7 +148,9 @@ export function AnalyticsClient() {
             disabled={recentActivity.length === 0}
             className="bg-primary text-[#faf7f2] font-sans font-bold uppercase text-xs py-2.5 px-5 border-4 border-primary hover:bg-[#0055ff] hover:text-white transition-colors shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] active:translate-y-1 active:translate-x-1 active:shadow-none flex items-center gap-2 cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
           >
-            <span className="material-symbols-outlined text-sm font-bold">download</span>
+            <span className="material-symbols-outlined text-sm font-bold">
+              download
+            </span>
             Export
           </button>
         </div>
@@ -169,7 +181,10 @@ export function AnalyticsClient() {
 
               <div className="flex-1 flex items-center justify-center relative z-10 my-6">
                 <div className="relative w-44 h-44 flex items-center justify-center">
-                  <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                  <svg
+                    className="w-full h-full transform -rotate-90"
+                    viewBox="0 0 100 100"
+                  >
                     <circle
                       className="opacity-20"
                       cx="50"
@@ -193,7 +208,9 @@ export function AnalyticsClient() {
                     />
                   </svg>
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="font-sans font-black text-4xl">{usedPercent}%</span>
+                    <span className="font-sans font-black text-4xl">
+                      {usedPercent}%
+                    </span>
                     <span className="font-sans font-black text-[10px] uppercase mt-0.5">
                       Utilized
                     </span>
@@ -204,7 +221,8 @@ export function AnalyticsClient() {
               <div className="relative z-10 mt-auto pt-4 border-t-2 border-primary group-hover:border-[#faf7f2]/20">
                 <div className="flex justify-between items-center font-sans font-black text-sm uppercase">
                   <span>
-                    {remainingCredits.toLocaleString()} / {totalCredits.toLocaleString()}
+                    {remainingCredits.toLocaleString()} /{" "}
+                    {totalCredits.toLocaleString()}
                   </span>
                   <span className="text-xs">Tokens Left</span>
                 </div>
@@ -219,14 +237,19 @@ export function AnalyticsClient() {
                   <span className="font-sans font-black uppercase text-xs tracking-wider text-primary/70">
                     Total Requests
                   </span>
-                  <span className="material-symbols-outlined text-2xl text-[#0055ff]">swap_vert</span>
+                  <span className="material-symbols-outlined text-2xl text-[#0055ff]">
+                    swap_vert
+                  </span>
                 </div>
                 <div>
                   <div className="font-sans font-black text-4xl sm:text-5xl tracking-tighter leading-none">
                     {totalRequests.toLocaleString()}
                   </div>
                   <div className="font-body font-bold text-xs mt-2 flex items-center gap-1 text-primary/80">
-                    <span className="material-symbols-outlined text-sm font-bold text-[#0055ff]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                    <span
+                      className="material-symbols-outlined text-sm font-bold text-[#0055ff]"
+                      style={{ fontVariationSettings: "'FILL' 1" }}
+                    >
                       arrow_upward
                     </span>
                     API usage in selected period
@@ -240,24 +263,34 @@ export function AnalyticsClient() {
                   <span className="font-sans font-black uppercase text-xs tracking-wider text-primary/70">
                     Avg Latency
                   </span>
-                  <span className="material-symbols-outlined text-2xl text-[#e63b2e]">speed</span>
+                  <span className="material-symbols-outlined text-2xl text-[#e63b2e]">
+                    speed
+                  </span>
                 </div>
                 <div>
                   <div className="font-sans font-black text-4xl sm:text-5xl tracking-tighter leading-none">
                     {avgLatencyMs}
                     <span className="text-xl ml-1 font-bold lowercase">ms</span>
                   </div>
-                  <div className={`font-body font-bold text-xs mt-2 flex items-center gap-1 ${avgLatencyMs > 500 ? "text-[#e63b2e]" : "text-primary/80"}`}>
+                  <div
+                    className={`font-body font-bold text-xs mt-2 flex items-center gap-1 ${avgLatencyMs > 500 ? "text-[#e63b2e]" : "text-primary/80"}`}
+                  >
                     {avgLatencyMs > 500 ? (
                       <>
-                        <span className="material-symbols-outlined text-sm font-bold text-[#e63b2e]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                        <span
+                          className="material-symbols-outlined text-sm font-bold text-[#e63b2e]"
+                          style={{ fontVariationSettings: "'FILL' 1" }}
+                        >
                           warning
                         </span>
                         Elevated server response time
                       </>
                     ) : (
                       <>
-                        <span className="material-symbols-outlined text-sm font-bold text-emerald-600" style={{ fontVariationSettings: "'FILL' 1" }}>
+                        <span
+                          className="material-symbols-outlined text-sm font-bold text-emerald-600"
+                          style={{ fontVariationSettings: "'FILL' 1" }}
+                        >
                           check_circle
                         </span>
                         Optimal audio synthesis latency
@@ -273,7 +306,10 @@ export function AnalyticsClient() {
                   <span className="font-sans font-black uppercase text-xs tracking-wider text-primary/70">
                     Success Rate
                   </span>
-                  <span className="material-symbols-outlined text-2xl text-[#10b981]" style={{ fontVariationSettings: "'FILL' 1" }}>
+                  <span
+                    className="material-symbols-outlined text-2xl text-[#10b981]"
+                    style={{ fontVariationSettings: "'FILL' 1" }}
+                  >
                     check_circle
                   </span>
                 </div>
@@ -282,7 +318,9 @@ export function AnalyticsClient() {
                     {successRatePercent}%
                   </div>
                   <div className="font-body font-bold text-xs mt-2 text-primary/80">
-                    {successRatePercent === 100 ? "All requests processed successfully" : "Stable service delivery rate"}
+                    {successRatePercent === 100
+                      ? "All requests processed successfully"
+                      : "Stable service delivery rate"}
                   </div>
                 </div>
               </div>
@@ -293,7 +331,9 @@ export function AnalyticsClient() {
                   <span className="font-sans font-black uppercase text-xs tracking-wider text-primary/70">
                     Active Keys
                   </span>
-                  <span className="material-symbols-outlined text-2xl text-[#0055ff]">vpn_key</span>
+                  <span className="material-symbols-outlined text-2xl text-[#0055ff]">
+                    vpn_key
+                  </span>
                 </div>
                 <div>
                   <div className="font-sans font-black text-4xl sm:text-5xl tracking-tighter leading-none">
@@ -320,15 +360,23 @@ export function AnalyticsClient() {
                     Interval Activity
                   </span>
                 </div>
-                
+
                 {requestsOverTime.length > 0 ? (
                   <div className="relative pt-2">
                     <div className="h-56 w-full bg-[#eee9e0] border-4 border-primary relative overflow-hidden flex items-end px-1">
                       <div className="w-full h-full relative">
-                        <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 100">
+                        <svg
+                          className="absolute inset-0 w-full h-full"
+                          preserveAspectRatio="none"
+                          viewBox="0 0 100 100"
+                        >
                           {lineChartPath && (
                             <>
-                              <path d={lineChartPath.areaPath} fill="#ffcc00" opacity="0.35" />
+                              <path
+                                d={lineChartPath.areaPath}
+                                fill="#ffcc00"
+                                opacity="0.35"
+                              />
                               <path
                                 d={lineChartPath.linePath}
                                 fill="none"
@@ -371,7 +419,10 @@ export function AnalyticsClient() {
                 <div className="h-56 w-full border-b-4 border-l-4 border-primary relative flex items-end justify-around pb-0 pt-4 px-2 bg-[#faf7f2]/30">
                   {latencyDistribution.length > 0 ? (
                     (() => {
-                      const maxCount = Math.max(...latencyDistribution.map((d) => d.count), 1);
+                      const maxCount = Math.max(
+                        ...latencyDistribution.map((d) => d.count),
+                        1,
+                      );
                       return latencyDistribution.map((item, idx) => {
                         const heightPercent = `${Math.max(10, Math.round((item.count / maxCount) * 85))}%`;
                         return (
@@ -409,28 +460,38 @@ export function AnalyticsClient() {
             <h2 className="font-sans font-black text-2xl uppercase tracking-tight mb-4 border-b-4 border-primary pb-1 inline-block text-primary">
               Recent Activity
             </h2>
-            
+
             <div className="bg-white border-4 border-primary shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] overflow-x-auto">
               <table className="w-full text-left border-collapse min-w-[700px]">
                 <thead>
                   <tr className="border-b-4 border-primary bg-[#eee9e0] font-sans font-black uppercase text-xs text-primary">
-                    <th className="p-4 border-r-4 border-primary w-[30%]">Endpoint</th>
-                    <th className="p-4 border-r-4 border-primary w-[15%]">Method</th>
-                    <th className="p-4 border-r-4 border-primary w-[25%]">Status</th>
-                    <th className="p-4 border-r-4 border-primary w-[15%]">Latency</th>
+                    <th className="p-4 border-r-4 border-primary w-[30%]">
+                      Endpoint
+                    </th>
+                    <th className="p-4 border-r-4 border-primary w-[15%]">
+                      Method
+                    </th>
+                    <th className="p-4 border-r-4 border-primary w-[25%]">
+                      Status
+                    </th>
+                    <th className="p-4 border-r-4 border-primary w-[15%]">
+                      Latency
+                    </th>
                     <th className="p-4 w-[15%]">Time</th>
                   </tr>
                 </thead>
                 <tbody className="font-body font-bold text-sm text-primary">
                   {recentActivity.length > 0 ? (
                     recentActivity.map((log) => {
-                      let statusClass = "bg-emerald-100 text-emerald-800 border-emerald-600";
+                      let statusClass =
+                        "bg-emerald-100 text-emerald-800 border-emerald-600";
                       let statusIcon = (
                         <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 border border-primary shrink-0" />
                       );
 
                       if (log.statusCode === 429) {
-                        statusClass = "bg-[#ffcc00]/20 text-[#e6b800] border-[#ffcc00]";
+                        statusClass =
+                          "bg-[#ffcc00]/20 text-[#e6b800] border-[#ffcc00]";
                         statusIcon = (
                           <span className="material-symbols-outlined text-[12px] font-bold text-[#e6b800] shrink-0">
                             warning
@@ -459,7 +520,9 @@ export function AnalyticsClient() {
                             </span>
                           </td>
                           <td className="p-4 border-r-4 border-primary">
-                            <span className={`inline-flex items-center gap-1.5 font-sans font-black text-[10px] uppercase px-2 py-0.5 border-2 ${statusClass}`}>
+                            <span
+                              className={`inline-flex items-center gap-1.5 font-sans font-black text-[10px] uppercase px-2 py-0.5 border-2 ${statusClass}`}
+                            >
                               {statusIcon}
                               {log.status}
                             </span>
@@ -475,7 +538,10 @@ export function AnalyticsClient() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={5} className="p-8 text-center font-sans font-bold text-sm text-primary/50">
+                      <td
+                        colSpan={5}
+                        className="p-8 text-center font-sans font-bold text-sm text-primary/50"
+                      >
                         No recent API requests found
                       </td>
                     </tr>

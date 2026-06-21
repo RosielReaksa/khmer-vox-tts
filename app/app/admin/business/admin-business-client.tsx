@@ -17,9 +17,24 @@ type AdminBusinessClientProps = {
   updateSalesAction: (formData: FormData) => void;
 };
 
-const statusOptions: Array<BusinessApiRequestStatus | "all"> = ["all", "pending", "approved", "rejected"];
-const salesStageValues: BusinessSalesStage[] = ["new", "contacted", "qualified", "proposal", "won", "lost"];
-const salesStageOptions: Array<BusinessSalesStage | "all"> = ["all", ...salesStageValues];
+const statusOptions: Array<BusinessApiRequestStatus | "all"> = [
+  "all",
+  "pending",
+  "approved",
+  "rejected",
+];
+const salesStageValues: BusinessSalesStage[] = [
+  "new",
+  "contacted",
+  "qualified",
+  "proposal",
+  "won",
+  "lost",
+];
+const salesStageOptions: Array<BusinessSalesStage | "all"> = [
+  "all",
+  ...salesStageValues,
+];
 
 export function AdminBusinessClient({
   requests,
@@ -31,24 +46,28 @@ export function AdminBusinessClient({
   updateSalesAction,
 }: AdminBusinessClientProps) {
   const [viewMode, setViewMode] = useState<"board" | "list">("board");
-  const [selectedRequestForReview, setSelectedRequestForReview] = useState<BusinessApiRequestWithUser | null>(null);
+  const [selectedRequestForReview, setSelectedRequestForReview] =
+    useState<BusinessApiRequestWithUser | null>(null);
 
-  const pendingCount = requests.filter((r) => r.status === "pending").length;
-  const approvedCount = requests.filter((r) => r.status === "approved").length;
-  const rejectedCount = requests.filter((r) => r.status === "rejected").length;
-  const followUpDueCount = requests.filter((r) => isFollowUpDue(r.followUpAt)).length;
-  const activePipeline = requests.filter((r) =>
-    ["new", "contacted", "qualified", "proposal"].includes(r.salesStage),
-  ).length;
-
-  const expectedTokens = requests.reduce((sum, r) => sum + r.expectedMonthlyTokens, 0);
-  const peakConcurrency = requests.reduce((max, r) => Math.max(max, r.expectedPeakConcurrency), 0);
+  const expectedTokens = requests.reduce(
+    (sum, r) => sum + r.expectedMonthlyTokens,
+    0,
+  );
+  const peakConcurrency = requests.reduce(
+    (max, r) => Math.max(max, r.expectedPeakConcurrency),
+    0,
+  );
 
   // Compute stats per sales stage for the funnel overview
-  const stageTotals = salesStageValues.reduce((acc, stage) => {
-    acc[stage] = requests.filter((r) => r.salesStage === stage).reduce((sum, r) => sum + r.expectedMonthlyTokens, 0);
-    return acc;
-  }, {} as Record<BusinessSalesStage, number>);
+  const stageTotals = salesStageValues.reduce(
+    (acc, stage) => {
+      acc[stage] = requests
+        .filter((r) => r.salesStage === stage)
+        .reduce((sum, r) => sum + r.expectedMonthlyTokens, 0);
+      return acc;
+    },
+    {} as Record<BusinessSalesStage, number>,
+  );
   const maxTotal = Math.max(...Object.values(stageTotals), 1);
 
   return (
@@ -108,11 +127,18 @@ export function AdminBusinessClient({
               className="flex flex-col rounded-none border border-primary bg-white p-3 justify-between shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]"
             >
               <div>
-                <span className="text-[10px] font-bold text-primary/75">{stage}</span>
-                <div className="text-base font-black mt-1 leading-none truncate" title={total.toLocaleString()}>
+                <span className="text-[10px] font-bold text-primary/75">
+                  {stage}
+                </span>
+                <div
+                  className="text-base font-black mt-1 leading-none truncate"
+                  title={total.toLocaleString()}
+                >
                   {total.toLocaleString()}
                 </div>
-                <span className="text-[10px] font-body text-primary/60 normal-case">{count} leads</span>
+                <span className="text-[10px] font-body text-primary/60 normal-case">
+                  {count} leads
+                </span>
               </div>
               <div className="w-full bg-[#faf7f2] border border-primary h-2 mt-3 rounded-none overflow-hidden">
                 <div
@@ -192,7 +218,9 @@ export function AdminBusinessClient({
       {viewMode === "board" ? (
         <section className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4 items-start">
           {salesStageValues.map((stage) => {
-            const stageRequests = requests.filter((r) => r.salesStage === stage);
+            const stageRequests = requests.filter(
+              (r) => r.salesStage === stage,
+            );
             return (
               <div
                 key={stage}
@@ -206,7 +234,10 @@ export function AdminBusinessClient({
                   <div className="mt-1.5 flex items-center justify-between text-[10px] font-body text-primary/70">
                     <span>{stageRequests.length} Leads</span>
                     <span className="font-bold">
-                      {stageRequests.reduce((sum, r) => sum + r.expectedMonthlyTokens, 0).toLocaleString()} tokens
+                      {stageRequests
+                        .reduce((sum, r) => sum + r.expectedMonthlyTokens, 0)
+                        .toLocaleString()}{" "}
+                      tokens
                     </span>
                   </div>
                 </div>
@@ -281,31 +312,46 @@ function KanbanCard({
   const followUpDue = isFollowUpDue(request.followUpAt);
   const currentStageIndex = salesStageValues.indexOf(request.salesStage);
 
-  const prevStage = currentStageIndex > 0 ? salesStageValues[currentStageIndex - 1] : null;
-  const nextStage = currentStageIndex < salesStageValues.length - 1 ? salesStageValues[currentStageIndex + 1] : null;
+  const prevStage =
+    currentStageIndex > 0 ? salesStageValues[currentStageIndex - 1] : null;
+  const nextStage =
+    currentStageIndex < salesStageValues.length - 1
+      ? salesStageValues[currentStageIndex + 1]
+      : null;
 
   return (
     <article className="rounded-none border-2 border-primary bg-white p-3 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:shadow-none hover:translate-x-0.5 hover:translate-y-0.5 transition-all text-primary">
       <div className="flex items-start justify-between gap-2">
-        <h4 className="font-headline font-black text-sm uppercase truncate w-full" title={request.companyName}>
+        <h4
+          className="font-headline font-black text-sm uppercase truncate w-full"
+          title={request.companyName}
+        >
           {request.companyName}
         </h4>
         <BusinessStatusPill status={request.status} />
       </div>
-      <p className="text-[10px] font-body text-primary/60 truncate mt-1">{request.appName}</p>
+      <p className="text-[10px] font-body text-primary/60 truncate mt-1">
+        {request.appName}
+      </p>
 
       <div className="mt-3 flex items-center justify-between text-[11px] font-headline font-bold uppercase text-primary/80 border-t border-primary/10 pt-2">
         <span>Demand:</span>
-        <span className="font-black text-primary">{request.expectedMonthlyTokens.toLocaleString()}</span>
+        <span className="font-black text-primary">
+          {request.expectedMonthlyTokens.toLocaleString()}
+        </span>
       </div>
 
       {request.followUpAt && (
         <div
           className={`mt-2 rounded-none border px-2 py-1 text-[10px] font-headline font-bold uppercase tracking-wider ${
-            followUpDue ? "bg-red-50 border-red-700 text-red-700" : "bg-amber-50 border-amber-800 text-amber-800"
+            followUpDue
+              ? "bg-red-50 border-red-700 text-red-700"
+              : "bg-amber-50 border-amber-800 text-amber-800"
           }`}
         >
-          {followUpDue ? "Follow-up Overdue" : `Follow-up: ${formatDateTime(request.followUpAt).slice(5, 16)}`}
+          {followUpDue
+            ? "Follow-up Overdue"
+            : `Follow-up: ${formatDateTime(request.followUpAt).slice(5, 16)}`}
         </div>
       )}
 
@@ -364,11 +410,18 @@ function BusinessRequestListRow({
   updateSalesAction: (formData: FormData) => void;
   reviewAction: (formData: FormData) => void;
 }) {
-  const defaultDaily = request.appliedDailyTokenLimit ?? Math.max(1, Math.ceil(request.expectedMonthlyTokens / 30));
-  const defaultMonthly = request.appliedMonthlyTokenLimit ?? request.expectedMonthlyTokens;
-  const defaultRequests = request.appliedMaxConcurrentRequests ?? request.expectedPeakConcurrency;
-  const defaultJobs = request.appliedMaxConcurrentJobs ?? request.expectedPeakConcurrency;
-  const defaultQueued = request.appliedMaxQueuedJobs ?? Math.max(10, request.expectedPeakConcurrency * 10);
+  const defaultDaily =
+    request.appliedDailyTokenLimit ??
+    Math.max(1, Math.ceil(request.expectedMonthlyTokens / 30));
+  const defaultMonthly =
+    request.appliedMonthlyTokenLimit ?? request.expectedMonthlyTokens;
+  const defaultRequests =
+    request.appliedMaxConcurrentRequests ?? request.expectedPeakConcurrency;
+  const defaultJobs =
+    request.appliedMaxConcurrentJobs ?? request.expectedPeakConcurrency;
+  const defaultQueued =
+    request.appliedMaxQueuedJobs ??
+    Math.max(10, request.expectedPeakConcurrency * 10);
   const defaultCloneCreditRate = request.appliedCloneCreditRate ?? 1.5;
   const followUpDue = isFollowUpDue(request.followUpAt);
 
@@ -385,7 +438,10 @@ function BusinessRequestListRow({
                 {request.appName}
               </p>
               <p className="mt-2 text-xs font-body text-[#6a7282]">
-                <Link href={`/app/admin/customers/${request.userId}`} className="font-bold text-[#116d3c] hover:underline">
+                <Link
+                  href={`/app/admin/customers/${request.userId}`}
+                  className="font-bold text-[#116d3c] hover:underline"
+                >
                   {request.userEmail}
                 </Link>
                 {" / "}
@@ -400,43 +456,76 @@ function BusinessRequestListRow({
           </div>
 
           <div className="mt-4 grid gap-3 md:grid-cols-5">
-            <SmallStat label="Monthly tokens" value={request.expectedMonthlyTokens.toLocaleString()} />
-            <SmallStat label="Peak concurrency" value={request.expectedPeakConcurrency.toLocaleString()} />
+            <SmallStat
+              label="Monthly tokens"
+              value={request.expectedMonthlyTokens.toLocaleString()}
+            />
+            <SmallStat
+              label="Peak concurrency"
+              value={request.expectedPeakConcurrency.toLocaleString()}
+            />
             <SmallStat
               label="Clone rate"
-              value={request.appliedCloneCreditRate ? formatCloneCreditRate(request.appliedCloneCreditRate) : "Not approved"}
+              value={
+                request.appliedCloneCreditRate
+                  ? formatCloneCreditRate(request.appliedCloneCreditRate)
+                  : "Not approved"
+              }
             />
-            <SmallStat label="Submitted" value={formatDateTime(request.createdAt)} />
+            <SmallStat
+              label="Submitted"
+              value={formatDateTime(request.createdAt)}
+            />
             <SmallStat
               label={followUpDue ? "Follow-up due" : "Follow-up"}
-              value={request.followUpAt ? formatDateTime(request.followUpAt) : "-"}
+              value={
+                request.followUpAt ? formatDateTime(request.followUpAt) : "-"
+              }
             />
           </div>
 
           <div className="mt-4 grid gap-3">
             <div>
-              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">Use case</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm leading-6 font-body text-[#3e4656]">{request.useCase}</p>
+              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">
+                Use case
+              </p>
+              <p className="mt-1 whitespace-pre-wrap text-sm leading-6 font-body text-[#3e4656]">
+                {request.useCase}
+              </p>
             </div>
             <div>
-              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">Webhook</p>
-              <p className="mt-1 break-all font-mono text-xs text-[#3e4656]">{request.webhookUrl ?? "No webhook URL provided"}</p>
+              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">
+                Webhook
+              </p>
+              <p className="mt-1 break-all font-mono text-xs text-[#3e4656]">
+                {request.webhookUrl ?? "No webhook URL provided"}
+              </p>
             </div>
             {request.adminNote ? (
               <div className="rounded-none border border-primary bg-white p-3">
-                <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">Admin note</p>
-                <p className="mt-1 text-sm leading-6 font-body text-[#3e4656]">{request.adminNote}</p>
+                <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">
+                  Admin note
+                </p>
+                <p className="mt-1 text-sm leading-6 font-body text-[#3e4656]">
+                  {request.adminNote}
+                </p>
               </div>
             ) : null}
             <div className="rounded-none border border-primary bg-white p-3">
-              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">Business CRM</p>
+              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">
+                Business CRM
+              </p>
               <div className="mt-2 grid gap-2 text-xs leading-6 font-body text-[#3e4656] md:grid-cols-2">
                 <p>
-                  <span className="font-bold text-[#202533]">Last contacted:</span>{" "}
+                  <span className="font-bold text-[#202533]">
+                    Last contacted:
+                  </span>{" "}
                   {formatDateTime(request.lastContactedAt)}
                 </p>
                 <p>
-                  <span className="font-bold text-[#202533]">Next follow-up:</span>{" "}
+                  <span className="font-bold text-[#202533]">
+                    Next follow-up:
+                  </span>{" "}
                   {formatDateTime(request.followUpAt)}
                 </p>
               </div>
@@ -480,7 +569,11 @@ function BusinessRequestListRow({
               </label>
             </div>
             <label className="flex items-center gap-2 text-sm font-headline font-bold uppercase text-primary cursor-pointer">
-              <input name="markContacted" type="checkbox" className="h-4 w-4 border-2 border-primary rounded-none" />
+              <input
+                name="markContacted"
+                type="checkbox"
+                className="h-4 w-4 border-2 border-primary rounded-none"
+              />
               Mark contacted now
             </label>
             <label className="grid gap-1 text-xs font-headline font-bold uppercase text-primary">
@@ -506,11 +599,31 @@ function BusinessRequestListRow({
             <input type="hidden" name="requestId" value={request.id} />
             <input type="hidden" name="status" value="approved" />
             <div className="grid gap-3 md:grid-cols-2">
-              <LimitInput name="dailyTokenLimit" label="Daily tokens" defaultValue={defaultDaily} />
-              <LimitInput name="monthlyTokenLimit" label="Monthly tokens" defaultValue={defaultMonthly} />
-              <LimitInput name="maxConcurrentRequests" label="Concurrent requests" defaultValue={defaultRequests} />
-              <LimitInput name="maxConcurrentJobs" label="Running jobs" defaultValue={defaultJobs} />
-              <LimitInput name="maxQueuedJobs" label="Queued jobs" defaultValue={defaultQueued} />
+              <LimitInput
+                name="dailyTokenLimit"
+                label="Daily tokens"
+                defaultValue={defaultDaily}
+              />
+              <LimitInput
+                name="monthlyTokenLimit"
+                label="Monthly tokens"
+                defaultValue={defaultMonthly}
+              />
+              <LimitInput
+                name="maxConcurrentRequests"
+                label="Concurrent requests"
+                defaultValue={defaultRequests}
+              />
+              <LimitInput
+                name="maxConcurrentJobs"
+                label="Running jobs"
+                defaultValue={defaultJobs}
+              />
+              <LimitInput
+                name="maxQueuedJobs"
+                label="Queued jobs"
+                defaultValue={defaultQueued}
+              />
               <label className="grid gap-1 text-xs font-headline font-bold uppercase text-primary">
                 Clone tokens/sec
                 <select
@@ -525,7 +638,12 @@ function BusinessRequestListRow({
               </label>
             </div>
             <label className="flex items-center gap-2 text-sm font-headline font-bold uppercase text-primary cursor-pointer">
-              <input name="applyToActiveKeys" type="checkbox" defaultChecked className="h-4 w-4 border-2 border-primary rounded-none" />
+              <input
+                name="applyToActiveKeys"
+                type="checkbox"
+                defaultChecked
+                className="h-4 w-4 border-2 border-primary rounded-none"
+              />
               Apply to all active keys
             </label>
             <label className="grid gap-1 text-xs font-headline font-bold uppercase text-primary">
@@ -546,7 +664,10 @@ function BusinessRequestListRow({
             </button>
           </form>
 
-          <form action={reviewAction} className="grid gap-2 border-t-2 border-primary pt-3">
+          <form
+            action={reviewAction}
+            className="grid gap-2 border-t-2 border-primary pt-3"
+          >
             <input type="hidden" name="requestId" value={request.id} />
             <input type="hidden" name="status" value="rejected" />
             <label className="grid gap-1 text-xs font-headline font-bold uppercase text-primary">
@@ -584,13 +705,19 @@ function ReviewModal({
   reviewAction: (formData: FormData) => void;
   returnTo: string;
 }) {
-  const defaultDaily = request.appliedDailyTokenLimit ?? Math.max(1, Math.ceil(request.expectedMonthlyTokens / 30));
-  const defaultMonthly = request.appliedMonthlyTokenLimit ?? request.expectedMonthlyTokens;
-  const defaultRequests = request.appliedMaxConcurrentRequests ?? request.expectedPeakConcurrency;
-  const defaultJobs = request.appliedMaxConcurrentJobs ?? request.expectedPeakConcurrency;
-  const defaultQueued = request.appliedMaxQueuedJobs ?? Math.max(10, request.expectedPeakConcurrency * 10);
+  const defaultDaily =
+    request.appliedDailyTokenLimit ??
+    Math.max(1, Math.ceil(request.expectedMonthlyTokens / 30));
+  const defaultMonthly =
+    request.appliedMonthlyTokenLimit ?? request.expectedMonthlyTokens;
+  const defaultRequests =
+    request.appliedMaxConcurrentRequests ?? request.expectedPeakConcurrency;
+  const defaultJobs =
+    request.appliedMaxConcurrentJobs ?? request.expectedPeakConcurrency;
+  const defaultQueued =
+    request.appliedMaxQueuedJobs ??
+    Math.max(10, request.expectedPeakConcurrency * 10);
   const defaultCloneCreditRate = request.appliedCloneCreditRate ?? 1.5;
-  const followUpDue = isFollowUpDue(request.followUpAt);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs overflow-y-auto">
@@ -604,55 +731,98 @@ function ReviewModal({
         </button>
 
         <div className="border-b-2 border-primary pb-3 mb-5 pr-20">
-          <span className="text-xs font-headline font-bold uppercase tracking-[0.12em] text-[#8a92a2]">Review Request</span>
-          <h2 className="text-3xl font-headline font-black uppercase text-primary leading-tight mt-1">{request.companyName}</h2>
-          <p className="text-sm font-headline font-bold uppercase text-[#202533] mt-1">{request.appName}</p>
+          <span className="text-xs font-headline font-bold uppercase tracking-[0.12em] text-[#8a92a2]">
+            Review Request
+          </span>
+          <h2 className="text-3xl font-headline font-black uppercase text-primary leading-tight mt-1">
+            {request.companyName}
+          </h2>
+          <p className="text-sm font-headline font-bold uppercase text-[#202533] mt-1">
+            {request.appName}
+          </p>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Info Details */}
           <div className="flex flex-col gap-4 max-h-[60vh] overflow-y-auto pr-3">
             <div>
-              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">Applicant</p>
+              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">
+                Applicant
+              </p>
               <div className="mt-1 text-sm leading-6 font-body text-primary">
                 <p>
                   <span className="font-bold">Account email:</span>{" "}
-                  <Link href={`/app/admin/customers/${request.userId}`} className="font-bold text-[#116d3c] hover:underline">
+                  <Link
+                    href={`/app/admin/customers/${request.userId}`}
+                    className="font-bold text-[#116d3c] hover:underline"
+                  >
                     {request.userEmail}
                   </Link>
                 </p>
-                <p><span className="font-bold">Contact email:</span> {request.contactEmail}</p>
-                <p><span className="font-bold">Telegram:</span> {request.contactTelegram || "None"}</p>
+                <p>
+                  <span className="font-bold">Contact email:</span>{" "}
+                  {request.contactEmail}
+                </p>
+                <p>
+                  <span className="font-bold">Telegram:</span>{" "}
+                  {request.contactTelegram || "None"}
+                </p>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <SmallStat label="Monthly tokens" value={request.expectedMonthlyTokens.toLocaleString()} />
-              <SmallStat label="Peak concurrency" value={request.expectedPeakConcurrency.toLocaleString()} />
-              <SmallStat label="Submitted" value={formatDateTime(request.createdAt)} />
-              <SmallStat label="Last Contact" value={formatDateTime(request.lastContactedAt)} />
+              <SmallStat
+                label="Monthly tokens"
+                value={request.expectedMonthlyTokens.toLocaleString()}
+              />
+              <SmallStat
+                label="Peak concurrency"
+                value={request.expectedPeakConcurrency.toLocaleString()}
+              />
+              <SmallStat
+                label="Submitted"
+                value={formatDateTime(request.createdAt)}
+              />
+              <SmallStat
+                label="Last Contact"
+                value={formatDateTime(request.lastContactedAt)}
+              />
             </div>
 
             <div>
-              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">Use case</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm leading-6 font-body text-[#3e4656] bg-[#fdfcfa] border border-primary/20 p-2.5">{request.useCase}</p>
+              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">
+                Use case
+              </p>
+              <p className="mt-1 whitespace-pre-wrap text-sm leading-6 font-body text-[#3e4656] bg-[#fdfcfa] border border-primary/20 p-2.5">
+                {request.useCase}
+              </p>
             </div>
 
             <div>
-              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">Webhook URL</p>
-              <p className="mt-1 break-all font-mono text-xs text-[#3e4656] bg-[#fdfcfa] border border-primary/20 p-2.5">{request.webhookUrl ?? "None provided"}</p>
+              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-[#8a92a2]">
+                Webhook URL
+              </p>
+              <p className="mt-1 break-all font-mono text-xs text-[#3e4656] bg-[#fdfcfa] border border-primary/20 p-2.5">
+                {request.webhookUrl ?? "None provided"}
+              </p>
             </div>
 
             <div className="rounded-none border border-primary bg-[#fafbfe] p-3">
-              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-primary/70">Current Sales Note</p>
-              <p className="mt-1 whitespace-pre-wrap text-xs font-body leading-relaxed text-[#3e4656]">{request.salesNote ?? "No sales notes recorded yet."}</p>
+              <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-primary/70">
+                Current Sales Note
+              </p>
+              <p className="mt-1 whitespace-pre-wrap text-xs font-body leading-relaxed text-[#3e4656]">
+                {request.salesNote ?? "No sales notes recorded yet."}
+              </p>
             </div>
           </div>
 
           {/* Configuration Actions Form */}
           <div className="grid gap-4 max-h-[60vh] overflow-y-auto pr-3">
             <div className="grid gap-4 rounded-none border-2 border-primary bg-[#faf7f2] p-4 shadow-[3px_3px_0px_0px_rgba(26,26,26,1)]">
-              <div className="font-headline font-bold text-xs uppercase text-primary border-b border-primary/10 pb-1">Update CRM Status</div>
+              <div className="font-headline font-bold text-xs uppercase text-primary border-b border-primary/10 pb-1">
+                Update CRM Status
+              </div>
               <form action={updateSalesAction} className="grid gap-3">
                 <input type="hidden" name="requestId" value={request.id} />
                 <input type="hidden" name="returnTo" value={returnTo} />
@@ -676,13 +846,19 @@ function ReviewModal({
                     <input
                       name="followUpAt"
                       type="datetime-local"
-                      defaultValue={formatDateTimeLocalValue(request.followUpAt)}
+                      defaultValue={formatDateTimeLocalValue(
+                        request.followUpAt,
+                      )}
                       className="rounded-none border-2 border-primary bg-white px-2 py-1 outline-none font-body text-xs focus:bg-surface-container-low"
                     />
                   </label>
                 </div>
                 <label className="flex items-center gap-2 text-xs font-headline font-bold uppercase text-primary cursor-pointer">
-                  <input name="markContacted" type="checkbox" className="h-4 w-4 border-2 border-primary rounded-none" />
+                  <input
+                    name="markContacted"
+                    type="checkbox"
+                    className="h-4 w-4 border-2 border-primary rounded-none"
+                  />
                   Mark contacted now
                 </label>
                 <label className="grid gap-1 text-[10px] font-headline font-bold uppercase text-primary">
@@ -706,16 +882,38 @@ function ReviewModal({
             </div>
 
             <div className="grid gap-4 rounded-none border-2 border-primary bg-white p-4 shadow-[3px_3px_0px_0px_rgba(26,26,26,1)]">
-              <div className="font-headline font-bold text-xs uppercase text-[#116d3c] border-b border-[#116d3c]/10 pb-1">Approve Limits</div>
+              <div className="font-headline font-bold text-xs uppercase text-[#116d3c] border-b border-[#116d3c]/10 pb-1">
+                Approve Limits
+              </div>
               <form action={reviewAction} className="grid gap-3">
                 <input type="hidden" name="requestId" value={request.id} />
                 <input type="hidden" name="status" value="approved" />
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <LimitInput name="dailyTokenLimit" label="Daily tokens" defaultValue={defaultDaily} />
-                  <LimitInput name="monthlyTokenLimit" label="Monthly tokens" defaultValue={defaultMonthly} />
-                  <LimitInput name="maxConcurrentRequests" label="Concurrent requests" defaultValue={defaultRequests} />
-                  <LimitInput name="maxConcurrentJobs" label="Running jobs" defaultValue={defaultJobs} />
-                  <LimitInput name="maxQueuedJobs" label="Queued jobs" defaultValue={defaultQueued} />
+                  <LimitInput
+                    name="dailyTokenLimit"
+                    label="Daily tokens"
+                    defaultValue={defaultDaily}
+                  />
+                  <LimitInput
+                    name="monthlyTokenLimit"
+                    label="Monthly tokens"
+                    defaultValue={defaultMonthly}
+                  />
+                  <LimitInput
+                    name="maxConcurrentRequests"
+                    label="Concurrent requests"
+                    defaultValue={defaultRequests}
+                  />
+                  <LimitInput
+                    name="maxConcurrentJobs"
+                    label="Running jobs"
+                    defaultValue={defaultJobs}
+                  />
+                  <LimitInput
+                    name="maxQueuedJobs"
+                    label="Queued jobs"
+                    defaultValue={defaultQueued}
+                  />
                   <label className="grid gap-1 text-[10px] font-headline font-bold uppercase text-primary">
                     Clone tokens/sec
                     <select
@@ -730,7 +928,12 @@ function ReviewModal({
                   </label>
                 </div>
                 <label className="flex items-center gap-2 text-xs font-headline font-bold uppercase text-primary cursor-pointer">
-                  <input name="applyToActiveKeys" type="checkbox" defaultChecked className="h-4 w-4 border-2 border-primary rounded-none" />
+                  <input
+                    name="applyToActiveKeys"
+                    type="checkbox"
+                    defaultChecked
+                    className="h-4 w-4 border-2 border-primary rounded-none"
+                  />
                   Apply to active API keys
                 </label>
                 <label className="grid gap-1 text-[10px] font-headline font-bold uppercase text-primary">
@@ -807,7 +1010,9 @@ function LimitInput({
 function SmallStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-none border border-primary bg-white p-2 text-primary">
-      <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-on-surface-variant leading-none">{label}</p>
+      <p className="text-[10px] font-headline font-bold uppercase tracking-[0.08em] text-on-surface-variant leading-none">
+        {label}
+      </p>
       <p className="mt-1 text-xs font-body font-bold text-primary">{value}</p>
     </div>
   );
@@ -821,7 +1026,9 @@ function BusinessStatusPill({ status }: { status: BusinessApiRequestStatus }) {
         ? "bg-red-50 text-red-700 border-red-700"
         : "bg-amber-50 text-amber-800 border-amber-800";
   return (
-    <span className={`rounded-none border px-1.5 py-0.5 text-[10px] font-headline font-bold uppercase tracking-wider ${className}`}>
+    <span
+      className={`rounded-none border px-1.5 py-0.5 text-[10px] font-headline font-bold uppercase tracking-wider ${className}`}
+    >
       {status}
     </span>
   );
@@ -841,7 +1048,9 @@ function BusinessSalesStagePill({ stage }: { stage: BusinessSalesStage }) {
               ? "bg-amber-50 text-amber-800 border-amber-800"
               : "bg-slate-50 text-slate-700 border-slate-700";
   return (
-    <span className={`rounded-none border px-1.5 py-0.5 text-[10px] font-headline font-bold uppercase tracking-wider ${className}`}>
+    <span
+      className={`rounded-none border px-1.5 py-0.5 text-[10px] font-headline font-bold uppercase tracking-wider ${className}`}
+    >
       {stage}
     </span>
   );

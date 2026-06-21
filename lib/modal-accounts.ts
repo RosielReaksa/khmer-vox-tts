@@ -257,7 +257,7 @@ export async function getModalAccounts(forceRefresh = false): Promise<ModalAccou
                 }
               }
               spend = parseFloat(sum.toFixed(4));
-            } catch (parseErr) {
+            } catch {
               billingError = "Failed to parse billing JSON report.";
             }
           }
