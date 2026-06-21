@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import LineAudioPlayer from "@/app/components/line-audio-player";
 
 type ConsoleMode = "speech" | "clone" | "batch_clone";
 
@@ -357,9 +358,7 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
 
         {audioUrl ? (
           <div className="border-2 border-outline bg-[#faf7f2] p-4 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-            <audio controls src={audioUrl} className="w-full">
-              <track kind="captions" />
-            </audio>
+            <LineAudioPlayer src={audioUrl} />
           </div>
         ) : null}
 
