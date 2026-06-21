@@ -1,6 +1,6 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-06-20
+Last updated: 2026-06-21
 
 ## Purpose
 
@@ -527,6 +527,326 @@ and clone MP3 output, and one queued batch job.
 - Generated public audio must remain WAV (PCM-16, mono, 24 kHz).
 - Consistent business voices must require reference audio.
 - Run lint, typecheck, and build before deployment.
+
+## Website v2 build (2026-06-20 overnight, autonomous session)
+
+User asked me to autonomously build a "v2" upgrade in a new folder while they
+slept, prioritizing the speed problem we'd been diagnosing (Modal cold starts).
+
+- Created `website-v2/` as a clean copy of the project root via robocopy.
+  EXCLUDED secrets/state: `.env.backup`, the Google OAuth client_secret JSON,
+  `data/`, all `*.log`, `node_modules`, `.next`, `.git`, all `test-output*`,
+  scratch/artifacts dirs. v2 needs its own `.env` before it can run.
+- Isolated v2 from the parent build: parent `tsconfig.json` now excludes
+  `website-v2`; parent `.gitignore` ignores `website-v2/node_modules`, `.next`,
+  `*.tsbuildinfo`, `test-output`. Parent (live) site is untouched and still
+  builds. (These two parent-file edits are the ONLY changes outside website-v2.)
+- `npm install` in website-v2: 433 packages, exit 0.
+- SHIPPED in v2: on-demand Modal GPU pre-warming (the verifiable high-value win).
+  New `lib/prewarm.ts` (server-only, fire-and-forget, globally throttled, pings
+  upstream `/health` with bearer token to trigger GPU spin-up), new auth-gated
+  `app/api/prewarm/route.ts`, and a client hook in
+  `app/app/dashboard/speech-workspace.tsx` firing on workspace mount + textarea
+  focus (covers BOTH tts and clone modes - same component). New optional env:
+  `TTS_PREWARM_THROTTLE_MS` (60s), `TTS_PREWARM_TIMEOUT_MS` (4s).
+- Verified v2: tsc 0 errors, eslint 0 errors (7 pre-existing warnings only),
+  full `next build` exit 0. NO live generations run -> zero GPU/token spend.
+- DELIBERATELY DEFERRED (documented in `website-v2/V2_UPGRADES.md`): per-chunk
+  quality retry and ffmpeg pass-merge. Both are audio-quality changes that
+  can't be validated without spending generation budget on A/B listening;
+  doing them blind risks worse output. Also documented prod-cost levers
+  (`min_containers=1`, higher batch concurrency, streaming response).
+- Nothing committed, pushed, or deployed. Full writeup in
+  `website-v2/V2_UPGRADES.md`.
+
+## Website v2 — Session 2 full improvement pass (2026-06-20 → 06-21)
+
+Follow-up to the v2 build. User asked to keep improving v2 with remaining
+budget. Mapped the codebase with parallel explore agents, then shipped 5 batches
+of safe, build-verified improvements (ALL inside `website-v2/`, parent untouched).
+Every batch verified with tsc + lint; ends with clean `next build` (exit 0) and
+`eslint .` = 0 errors (67 pre-existing warnings left alone). NO GPU/token spend.
+
+- Batch 1 (SEO): new `lib/site-url.ts` (centralized canonical URL), `app/sitemap.ts`,
+  `app/robots.ts`; upgraded root `app/layout.tsx` metadata (title template,
+  keywords, canonical, robots/googleBot, OG locale); added per-page `metadata`
+  to the 9 public pages that lacked it (docs, support, privacy, terms, payments,
+  payment-guide, refund-policy, review). Build confirms `/sitemap.xml` + `/robots.txt`.
+- Batch 2 (a11y + dead code): saved-voice-library modal got role="dialog",
+  aria-modal, aria-labelledby, backdrop+Escape close, close-button aria-label;
+  voice <select> aria-label; new-voice input htmlFor/id associations; result panel
+  wrapped in aria-live="polite". Removed dead audioSpeed/audioPitch/audioVolume
+  state + GenerationErrorResponse type in speech-workspace.tsx.
+- Batch 3 (UX, real bug fix): progress text was overloaded onto the `error`
+  field (would render under red "Needs attention"). Added dedicated `progress`
+  field to WorkspaceSnapshot, routed all in-flight polling status through it,
+  reserved `error` for real failures. Touched every commit site in pollQueuedJob
+  + onGenerate + AudioResultPanel/GeneratingState.
+- Batch 4 (error handling): stopped leaking raw error.message on 500 paths of
+  batch/jobs/[id]/merged + merged/audio + v2/audio/jobs/[id]/audio routes; added
+  console.error logging to admin/modal route catch blocks (kept admin-facing
+  diagnostic text since admin-gated).
+- Batch 5 (code quality): removed dead imports/params in app/docs/page.tsx;
+  fixed 3 pre-existing lint ERRORS (any usages) in copied
+  scripts/test-website-batch-clone-call.mts by typing responses + null-guard.
+
+Still deferred (need GPU budget / cost decision): per-chunk retry, ffmpeg merge,
+min_containers, batch concurrency, streaming. Full writeup appended to
+`website-v2/V2_UPGRADES.md` (Session 2 section). Nothing committed/pushed/deployed.
+
+## Website v2 — Session 3 (2026-06-21): boundaries, PWA, structured data
+
+Continued v2 improvements (same discipline: useful, build-verified, low-risk;
+NO GPU/token spend). Checked existing files first — error.tsx/not-found.tsx/
+loading.tsx already existed, did NOT duplicate. Ends clean: tsc 0 errors,
+`eslint .` 0 errors (warnings 67→65), `next build` exit 0.
+
+- Rebranded off-brand `app/not-found.tsx` + `app/error.tsx` from soft-rounded
+  design to the site's neo-brutalist system (thick #1a1a1a borders, hard
+  shadows, #ffcc00 yellow, uppercase headline fonts) using globals.css tokens.
+- New `app/global-error.tsx`: top-level boundary (own html/body, inline styles
+  since globals.css may not load), brand palette, logs digest.
+- New `app/manifest.ts`: PWA manifest (theme_color #ffcc00, /icon.svg as SVG
+  any-size). Added `viewport` export in layout.tsx (themeColor + colorScheme).
+  Build confirms /manifest.webmanifest.
+- New `app/components/structured-data.tsx`: JSON-LD @graph (Organization +
+  WebSite + SoftwareApplication w/ Offer) on home page via SITE_URL. Static,
+  safe dangerouslySetInnerHTML.
+- Conservative dead-code cleanup: removed BATCH_ITEM_DELAY_MS (batch-service.ts)
+  + unused parseErr catch binding (modal-accounts.ts). LEFT `source` param of
+  exported resolveGenerationCloneCreditRate (live billing call site) and
+  tokenOutput in modal-deployer.ts (sensitive deploy infra) — risk > reward.
+
+Session 3 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
+pushed/deployed.
+
+## Website v2 — Session 9 (2026-06-21): skip-to-content link (WCAG 2.4.1)
+
+Continued v2 (same discipline; NO GPU/token spend). tsc 0 errors, `eslint .`
+0 errors (64 warnings), `next build` exit 0.
+
+- Added keyboard skip-to-content link. Verified safety first: NavigationShell
+  wraps children for every route (single reliable target), and its global click
+  handler ignores `#`-prefixed hrefs (line ~215) so the skip anchor isn't
+  hijacked by SPA nav.
+- navigation-shell.tsx: `<a href="#main-content" class="skip-to-content-link">`
+  as first focusable element; wrapper got `id="main-content" tabIndex={-1}`.
+- globals.css: `.skip-to-content-link` off-screen until focus, slides in,
+  neo-brutalist styled (yellow/hard border+shadow). `#main-content:focus`
+  outline removed to avoid stray ring.
+
+Session 9 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
+pushed/deployed.
+
+## Website v2 — Session 8 (2026-06-21): finish public-page a11y pass
+
+Continued v2 (same discipline; NO GPU/token spend). tsc 0 errors, `eslint .`
+0 errors (64 warnings), `next build` exit 0.
+
+- Completed public decorative-icon pass: aria-hidden on 6 icons across
+  page.tsx (arrow_forward, description), docs/page.tsx (arrow_forward, info),
+  payments + payment-guide (qr_code_2). All paired with visible text → truly
+  decorative. Read each context before marking.
+- Now every PUBLIC surface (home, header, docs, payments, payment-guide + 4
+  auth forms) has clean icon semantics. Authenticated dashboard still
+  intentionally deferred (behind login, per-icon judgment needed).
+
+Session 8 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
+pushed/deployed.
+
+## Website v2 — Session 7 (2026-06-21): a11y in high-traffic public components
+
+Continued v2 (same discipline; NO GPU/token spend). tsc 0 errors, `eslint .`
+0 errors (64 warnings, down from 65), `next build` exit 0.
+
+- Scoped decorative-icon gap (material-symbols-outlined in 23 files); targeted
+  only highest-traffic PUBLIC components, not a blind sweep.
+- Real defect: icon-only play/pause button in home-playground.tsx had no
+  accessible name. Added state-aware aria-label + aria-hidden on glyph. Marked
+  other decorative icons in that file aria-hidden. Removed unused `e` catch
+  binding (65 → 64 warnings).
+- public-header.tsx: added aria-label to icon-only open/close menu buttons +
+  aria-hidden on glyphs.
+- Deliberately did NOT sweep authenticated dashboard components (billing,
+  checkout, analytics) — behind login, lower traffic, need per-icon judgment.
+
+Session 7 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
+pushed/deployed.
+
+## Website v2 — Session 6 (2026-06-21): security headers review
+
+Continued v2 (same discipline; NO GPU/token spend). tsc 0 errors, `eslint .`
+0 errors (65 pre-existing warnings), `next build` exit 0.
+
+- Checked `next.config.ts` first. Security headers already comprehensive:
+  full CSP, nosniff, X-Frame-Options DENY, Referrer-Policy, Permissions-Policy,
+  HSTS preload. Made NO redundant additions.
+- One best-practice fix: changed `X-XSS-Protection` from `1; mode=block` to `0`
+  per current OWASP guidance (legacy XSS auditor removed from modern browsers,
+  can cause XS-Leaks in old ones; CSP is the real defense). Documented inline.
+
+Session 6 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
+pushed/deployed.
+
+## Website v2 — Session 5 (2026-06-21): sitemap audit + payment-proof noindex
+
+Continued v2 (same discipline: useful, build-verified, low-risk; NO GPU/token
+spend). Ends clean: tsc 0 errors, `eslint .` 0 errors (65 pre-existing warnings),
+`next build` exit 0.
+
+- Audited `app/sitemap.ts` against the actual filesystem (globbed every
+  page.tsx). Already lists all 10 public marketing routes; `app/app/*` +
+  `/payment-proof` correctly excluded. Made NO change — no busywork.
+- Real finding: `/payment-proof` is disallowed in robots.txt (crawl), but that
+  doesn't prevent indexing if the signed-token URL leaks externally. Added
+  `export const metadata: Metadata = { robots: { index: false, follow: false } }`
+  to `app/payment-proof/page.tsx` as defense-in-depth (emits noindex,nofollow).
+
+Session 5 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
+pushed/deployed.
+
+## Website v2 — Session 4 (2026-06-21): auth a11y + SEO consistency
+
+Continued v2 improvements (same discipline: useful, build-verified, low-risk;
+NO GPU/token spend). Read all 4 auth forms first to find real gaps. Ends clean:
+tsc 0 errors, `eslint .` 0 errors (65 warnings, pre-existing), `next build` exit 0.
+
+- Accessibility pass on signin/signup/forgot-password/reset-password forms:
+  added `autoComplete` (email/current-password/new-password/name) where missing
+  so password managers work; `role="alert"` on all error containers + `role=
+  "status"` on success containers so screen readers announce them; `aria-busy`
+  on all submit buttons; `aria-hidden="true"` on all decorative Material Symbols
+  icons so they aren't read aloud as ligature text.
+- SEO: `app/business/page.tsx` was the only static route missing
+  `alternates.canonical`. Added `canonical: "/business"` + typed metadata as
+  `Metadata` to match the other 8 routes.
+
+Session 4 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
+pushed/deployed.
+
+## Website v2 MERGED into main (2026-06-21) — single source of truth
+
+The `website-v2/` sibling worktree (a robocopy snapshot of `4d68aed` plus all
+the uncommitted Session 1-12 improvements on top) has been merged back into the
+main tree and the v2 folder deleted. There is now ONE source of truth. The
+`website-v2/*` references in the v2 session notes above are historical; those
+files now live at the parent paths (e.g. `lib/prewarm.ts`, `app/sitemap.ts`).
+
+- Commit: `59657c7` "feat: merge v2 improvements into main (prewarm, SEO,
+  a11y, PWA, structured data, hardening)" — 67 files changed, +6657 / -4575.
+- What shipped in the merge (all previously v2-only, now in main):
+  - 8 NEW files: `lib/prewarm.ts`, `lib/site-url.ts`, `app/api/prewarm/route.ts`,
+    `app/sitemap.ts`, `app/robots.ts`, `app/manifest.ts`, `app/global-error.tsx`,
+    `app/components/structured-data.tsx`.
+  - ~59 MODIFIED files: speech-workspace (progress field + prewarm hook + modal
+    a11y + dead audio state removed), API error-sanitization on batch merged /
+    merged/audio / v2 audio routes + admin/modal logging, per-page metadata +
+    canonical on public pages, aria-hidden/aria-label a11y across public + auth
+    components, next.config.ts (X-XSS-Protection 0 per OWASP, turbopack.root),
+    lib/batch-service.ts (removed dead BATCH_ITEM_DELAY_MS), auth forms
+    autoComplete/role=alert/aria-busy, global-error/error/not-found neo-brutalist
+    restyle, skip-to-content link (WCAG 2.4.1) in navigation-shell.
+  - `V2_UPGRADES.md` moved to repo root (kept as project history).
+- Method: robocopy `/E` of v2's app/lib/scripts + root configs into parent;
+  v2's `.env` copied to parent as the working env (gitignored, not committed);
+  v2 folder deleted after verification (~732 MB reclaimed).
+- Pre-merge verification of v1's dead symbols (safe to delete, confirmed via
+  grep): `audioSpeed`/`audioPitch`/`audioVolume` state, `GenerationErrorResponse`
+  type, `BATCH_ITEM_DELAY_MS`, `CodeBlock` `dark` param — all declared but never
+  referenced in v1.
+- Post-merge verification: `npx tsc --noEmit` 0 errors; source-only
+  `npx eslint app lib scripts` 0 errors / 0 warnings; `npm run build` exit 0,
+  route manifest confirms new `/sitemap.xml`, `/robots.txt`,
+  `/manifest.webmanifest` all build.
+- Lint scope note (pre-existing, NOT merge-introduced): `npm run lint` (whole
+  repo) flags generated `.next` caches and `scratch/` throwaway scripts because
+  eslint.config.mjs `globalIgnores([".next/**"])` matches top-level `.next` only,
+  not nested. Source itself is clean. With v2 deleted, the only remaining whole-
+  repo lint noise is `scratch/` (gitignored).
+- NOT pushed, NOT deployed. The next prod tag will include all of this: WAV
+  switch + header fix (from `035b88e`/`4d68aed`) PLUS the v2 merge.
+- PREWARM IS ON BY DEFAULT but only takes effect once deployed AND a user opens
+  the dashboard. To keep it OFF in prod until validated, set
+  `TTS_PREWARM_ENABLED=false` on the deployment env at deploy time. No env change
+  is needed to keep current prod behavior — prod only changes when you deploy.
+- Personal disk-utility scripts (`scripts/scan-*.ps1`, `check-vhdx.ps1`,
+  `delete-vhdx.ps1`) were intentionally left untracked and are NOT in the commit.
+
+## v2 merge deployed to STAGING VPS 178.128.103.120 (2026-06-21)
+
+Deployed commit `59657c7` (the v2 merge) to the staging/fixer VPS as the first
+live test of the merged code.
+
+- Image: `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260621-v2merge-1`
+  (digest `sha256:e00f5ad1...`, pushed to GHCR).
+- Built locally via the standard multi-stage Dockerfile (standalone output,
+  `scripts/sanitize-standalone.mjs` ran — the `pg-*` alias copies confirm it).
+  `.dockerignore` correctly excluded `.env`/secrets/`data/store.json`.
+- Staging VPS runtime = k3s (single node, Ubuntu 24.04, containerd), NOT plain
+  docker. Cluster: 1 web replica + 1 worker + 1 postgres + a `fixer-http-proxy`
+  (nginx NodePort 30080) that fronts the web ClusterIP. The internal DNS
+  `web.khmer-vox.svc.cluster.local` did NOT resolve from the host curl test
+  (000); use `http://localhost:30080` on-box to reach the app.
+- Deploy method: built locally, `docker push` to GHCR, then
+  `kubectl -n khmer-vox set image deployment/khmer-vox-{web,worker}`.
+  `imagePullPolicy: Always` pulled the new tag from GHCR. Zero downtime — old
+  pod stayed Running/Terminating until the new one was Ready 1/1.
+- Previous staging image was `staging-20260619-mp3-direct-1` (June 19, MP3 era,
+  pre-WAV-switch, pre-v2-merge). That tag is the ROLLBACK tag.
+- Rollout: both deployments `successfully rolled out`. New pods
+  `khmer-vox-web-5b85d49b6b-kbk7b` and `khmer-vox-worker-c78665dff-6nr67`,
+  Running 1/1, image confirmed = `staging-20260621-v2merge-1`.
+- Verified on-box via `http://localhost:30080`:
+  - `/api/health` 200 → `{"status":"ok","store":"postgres","checks":{"server":{"status":"ok"}}}` (DB connectivity OK).
+  - `/sitemap.xml` 200, `/robots.txt` 200 (correct allow/disallow), `/manifest.webmanifest` 200 — all three NEW routes that did NOT exist on the previous staging image, confirming the v2 merge landed.
+  - `/` 200, `/docs` 200.
+- PREWARM status on staging: code is in the image and defaults to enabled, but
+  only fires when a user opens the dashboard. No env change was made, so it is
+  active. If it misbehaves, disable with
+  `kubectl -n khmer-vox set env deployment/khmer-vox-web TTS_PREWARM_ENABLED=false` (and same for worker) + rollout.
+- PROD (voxtts.online, 152.42.203.77) is UNCHANGED — still on
+  `prod-20260618-2`. This deploy was staging-only. Promoting to prod is a
+  separate decision with its own `prod-*` tag.
+- SSH credentials for the staging VPS are NOT stored in this file or anywhere
+  on disk; they were used transiently via `VPS_HOST`/`VPS_USER`/`VPS_PASS` env
+  passed to `scripts/vps-ssh.py`. (Note: the user provided the staging VPS
+  password in chat; rotate it if that's a concern.)
+
+## Batch voice-clone API e2e test (2026-06-20 evening)
+
+Tested the business-style batch clone API end-to-end (10 clones in one job, same
+reference voice) against the running dev server.
+
+- `scripts/test-website-batch-clone-call.mts`: POST /api/v1/audio/batch/clone
+  with reference_audio_base64 + 10 distinct Khmer lines + voice_consent, polls
+  /api/v1/audio/batch/jobs/{id}, then downloads the zip. Reference sample:
+  `D:\the api tts host\outputs_10_voices\duration_probe_15s.wav` (1635 KB).
+- JOB RESULT: status=completed, 10/10 items success, 0 failed, 60 credits
+  charged, ~30 output seconds total, elapsed ~567s. Note: items process roughly
+  serially via the inline dev worker (kickBatchWorker runs in-process unless
+  DISABLE_INLINE_JOB_WORKER=true), so 10 clones take ~9 min locally; this is a
+  local-dev artifact, prod uses the real job worker. Transient per-item failures
+  were auto-retried by the batch worker and all 10 eventually succeeded.
+- IMPORTANT FINDING (not a code bug): the first zip download returned HTTP 404
+  with an HTML body (the app shell), meaning Next never reached the download
+  route handler. ROOT CAUSE: the `.next` dev build state was corrupted because
+  earlier dev servers were force-killed (taskkill) mid-compile — same cause as
+  the corrupted `.next/dev/types/routes.d.ts` tsc errors. FIX/verify: stopped
+  dev, deleted `.next`, restarted fresh — the SAME job's download then returned
+  200 application/zip, 1,276,384 bytes, 10 files. All 10 WAVs valid RIFF/WAVE
+  mono 24 kHz 16-bit. LESSON: prefer a graceful dev-server stop, or `rm -rf
+  .next` after a force-kill, before trusting route 404s in dev.
+- Batch clone items store audio in DigitalOcean Spaces (audioObjectKey/
+  audioObjectUrl), NOT inline base64; the download route fetches via
+  resolveAudioBytes -> getAudioObjectBytes. SPACES_* env is present in
+  .env.backup so this worked locally.
+- Added helper `scripts/download-batch-zip.mts` (download-only by JOB_ID).
+  Note: PowerShell Invoke-WebRequest hung on the binary zip stream even though
+  the server returned 200 in ~24s; use Node/tsx fetch for binary downloads, not
+  Invoke-WebRequest.
+- All e2e scripts tsc-clean. Local-only (JSON store, no prod DB), test tokens
+  only. Saved: test-output/batch-clone-api.zip. These new scripts are
+  uncommitted.
 
 ## WAV Header Fix: delivered WAV had placeholder (0xFFFFFFFF) sizes
 
