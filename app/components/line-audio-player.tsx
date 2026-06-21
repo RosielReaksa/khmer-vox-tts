@@ -30,6 +30,10 @@ export default function LineAudioPlayer({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  // Mirror `scrubbing` in a ref so the pointermove handler always reads the
+  // current value without waiting for a re-render (avoids a stale-closure race
+  // where the first move after pointer-down was ignored).
+  const scrubbingRef = useRef(false);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -80,6 +84,7 @@ export default function LineAudioPlayer({
   const handlePointerDown = useCallback(
     (event: PointerEvent) => {
       event.preventDefault();
+      scrubbingRef.current = true;
       setScrubbing(true);
       event.currentTarget.setPointerCapture(event.pointerId);
       seekToClientX(event.clientX);
@@ -89,19 +94,22 @@ export default function LineAudioPlayer({
 
   const handlePointerMove = useCallback(
     (event: PointerEvent) => {
-      if (!scrubbing) return;
+      // Read from the ref, not state, so the first move after pointer-down is
+      // not dropped waiting for React to re-render with the new scrubbing flag.
+      if (!scrubbingRef.current) return;
       seekToClientX(event.clientX);
     },
-    [scrubbing, seekToClientX],
+    [seekToClientX],
   );
 
   const handlePointerUp = useCallback((event: PointerEvent) => {
-    if (!scrubbing) return;
+    if (!scrubbingRef.current) return;
+    scrubbingRef.current = false;
     setScrubbing(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-  }, [scrubbing]);
+  }, []);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
@@ -177,7 +185,8 @@ export default function LineAudioPlayer({
         </svg>
       </button>
 
-      {/* The thin scrub line */}
+      {/* The thin scrub line. Taller hit area (h-8) than the visible line (h-1)
+          so the user has a generous grab target for drag-to-seek. */}
       <div
         ref={trackRef}
         onPointerDown={handlePointerDown}
@@ -188,7 +197,7 @@ export default function LineAudioPlayer({
         aria-valuemin={0}
         aria-valuemax={Math.max(0, Math.floor(duration))}
         aria-valuenow={Math.floor(currentTime)}
-        className="group relative flex h-6 flex-1 cursor-pointer items-center touch-none select-none"
+        className="group relative flex h-8 flex-1 cursor-pointer items-center touch-none select-none"
       >
         {/* Track */}
         <div className="absolute left-0 right-0 h-1 rounded-full bg-[#1a1a1a]/15" />
@@ -199,7 +208,7 @@ export default function LineAudioPlayer({
         />
         {/* Draggable playhead dot */}
         <div
-          className={`absolute h-3.5 w-3.5 -translate-x-1/2 rounded-full border-2 border-[#1a1a1a] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.3)] transition-transform ${
+          className={`absolute h-4 w-4 -translate-x-1/2 rounded-full border-2 border-[#1a1a1a] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.3)] transition-transform ${
             scrubbing ? "scale-125" : "group-hover:scale-110"
           }`}
           style={{ left: `${Math.min(100, Math.max(0, progress * 100))}%` }}
