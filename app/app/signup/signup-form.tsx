@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { GoogleAuthButton, authErrorMessage } from "@/app/app/google-auth-button";
+import { useT } from "@/app/components/locale-provider";
 
 export function SignupForm({
   csrfToken = "",
@@ -16,10 +17,11 @@ export function SignupForm({
   errorCode?: string | null;
 }) {
   const router = useRouter();
+  const t = useT();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState(authErrorMessage(errorCode) ?? "");
+  const [error, setError] = useState(authErrorMessage(errorCode, t) ?? "");
   const [loading, setLoading] = useState(false);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -39,14 +41,14 @@ export function SignupForm({
       const data = (await response.json()) as { error?: string };
 
       if (!response.ok) {
-        setError(data.error ?? "Could not create account.");
+        setError(data.error ?? t("auth.signup.errorDefault"));
         return;
       }
 
       router.replace("/app/dashboard");
       router.refresh();
     } catch {
-      setError("Network error. Try again.");
+      setError(t("auth.signup.errorNetwork"));
     } finally {
       setLoading(false);
     }
@@ -69,17 +71,17 @@ export function SignupForm({
           >
             <span className="material-symbols-outlined font-bold text-[#1a1a1a]">graphic_eq</span>
             <span className="font-headline font-black uppercase text-[#1a1a1a] tracking-tighter">
-              KHMER VOX TTS
+              {t("auth.brand")}
             </span>
           </Link>
           <h1 className="font-headline font-black text-6xl lg:text-8xl text-white uppercase tracking-tighter leading-[0.9] drop-shadow-[4px_4px_0_rgba(230,59,46,1)]">
-            Join the Future of Khmer Speech Synthesis.
+            {t("auth.signup.tagline")}
           </h1>
         </div>
         
         <div className="relative z-10 mb-8 max-w-sm">
           <p className="text-white text-xl font-bold border-l-4 border-[#ffcc00] pl-4">
-            Unapologetic performance. Raw algorithmic power. Shape the voice of tomorrow.
+            {t("auth.signup.body")}
           </p>
         </div>
       </div>
@@ -93,7 +95,7 @@ export function SignupForm({
             className="inline-flex items-center gap-2 px-4 py-2 bg-[#1a1a1a] text-white border-4 border-[#1a1a1a] shadow-[4px_4px_0_0_#ffcc00]"
           >
             <span className="material-symbols-outlined font-bold">graphic_eq</span>
-            <span className="font-headline font-black uppercase tracking-tighter">KHMER VOX</span>
+            <span className="font-headline font-black uppercase tracking-tighter">{t("auth.signup.brandMobile")}</span>
           </Link>
         </div>
         
@@ -118,7 +120,7 @@ export function SignupForm({
                 <input
                   className="w-full bg-transparent border-b-4 border-[#1a1a1a] text-[#1a1a1a] text-xl font-bold py-3 px-0 focus:outline-none focus:border-[#0055ff] transition-colors placeholder:text-[#4a4a4a]/50 rounded-none"
                   id="fullName"
-                  placeholder="JANE DOE"
+                  placeholder={t("auth.fullNamePlaceholder")}
                   type="text"
                   autoComplete="name"
                   value={fullName}
@@ -163,7 +165,7 @@ export function SignupForm({
                 <input
                   className="w-full bg-transparent border-b-4 border-[#1a1a1a] text-[#1a1a1a] text-xl font-bold py-3 px-0 focus:outline-none focus:border-[#0055ff] transition-colors placeholder:text-[#4a4a4a]/50 rounded-none"
                   id="password"
-                  placeholder="••••••••"
+                  placeholder={t("auth.passwordPlaceholder")}
                   required
                   minLength={8}
                   type="password"
@@ -183,7 +185,7 @@ export function SignupForm({
                 <p>{error}</p>
                 {error.toLowerCase().includes("already") && (
                   <Link href="/app/signin" className="mt-2 inline-block font-semibold underline underline-offset-2 hover:text-[#0055ff]">
-                    Sign in instead
+                    {t("auth.signup.signInInstead")}
                   </Link>
                 )}
               </div>
@@ -200,7 +202,7 @@ export function SignupForm({
                 {loading ? (
                   <>
                     <span className="material-symbols-outlined animate-spin" aria-hidden="true">sync</span>
-                    CREATING ACCOUNT...
+                    {t("auth.signup.submitting")}
                   </>
                 ) : (
                   <>
@@ -223,7 +225,7 @@ export function SignupForm({
                 </span>
                 <div className="flex-grow h-1 bg-[#1a1a1a]" />
               </div>
-              <GoogleAuthButton label="Sign up with Google" />
+              <GoogleAuthButton label={t("auth.google.signup")} />
             </div>
           )}
 

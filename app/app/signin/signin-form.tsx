@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { GoogleAuthButton, authErrorMessage } from "@/app/app/google-auth-button";
+import { useT } from "@/app/components/locale-provider";
 
 export function SigninForm({
   csrfToken = "",
@@ -16,9 +17,10 @@ export function SigninForm({
   errorCode?: string | null;
 }) {
   const router = useRouter();
+  const t = useT();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState(authErrorMessage(errorCode) ?? "");
+  const [error, setError] = useState(authErrorMessage(errorCode, t) ?? "");
   const [loading, setLoading] = useState(false);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -38,14 +40,14 @@ export function SigninForm({
       const data = (await response.json()) as { error?: string };
 
       if (!response.ok) {
-        setError(data.error ?? "Could not sign in.");
+        setError(data.error ?? t("auth.signin.errorDefault"));
         return;
       }
 
       router.replace("/app/dashboard");
       router.refresh();
     } catch {
-      setError("Network error. Try again.");
+      setError(t("auth.signin.errorNetwork"));
     } finally {
       setLoading(false);
     }
@@ -65,7 +67,7 @@ export function SigninForm({
           >
             graphic_eq
           </span>
-          KHMER VOX TTS
+          {t("auth.brand")}
         </Link>
         <Link
           href="https://t.me/OfficalVoxTTS"
@@ -73,7 +75,7 @@ export function SigninForm({
           rel="noreferrer"
           className="brutal-button bg-[#ffcc00] text-[#1a1a1a] px-6 py-2 font-black uppercase tracking-tighter hover:bg-[#1a1a1a] hover:text-[#ffffff] transition-colors duration-100"
         >
-          SUPPORT
+          {t("auth.support")}
         </Link>
       </header>
 
@@ -102,14 +104,12 @@ export function SigninForm({
               record_voice_over
             </span>
             <h1 className="text-5xl md:text-6xl font-headline font-black text-white leading-tight uppercase tracking-tighter">
-              Cambodia&apos;s Leading{" "}
               <span className="text-[#10b981] border-b-4 border-[#10b981] pb-1 inline-block">
-                Khmer AI
-              </span>{" "}
-              Voice Engine.
+                {t("auth.signin.tagline")}
+              </span>
             </h1>
             <p className="text-[#e8e3da] font-body text-lg max-w-md mx-auto mt-4 font-medium border-l-4 border-[#10b981] pl-4 text-left">
-              Synthesis, cloning, and expressive prosody engineered for the Khmer language.
+              {t("auth.signin.body")}
             </p>
           </div>
         </div>
@@ -121,10 +121,10 @@ export function SigninForm({
             <div className="absolute -top-4 -right-4 w-8 h-8 bg-[#ffcc00] brutal-border"></div>
             <div className="mb-10 text-center md:text-left">
               <h2 className="text-4xl font-headline font-black text-[#1a1a1a] uppercase tracking-tighter mb-2">
-                Sign In
+                {t("auth.signin.title")}
               </h2>
               <p className="text-[#4a4a4a] font-body font-bold text-sm uppercase tracking-widest border-b-2 border-[#1a1a1a] inline-block pb-1">
-                Authenticate User
+                {t("auth.signin.subtitle")}
               </p>
             </div>
             
@@ -136,12 +136,12 @@ export function SigninForm({
                   htmlFor="email"
                 >
                   <span className="material-symbols-outlined text-sm" aria-hidden="true">mail</span>
-                  Email Address
+                  {t("auth.email")}
                 </label>
                 <input
                   className="brutal-input w-full p-4 bg-[#f5f0e8] text-[#1a1a1a] font-body font-medium placeholder:text-[#4a4a4a]/50 rounded-none"
                   id="email"
-                  placeholder="user@domain.com"
+                  placeholder={t("auth.emailPlaceholder")}
                   required
                   type="email"
                   autoComplete="email"
@@ -158,19 +158,19 @@ export function SigninForm({
                     htmlFor="password"
                   >
                     <span className="material-symbols-outlined text-sm" aria-hidden="true">key</span>
-                    Password
+                    {t("auth.password")}
                   </label>
                   <Link
                     className="text-[#0055ff] font-label font-bold text-xs uppercase hover:text-[#e63b2e] hover:underline transition-colors"
                     href="/app/forgot-password"
                   >
-                    Forgot Password?
+                    {t("auth.forgotPassword")}
                   </Link>
                 </div>
                 <input
                   className="brutal-input w-full p-4 bg-[#f5f0e8] text-[#1a1a1a] font-body font-medium placeholder:text-[#4a4a4a]/50 rounded-none"
                   id="password"
-                  placeholder="••••••••"
+                  placeholder={t("auth.passwordPlaceholder")}
                   required
                   type="password"
                   autoComplete="current-password"
@@ -195,11 +195,11 @@ export function SigninForm({
                 {loading ? (
                   <>
                     <span className="material-symbols-outlined animate-spin" aria-hidden="true">sync</span>
-                    AUTHENTICATING...
+                    {t("auth.signin.submitting")}
                   </>
                 ) : (
                   <>
-                    SIGN IN
+                    {t("auth.signin.submit")}
                     <span className="material-symbols-outlined group-hover:translate-x-2 transition-transform" aria-hidden="true">
                       arrow_forward
                     </span>
@@ -213,23 +213,23 @@ export function SigninForm({
                 <div className="flex items-center gap-3 mb-6">
                   <div className="flex-grow h-1 bg-[#1a1a1a]" />
                   <span className="font-label font-bold text-xs uppercase tracking-widest text-[#4a4a4a]">
-                    Or
+                    {t("auth.or")}
                   </span>
                   <div className="flex-grow h-1 bg-[#1a1a1a]" />
                 </div>
-                <GoogleAuthButton label="Sign in with Google" />
+                <GoogleAuthButton label={t("auth.google")} />
               </div>
             )}
 
             <div className="mt-8 pt-8 border-t-4 border-[#1a1a1a] text-center flex flex-col gap-4">
               <p className="font-body font-medium text-sm text-[#4a4a4a]">
-                Don&apos;t have an access key?
+                {t("auth.signin.noAccount")}
               </p>
               <Link
                 className="inline-block brutal-button bg-[#f5f0e8] text-[#1a1a1a] px-6 py-3 text-sm hover:bg-[#ffcc00] hover:text-[#1a1a1a] self-center"
                 href="/app/signup"
               >
-                CREATE ACCOUNT
+                {t("auth.signin.createAccount")}
               </Link>
             </div>
           </div>
@@ -239,23 +239,23 @@ export function SigninForm({
       {/* Footer Shell */}
       <footer className="bg-[#eee9e0] flex flex-col md:flex-row justify-between items-center px-8 py-4 w-full gap-4 border-t-4 border-[#1a1a1a] mt-auto">
         <div className="font-headline font-black text-lg text-[#1a1a1a]">
-          KHMER VOX TTS
+          {t("auth.brand")}
         </div>
         <div className="text-[#1a1a1a] font-label font-bold uppercase text-xs text-center md:text-left">
-          © 2024 KHMER VOX TTS — FORM FOLLOWS FUNCTION
+          {t("footer.copyright")}
         </div>
         <div className="flex gap-6">
           <Link
             className="text-[#1a1a1a] font-label font-bold uppercase text-xs hover:text-[#0055ff] transition-colors"
             href="/privacy"
           >
-            PRIVACY
+            {t("footer.privacy")}
           </Link>
           <Link
             className="text-[#1a1a1a] font-label font-bold uppercase text-xs hover:text-[#0055ff] transition-colors"
             href="/terms"
           >
-            TERMS
+            {t("footer.terms")}
           </Link>
           <Link
             className="text-[#1a1a1a] font-label font-bold uppercase text-xs hover:text-[#0055ff] transition-colors"
@@ -263,7 +263,7 @@ export function SigninForm({
             target="_blank"
             rel="noreferrer"
           >
-            ACCESSIBILITY
+            {t("footer.accessibility")}
           </Link>
         </div>
       </footer>

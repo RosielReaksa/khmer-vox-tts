@@ -3,6 +3,8 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
+import { useT } from "@/app/components/locale-provider";
+
 const SAFETY_TIMEOUT_MS = 6500;
 const SAME_PATH_SETTLE_MS = 900;
 const SETTLE_DELAY_MS = 140;
@@ -70,6 +72,7 @@ function getWarmupRoutes(pathname: string | null): string[] {
 export function NavigationShell({ children }: NavigationShellProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const t = useT();
   const [pending, setPending] = useState(false);
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const hideTimerRef = useRef<number | null>(null);
@@ -292,13 +295,13 @@ export function NavigationShell({ children }: NavigationShellProps) {
           focused; the `#` href is ignored by the SPA click handler above, so it
           performs a native in-page jump to the main content region. */}
       <a href="#main-content" className="skip-to-content-link">
-        Skip to main content
+        {t("nav.skipToContent")}
       </a>
       <div className="page-transition-bar" data-active={pending ? "true" : "false"} aria-hidden="true">
         <div className="page-transition-bar__fill route-progress" />
       </div>
       <div className="route-pending-card" data-active={pending && pendingHref ? "true" : "false"} aria-live="polite">
-        Opening page...
+        {t("nav.openingPage")}
       </div>
       <div id="main-content" tabIndex={-1} className="route-shell">{children}</div>
     </>

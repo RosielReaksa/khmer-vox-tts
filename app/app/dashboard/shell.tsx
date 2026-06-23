@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { DashboardUserProvider } from "@/app/app/dashboard/dashboard-user-context";
 import { DashboardQueryProvider } from "@/app/app/dashboard/dashboard-query-provider";
 import { DashboardSpa } from "@/app/app/dashboard/dashboard-spa";
+import { useT } from "@/app/components/locale-provider";
 
 type DashboardShellProps = {
   children: React.ReactNode;
@@ -17,42 +18,42 @@ type DashboardShellProps = {
   suspendedReason: string | null;
 };
 
-const navItems = [
-  { href: "/app/dashboard", label: "Text to Speech", icon: GridIcon },
-  {
-    href: "/app/dashboard/voice-cloning",
-    label: "Voice Cloning",
-    icon: VoiceIcon,
-  },
-  { href: "/app/dashboard/voices", label: "Saved Voices", icon: MicIcon },
-  { href: "/app/dashboard/history", label: "History", icon: HistoryIcon },
-  { href: "/app/dashboard/jobs", label: "Batch Jobs", icon: JobsIcon },
-  { href: "/app/dashboard/business", label: "Business", icon: BusinessIcon },
-  { href: "/app/dashboard/api", label: "API", icon: KeyIcon },
-  { href: "/app/dashboard/analytics", label: "Analytics", icon: AnalyticsIcon },
-  { href: "/app/dashboard/billing", label: "Billing", icon: CardIcon },
-] as const;
+function navItems(t: (k: string) => string) {
+  return [
+    { href: "/app/dashboard", label: t("dash.nav.tts"), icon: GridIcon },
+    { href: "/app/dashboard/voice-cloning", label: t("dash.nav.clone"), icon: VoiceIcon },
+    { href: "/app/dashboard/voices", label: t("dash.nav.voices"), icon: MicIcon },
+    { href: "/app/dashboard/history", label: t("dash.nav.history"), icon: HistoryIcon },
+    { href: "/app/dashboard/jobs", label: t("dash.nav.jobs"), icon: JobsIcon },
+    { href: "/app/dashboard/business", label: t("dash.nav.business"), icon: BusinessIcon },
+    { href: "/app/dashboard/api", label: t("dash.nav.api"), icon: KeyIcon },
+    { href: "/app/dashboard/analytics", label: t("dash.nav.analytics"), icon: AnalyticsIcon },
+    { href: "/app/dashboard/billing", label: t("dash.nav.billing"), icon: CardIcon },
+  ] as const;
+}
 
-const sectionTitles: Array<{ prefix: string; title: string }> = [
-  { prefix: "/app/dashboard/settings", title: "Settings" },
-  { prefix: "/app/dashboard/voice-cloning", title: "Voice Cloning" },
-  { prefix: "/app/dashboard/voices", title: "Saved Voices" },
-  { prefix: "/app/dashboard/history", title: "History" },
-  { prefix: "/app/dashboard/jobs", title: "Batch Jobs" },
-  { prefix: "/app/dashboard/business", title: "Business API" },
-  { prefix: "/app/dashboard/api", title: "API" },
-  { prefix: "/app/dashboard/analytics", title: "Analytics" },
-  { prefix: "/app/dashboard/billing", title: "Billing" },
-  { prefix: "/app/dashboard", title: "Generate Speech" },
-];
+function sectionTitles(t: (k: string) => string): Array<{ prefix: string; title: string }> {
+  return [
+    { prefix: "/app/dashboard/settings", title: t("dash.settings") },
+    { prefix: "/app/dashboard/voice-cloning", title: t("dash.nav.clone") },
+    { prefix: "/app/dashboard/voices", title: t("dash.nav.voices") },
+    { prefix: "/app/dashboard/history", title: t("dash.nav.history") },
+    { prefix: "/app/dashboard/jobs", title: t("dash.nav.jobs") },
+    { prefix: "/app/dashboard/business", title: t("dash.businessApi") },
+    { prefix: "/app/dashboard/api", title: t("dash.nav.api") },
+    { prefix: "/app/dashboard/analytics", title: t("dash.nav.analytics") },
+    { prefix: "/app/dashboard/billing", title: t("dash.nav.billing") },
+    { prefix: "/app/dashboard", title: t("dash.generateSpeech") },
+  ];
+}
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/app/dashboard") return pathname === href;
   return pathname.startsWith(href);
 }
 
-function getSectionTitle(pathname: string): string {
-  const match = sectionTitles.find((item) => pathname.startsWith(item.prefix));
+function getSectionTitle(pathname: string, t: (k: string) => string): string {
+  const match = sectionTitles(t).find((item) => pathname.startsWith(item.prefix));
   return match?.title ?? "Dashboard";
 }
 
@@ -66,6 +67,8 @@ export function DashboardShell({
 }: DashboardShellProps) {
   const pathname = usePathname() ?? "/app/dashboard";
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const t = useT();
   const initialPath = useMemo(() => {
     const query = searchParams.toString();
     return query ? `${pathname}?${query}` : pathname;
@@ -77,7 +80,7 @@ export function DashboardShell({
   const [liveTokenBalance, setLiveTokenBalance] = useState(tokenBalance);
   const mainRef = useRef<HTMLElement | null>(null);
   const avatarLetter = userEmail.slice(0, 1).toUpperCase();
-  const sectionTitle = useMemo(() => getSectionTitle(clientPath), [clientPath]);
+  const sectionTitle = useMemo(() => getSectionTitle(clientPath, t), [clientPath, t]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setSpaReady(true), 0);
@@ -255,7 +258,7 @@ export function DashboardShell({
 
                 {/* Drawer Nav Items */}
                 <nav className="flex-1 overflow-y-auto p-4 space-y-3">
-                  {navItems.map((item) => {
+                  {navItems(t).map((item) => {
                     const active = isActive(clientPath, item.href);
                     const Icon = item.icon;
                     return (
@@ -311,7 +314,7 @@ export function DashboardShell({
                     <button
                       type="button"
                       className="flex h-12 items-center justify-center border-2 border-primary bg-white text-[#4a4a4a] hover:bg-[#ffb3ab] transition-colors shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] cursor-pointer"
-                      title="Log out"
+                      title={t("dash.logOut")}
                       onClick={signOut}
                     >
                       <LogoutIcon />
@@ -370,7 +373,7 @@ export function DashboardShell({
             </div>
 
             <nav className="mt-6 flex flex-1 flex-col gap-3 overflow-y-auto min-h-0 w-full no-scrollbar px-4 pb-4">
-              {navItems.map((item) => {
+              {navItems(t).map((item) => {
                 const active = isActive(clientPath, item.href);
                 const Icon = item.icon;
                 return (
@@ -423,7 +426,7 @@ export function DashboardShell({
                 <button
                   type="button"
                   className="flex h-12 items-center justify-center border-2 border-primary bg-white text-[#4a4a4a] hover:bg-[#ffb3ab] transition-colors shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] cursor-pointer"
-                  title="Log out"
+                  title={t("dash.logOut")}
                   onClick={signOut}
                 >
                   <LogoutIcon />
@@ -483,13 +486,7 @@ export function DashboardShell({
                   }}
                   className="hidden lg:inline-flex font-headline font-black text-xs uppercase bg-[#ffcc00] border-2 border-primary px-3 py-1.5 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#e6b800] active:translate-y-0.5 active:shadow-none transition-all cursor-pointer"
                 >
-                  Buy Tokens
-                </button>
-                <button
-                  type="button"
-                  className="hidden lg:inline-flex items-center gap-1 font-headline font-bold text-xs uppercase border-2 border-primary px-3 py-1.5 bg-white shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]"
-                >
-                  EN
+                  {t("dash.buyTokens")}
                 </button>
                 <div className="relative">
                   <button
@@ -511,7 +508,7 @@ export function DashboardShell({
                         {userEmail}
                       </p>
                       <div className="border-2 border-primary bg-white p-3 text-xs font-headline font-bold uppercase mb-3">
-                        <p className="text-[#4a4a4a]">Available credits</p>
+                        <p className="text-[#4a4a4a]">{t("dash.credits")}</p>
                         <p className="mt-1 text-base font-black text-primary">
                           {liveTokenBalance.toLocaleString()}
                         </p>

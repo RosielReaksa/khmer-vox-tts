@@ -620,6 +620,19 @@ html[data-route-pending="true"] .route-shell {
 .font-body {
     font-family: var(--font-inter), sans-serif;
 }
+
+/* Locale font swap: when the active locale is Khmer, route text through the
+   Khmer-capable Noto Sans Khmer before the Latin fonts. The Latin fonts
+   don't cover the Khmer block, so this is required for glyphs to render.
+   The brutalist weights are preserved (400/500/700 cover the weight scale). */
+html[lang="km"] body,
+html[lang="km"] .font-headline,
+html[lang="km"] .font-display,
+html[lang="km"] .font-label,
+html[lang="km"] .font-body {
+    font-family: var(--font-khmer), var(--font-space-grotesk), var(--font-inter), sans-serif;
+}
+
 .brutal-border {
     border: 3px solid #1a1a1a;
 }

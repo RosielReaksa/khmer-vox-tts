@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { useT } from "@/app/components/locale-provider";
 
 export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { initialEmail?: string; csrfToken?: string }) {
+  const t = useT();
   const [email, setEmail] = useState(initialEmail);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -25,12 +27,12 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
       });
       const data = (await response.json()) as { error?: string; message?: string };
       if (!response.ok) {
-        setError(data.error ?? "Could not send the recovery email.");
+        setError(data.error ?? t("auth.forgot.errorDefault"));
         return;
       }
       setSuccess(true);
     } catch {
-      setError("Network error. Try again.");
+      setError(t("auth.forgot.errorNetwork"));
     } finally {
       setSubmitting(false);
     }
@@ -70,7 +72,7 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
                 Recover Password
               </h2>
               <p className="text-[#4a4a4a] font-body mb-10 text-lg">
-                Enter your registered email address and we&apos;ll send you a recovery link to reset your password.
+                {t("auth.forgot.body")} and we&apos;ll send you a recovery link to reset your password.
               </p>
               
               <form className="space-y-8" onSubmit={onSubmit} method="POST">
@@ -83,7 +85,7 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
                     className="w-full brutalist-input py-3 text-lg font-body placeholder:text-[#d0cbc3] focus:border-[#0055ff] transition-colors bg-transparent rounded-none"
                     id="email"
                     name="email"
-                    placeholder="user@domain.com"
+                    placeholder={t("auth.emailPlaceholder")}
                     required
                     type="email"
                     autoComplete="email"
@@ -105,7 +107,7 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
 
                 {success && (
                   <div role="status" className="border-4 border-[#1a1a1a] bg-[#d8f8e7] p-3 text-sm font-bold text-[#075e3b]">
-                    If an account exists for this email, the recovery link is on its way. Check spam or junk mail too.
+                    {t("auth.forgot.success")}, the recovery link is on its way. Check spam or junk mail too.
                   </div>
                 )}
 
@@ -121,17 +123,17 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
                 >
                   {submitting ? (
                     <>
-                      <span>SENDING LINK...</span>
+                      <span>{t("auth.forgot.submitting")}</span>
                       <span className="material-symbols-outlined animate-spin" aria-hidden="true">sync</span>
                     </>
                   ) : success ? (
                     <>
-                      <span>LINK SENT</span>
+                      <span>{t("auth.forgot.sent")}</span>
                       <span className="material-symbols-outlined" aria-hidden="true">check</span>
                     </>
                   ) : (
                     <>
-                      <span>SEND RECOVERY LINK</span>
+                      <span>{t("auth.forgot.submit")}</span>
                       <span className="material-symbols-outlined group-hover:translate-x-1 transition-transform" aria-hidden="true">
                         arrow_forward
                       </span>
@@ -156,7 +158,7 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
 
       {/* Footer */}
       <footer className="bg-[#eee9e0] text-[#1a1a1a] font-label font-bold uppercase text-xs docked full-width bottom-0 border-t-4 border-[#1a1a1a] flex flex-col md:flex-row justify-between items-center px-8 py-4 w-full gap-4 flat no shadows mt-8">
-        <div className="font-headline font-black text-lg">KHMER VOX TTS</div>
+        <div className="font-headline font-black text-lg">{t("auth.brand")}</div>
         <div className="flex gap-4 md:gap-8 flex-wrap justify-center">
           <Link className="text-[#1a1a1a] hover:text-[#0055ff] transition-colors" href="/privacy">
             PRIVACY
@@ -169,7 +171,7 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
           </Link>
         </div>
         <div className="text-[#4a4a4a] text-center md:text-right">
-          © 2024 KHMER VOX TTS — FORM FOLLOWS FUNCTION
+          {t("footer.copyright")} — FORM FOLLOWS FUNCTION
         </div>
       </footer>
     </div>

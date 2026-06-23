@@ -4,9 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { useT } from "@/app/components/locale-provider";
+
 export function PublicHeader() {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
+  const t = useT();
 
   useEffect(() => {
     if (menuOpen) {
@@ -20,13 +23,13 @@ export function PublicHeader() {
   }, [menuOpen]);
 
   const navLinks = [
-    { href: "/#features", label: "Features" },
-    { href: "/#pricing", label: "Pricing" },
-    { href: "/business", label: "Business" },
-    { href: "/docs", label: "API Docs" },
-    { href: "/payments", label: "Payments" },
-    { href: "/review", label: "Review" },
-    { href: "/support", label: "Support" },
+    { href: "/#features", label: t("header.features") },
+    { href: "/#pricing", label: t("header.pricing") },
+    { href: "/business", label: t("header.business") },
+    { href: "/docs", label: t("header.docs") },
+    { href: "/payments", label: t("header.payments") },
+    { href: "/review", label: t("header.review") },
+    { href: "/support", label: t("header.support") },
   ];
 
   const isActive = (href: string) => {
@@ -43,8 +46,8 @@ export function PublicHeader() {
             type="button"
             onClick={() => setMenuOpen(true)}
             className="md:hidden flex h-10 w-10 items-center justify-center border-2 border-outline bg-white text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#eee9e0] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all cursor-pointer shrink-0"
-            title="Open Menu"
-            aria-label="Open navigation menu"
+            title={t("header.openMenu")}
+            aria-label={t("header.openMenu")}
           >
             <span className="material-symbols-outlined font-black" aria-hidden="true">menu</span>
           </button>
@@ -54,8 +57,8 @@ export function PublicHeader() {
               KV
             </span>
             <span className="hidden sm:block text-left">
-              <span className="block text-sm font-headline font-black uppercase tracking-tight text-primary">Khmer Vox TTS</span>
-              <span className="block text-[10px] font-bold text-on-surface-variant tracking-normal">DEVELOPER PORTAL</span>
+              <span className="block text-sm font-headline font-black uppercase tracking-tight text-primary">{t("header.brand")}</span>
+              <span className="block text-[10px] font-bold text-on-surface-variant tracking-normal">{t("header.tagline")}</span>
             </span>
           </Link>
         </div>
@@ -78,18 +81,18 @@ export function PublicHeader() {
           })}
         </nav>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           <Link
             href="/app/signin"
             className="hidden sm:inline-flex font-headline font-bold uppercase text-xs border-2 border-outline bg-white px-4 py-2 hover:bg-surface-variant transition-colors shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none"
           >
-            LOGIN
+            {t("header.login")}
           </Link>
           <Link
             href="/app/signup"
             className="px-4 py-2 bg-[#ffcc00] text-primary border-2 border-outline font-headline font-bold uppercase text-xs shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#e6b800] transition-colors active:translate-x-0.5 active:translate-y-0.5 active:shadow-none"
           >
-            Start Free
+            {t("header.startFree")}
           </Link>
         </div>
       </header>
@@ -109,14 +112,14 @@ export function PublicHeader() {
                 <span className="grid h-10 w-10 place-items-center border-2 border-outline bg-primary text-white font-headline font-black text-sm uppercase tracking-tight shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
                   KV
                 </span>
-                <span className="font-headline font-black text-xs uppercase tracking-tight text-primary">Khmer Vox TTS</span>
+                <span className="font-headline font-black text-xs uppercase tracking-tight text-primary">{t("header.brand")}</span>
               </div>
               <button
                 type="button"
                 onClick={() => setMenuOpen(false)}
                 className="flex h-10 w-10 items-center justify-center border-2 border-outline bg-white text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#ffdad6] hover:text-[#93000a] transition-colors cursor-pointer"
-                title="Close Menu"
-                aria-label="Close navigation menu"
+                title={t("header.closeMenu")}
+                aria-label={t("header.closeMenu")}
               >
                 <span className="material-symbols-outlined font-black" aria-hidden="true">close</span>
               </button>
@@ -148,14 +151,14 @@ export function PublicHeader() {
                 onClick={() => setMenuOpen(false)}
                 className="flex h-12 items-center justify-center border-2 border-primary bg-white text-primary font-headline font-black uppercase text-xs hover:bg-[#eee9e0] transition-colors shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]"
               >
-                LOGIN
+                {t("header.login")}
               </Link>
               <Link
                 href="/app/signup"
                 onClick={() => setMenuOpen(false)}
                 className="flex h-12 items-center justify-center border-2 border-primary bg-[#ffcc00] text-primary font-headline font-black uppercase text-xs hover:bg-[#e6b800] transition-colors shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]"
               >
-                SIGN UP
+                {t("header.signup")}
               </Link>
             </div>
           </div>

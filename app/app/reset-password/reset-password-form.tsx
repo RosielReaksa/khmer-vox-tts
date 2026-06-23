@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { useT } from "@/app/components/locale-provider";
 
 export function ResetPasswordForm({
   token,
@@ -10,6 +11,7 @@ export function ResetPasswordForm({
   token: string;
   csrfToken: string;
 }) {
+  const t = useT();
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -22,11 +24,11 @@ export function ResetPasswordForm({
     setError("");
 
     if (password.length < 8) {
-      setError("Password must contain at least 8 characters.");
+      setError(t("auth.reset.errorLength"));
       return;
     }
     if (password !== confirmPassword) {
-      setError("Passwords do not match.");
+      setError(t("auth.reset.errorMismatch"));
       return;
     }
 
@@ -42,14 +44,14 @@ export function ResetPasswordForm({
       });
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
-        setError(data.error ?? "Could not reset the password.");
+        setError(data.error ?? t("auth.reset.errorDefault"));
         return;
       }
       setPassword("");
       setConfirmPassword("");
       setSuccess(true);
     } catch {
-      setError("Network error. Try again.");
+      setError(t("auth.reset.errorNetwork"));
     } finally {
       setSubmitting(false);
     }
@@ -68,7 +70,7 @@ export function ResetPasswordForm({
             account.
           </h1>
           <p className="mt-8 max-w-sm text-[#e8e3da] text-lg">
-            Choose a new password that you do not use on another website.
+            {t("auth.reset.body")}
           </p>
         </section>
 
@@ -80,7 +82,7 @@ export function ResetPasswordForm({
           {!tokenLooksValid ? (
             <div className="space-y-6">
               <div role="alert" className="border-4 border-[#1a1a1a] bg-[#ffdad6] p-4 font-bold text-[#93000a]">
-                This recovery link is invalid. Request a new link to continue.
+                {t("auth.reset.invalidLink")}
               </div>
               <Link className="inline-block brutal-button bg-[#1a1a1a] text-white px-5 py-3" href="/app/forgot-password">
                 Request new link
@@ -89,7 +91,7 @@ export function ResetPasswordForm({
           ) : success ? (
             <div className="space-y-6">
               <div role="status" className="border-4 border-[#1a1a1a] bg-[#d8f8e7] p-4 font-bold text-[#075e3b]">
-                Password updated. Your recovery link cannot be used again.
+                {t("auth.reset.success")}
               </div>
               <Link className="inline-block brutal-button bg-[#10b981] text-[#1a1a1a] px-5 py-3" href="/app/signin">
                 Sign in
@@ -145,7 +147,7 @@ export function ResetPasswordForm({
                 aria-busy={submitting}
                 className="w-full brutal-button bg-[#1a1a1a] text-white p-4 disabled:opacity-50"
               >
-                {submitting ? "UPDATING..." : "UPDATE PASSWORD"}
+                {submitting ? t("auth.reset.submitting") : t("auth.reset.submit")}
               </button>
             </form>
           )}

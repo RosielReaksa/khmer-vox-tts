@@ -1,17 +1,21 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PublicHeader } from "@/app/components/public-header";
+import { getLocale, t } from "@/lib/i18n";
+import type { Locale } from "@/lib/locale";
 
-export const metadata: Metadata = {
-  title: "Service Overview",
-  description:
-    "An overview of Khmer Vox TTS: a prepaid Khmer text-to-speech and voice-cloning API for developers, creators, and Khmer content teams.",
-  alternates: { canonical: "/review" },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const locale = await getLocale();
+  return {
+    title: t("review.title", locale),
+    description: t("review.body", locale),
+    alternates: { canonical: "/review" },
+  };
+}
 
-const businessRows = [
+const businessRows: Array<[string, string]> = [
   ["Service name", "VoxTTS Online / Khmer Vox TTS"],
-  ["Website", "https://voxtts.online and https://voxtts-online.vercel.app"],
+  ["Website", "https://voxtts.online"],
   ["Business model", "Prepaid token packs for Khmer text-to-speech API usage."],
   ["Customers", "Developers, creators, dubbing tools, automation builders, and Khmer content teams."],
   ["Support", "Telegram @OfficalVoxTTS and in-dashboard support tickets."],
@@ -44,58 +48,37 @@ const apiChecklist: Array<[string, string]> = [
   ["Usage logs", "Dashboard shows request history, duration, credits, and downloads."],
 ];
 
-export default function ReviewPage() {
+export default async function ReviewPage() {
+  const locale = await getLocale();
+
   return (
     <div className="min-h-screen bg-background text-primary font-body flex flex-col">
       <PublicHeader />
-
       <main className="mx-auto grid w-full max-w-6xl gap-8 px-5 py-10 lg:px-8 text-left">
         <section className="border-4 border-outline bg-white p-6 lg:p-10 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] relative">
           <div className="absolute -top-4 -right-4 w-8 h-8 bg-[#ffcc00] border-4 border-outline"></div>
-          <div className="inline-block bg-[#ffcc00] border-2 border-outline px-3 py-1 font-headline font-bold uppercase tracking-tight text-xs shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] mb-4">
-            Merchant review
-          </div>
-          <h1 className="text-4xl font-headline font-black uppercase tracking-tighter text-primary lg:text-6xl leading-none">
-            VoxTTS Online business and payment review page
-          </h1>
-          <p className="mt-4 font-body text-sm leading-relaxed text-on-surface-variant max-w-2xl border-l-4 border-outline pl-4">
-            This page summarizes the service, customer flow, payment handling, API usage,
-            and KHQRcc ABA Pay handling for bank or payment gateway review.
-          </p>
+          <div className="inline-block bg-[#ffcc00] border-2 border-outline px-3 py-1 font-headline font-bold uppercase tracking-tight text-xs shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] mb-4">{t("review.title", locale)}</div>
+          <h1 className="text-4xl font-headline font-black uppercase tracking-tighter text-primary lg:text-6xl leading-none">{t("review.subtitle", locale)}</h1>
+          <p className="mt-4 font-body text-sm leading-relaxed text-on-surface-variant max-w-2xl border-l-4 border-outline pl-4">{t("review.heroBody", locale)}</p>
           <div className="mt-6 flex flex-wrap gap-3">
-            <Link
-              href="/payments"
-              className="px-5 py-2.5 bg-[#0055ff] text-white border-2 border-outline font-headline font-bold uppercase text-xs shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:bg-primary transition-all active:translate-x-0.5 active:translate-y-0.5 active:shadow-none"
-            >
-              Payment flow
-            </Link>
-            <Link
-              href="/docs"
-              className="px-5 py-2.5 bg-white text-primary border-2 border-outline font-headline font-bold uppercase text-xs shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:bg-surface-variant transition-all active:translate-x-0.5 active:translate-y-0.5 active:shadow-none"
-            >
-              API docs
-            </Link>
+            <Link href="/payments" className="px-5 py-2.5 bg-[#0055ff] text-white border-2 border-outline font-headline font-bold uppercase text-xs shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:bg-primary transition-all active:translate-x-0.5 active:translate-y-0.5 active:shadow-none">{t("review.paymentFlow", locale)}</Link>
+            <Link href="/docs" className="px-5 py-2.5 bg-white text-primary border-2 border-outline font-headline font-bold uppercase text-xs shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:bg-surface-variant transition-all active:translate-x-0.5 active:translate-y-0.5 active:shadow-none">{t("review.apiDocs", locale)}</Link>
           </div>
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
           <article className="border-4 border-outline bg-white p-6 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]">
-            <h2 className="text-2xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-2 mb-4">Business information</h2>
+            <h2 className="text-2xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-2 mb-4">{t("review.businessInfo", locale)}</h2>
             <div className="grid gap-2 text-xs">
-              {businessRows.map(([label, value]) => (
-                <InfoRow key={label} label={label} value={value} />
-              ))}
+              {businessRows.map(([label, value]) => (<InfoRow key={label} label={label} value={value} />))}
             </div>
           </article>
-
           <article className="border-4 border-outline bg-white p-6 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]">
-            <h2 className="text-2xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-2 mb-4">Product flow</h2>
+            <h2 className="text-2xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-2 mb-4">{t("review.productFlow", locale)}</h2>
             <ol className="grid gap-3 text-xs">
               {productFlow.map((item, index) => (
                 <li key={item} className="flex gap-3 border-2 border-outline bg-[#eee9e0] px-4 py-3 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] font-body font-bold text-primary">
-                  <span className="grid h-6 w-6 shrink-0 place-items-center border-2 border-outline bg-[#ffcc00] text-[10px] font-headline font-black text-primary">
-                    {index + 1}
-                  </span>
+                  <span className="grid h-6 w-6 shrink-0 place-items-center border-2 border-outline bg-[#ffcc00] text-[10px] font-headline font-black text-primary">{index + 1}</span>
                   <span>{item}</span>
                 </li>
               ))}
@@ -104,43 +87,36 @@ export default function ReviewPage() {
         </section>
 
         <section className="grid gap-6 lg:grid-cols-2">
-          <ChecklistCard title="Payment readiness" rows={paymentChecklist} />
-          <ChecklistCard title="API readiness" rows={apiChecklist} />
+          <ChecklistCard title={t("review.paymentReadiness", locale)} rows={paymentChecklist} />
+          <ChecklistCard title={t("review.apiReadiness", locale)} rows={apiChecklist} />
         </section>
 
         <section className="border-4 border-outline bg-white p-6 lg:p-8 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]">
-          <h2 className="text-2xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-2 mb-4">Current production payment mode</h2>
+          <h2 className="text-2xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-2 mb-4">{t("review.currentMode", locale)}</h2>
           <div className="grid gap-4 leading-relaxed text-sm lg:grid-cols-2">
             <div className="border-2 border-outline bg-[#eee9e0] p-4 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-              <h3 className="font-headline font-black uppercase text-xs text-primary border-b border-outline pb-1 mb-2">Current mode</h3>
-              <p className="text-xs font-body text-on-surface-variant leading-relaxed">
-                KHQRcc ABA Pay QR checkout creates exact-amount orders and supports signed
-                callback verification.
-              </p>
+              <h3 className="font-headline font-black uppercase text-xs text-primary border-b border-outline pb-1 mb-2">{t("review.currentModeLabel", locale)}</h3>
+              <p className="text-xs font-body text-on-surface-variant leading-relaxed">{t("review.currentModeBody", locale)}</p>
             </div>
             <div className="border-2 border-outline bg-[#eee9e0] p-4 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-              <h3 className="font-headline font-black uppercase text-xs text-primary border-b border-outline pb-1 mb-2">Verification mode</h3>
-              <p className="text-xs font-body text-on-surface-variant leading-relaxed">
-                Signed KHQRcc callback plus server-side transaction check, automatic credit,
-                and duplicate transaction protection.
-              </p>
+              <h3 className="font-headline font-black uppercase text-xs text-primary border-b border-outline pb-1 mb-2">{t("review.verificationMode", locale)}</h3>
+              <p className="text-xs font-body text-on-surface-variant leading-relaxed">{t("review.verificationModeBody", locale)}</p>
             </div>
           </div>
         </section>
 
         <section className="border-4 border-outline bg-[#1a1a1a] p-6 text-white lg:p-8 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]">
-          <h2 className="text-2xl font-headline font-black uppercase text-[#ffcc00] border-b-2 border-outline pb-2 mb-4">Reviewer quick links</h2>
+          <h2 className="text-2xl font-headline font-black uppercase text-[#ffcc00] border-b-2 border-outline pb-2 mb-4">{t("review.reviewerLinks", locale)}</h2>
           <div className="grid gap-4 md:grid-cols-3">
-            <QuickLink href="/" title="Public home" body="Service overview, pricing, and product summary." />
-            <QuickLink href="/payments" title="Payment flow" body="KHQRcc checkout and verification flow." />
-            <QuickLink href="/docs" title="API docs" body="Speech, clone, batch, token, and webhook endpoints." />
+            <QuickLink href="/" title={t("review.quickLink.home.title", locale)} body={t("review.quickLink.home.body", locale)} />
+            <QuickLink href="/payments" title={t("review.quickLink.payments.title", locale)} body={t("review.quickLink.payments.body", locale)} />
+            <QuickLink href="/docs" title={t("review.quickLink.docs.title", locale)} body={t("review.quickLink.docs.body", locale)} />
           </div>
         </section>
       </main>
     </div>
   );
 }
-
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
