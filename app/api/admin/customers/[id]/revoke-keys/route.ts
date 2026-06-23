@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { isAdminEmail } from "@/lib/admin";
 import { readSessionFromCookie } from "@/lib/session";
-import { revokeAllUserApiKeysForAdmin } from "@/lib/store";
+import { revokeAllUserApiKeysForAdmin, recordAdminAction } from "@/lib/store";
 
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await readSessionFromCookie();
@@ -15,5 +15,16 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
 
   const { id } = await params;
   const revokedCount = await revokeAllUserApiKeysForAdmin(id);
+
+  recordAdminAction({
+    adminUserId: session.userId,
+    adminEmail: session.email,
+    action: "revoke_keys",
+    targetType: "user",
+    targetId: id,
+    detail: `Revoked ${revokedCount} API keys`,
+    metadata: { revokedCount },
+  }).catch(() => {});
+
   return NextResponse.json({ ok: true, revokedCount });
 }

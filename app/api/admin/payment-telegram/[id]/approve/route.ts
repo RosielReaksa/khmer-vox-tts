@@ -5,6 +5,7 @@ import { readSessionFromCookie } from "@/lib/session";
 import {
   confirmPaymentOrderPaid,
   getTelegramPaymentEventById,
+  recordAdminAction,
   updateTelegramPaymentEventDecision,
 } from "@/lib/store";
 
@@ -101,6 +102,16 @@ export async function POST(
     decisionReason: result.ok ? result.reason ?? "MANUAL_APPROVED_BY_ADMIN" : result.reason ?? "MANUAL_APPROVE_FAILED",
     autoApproveAttempted: false,
   });
+
+  recordAdminAction({
+    adminUserId: session.userId,
+    adminEmail: session.email,
+    action: "approve_telegram_payment",
+    targetType: "telegram_event",
+    targetId: event.id,
+    detail: `${result.ok ? "Approved" : "Failed to approve"} Telegram payment event for order ${event.matchedOrderId}`,
+    metadata: { matchedOrderId: event.matchedOrderId, ok: result.ok, reason: result.reason ?? null },
+  }).catch(() => {});
 
   return redirectOrJson(
     request,

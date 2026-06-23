@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { isAdminEmail } from "@/lib/admin";
 import { readSessionFromCookie } from "@/lib/session";
-import { unsuspendCustomer } from "@/lib/store";
+import { unsuspendCustomer, recordAdminAction } from "@/lib/store";
 
 export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await readSessionFromCookie();
@@ -21,6 +21,15 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   if (!user) {
     return NextResponse.json({ error: "Customer not found." }, { status: 404 });
   }
+
+  recordAdminAction({
+    adminUserId: session.userId,
+    adminEmail: session.email,
+    action: "unsuspend_customer",
+    targetType: "user",
+    targetId: id,
+    detail: "Unsuspended customer",
+  }).catch(() => {});
 
   return NextResponse.json({ ok: true, user });
 }

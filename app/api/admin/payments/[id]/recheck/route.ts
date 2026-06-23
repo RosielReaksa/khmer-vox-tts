@@ -5,7 +5,7 @@ import { verifyBakongPayment } from "@/lib/bakong";
 import { checkKhqrccTransactionForOrder } from "@/lib/khqrcc";
 import { checkPaywayTransactionForOrder } from "@/lib/payway";
 import { readSessionFromCookie } from "@/lib/session";
-import { approvePaymentOrder, confirmPaymentOrderPaid, listPaymentOrdersForAdmin } from "@/lib/store";
+import { approvePaymentOrder, confirmPaymentOrderPaid, listPaymentOrdersForAdmin, recordAdminAction } from "@/lib/store";
 
 export async function POST(
   _request: Request,
@@ -52,6 +52,9 @@ export async function POST(
     });
   }
 
+  // Audit: a recheck was initiated
+  const recheckProvider = order.paymentProvider;
+
   if (order.paymentProvider === "payway") {
     const verification = await checkPaywayTransactionForOrder(order);
     if (verification.status !== "paid") {
@@ -76,6 +79,16 @@ export async function POST(
       providerPayload: verification.providerPayload,
       paidAt: verification.paidAt,
     });
+
+    recordAdminAction({
+      adminUserId: session.userId,
+      adminEmail: session.email,
+      action: "recheck_payment",
+      targetType: "payment_order",
+      targetId: order.id,
+      detail: `Rechecked PayWay order — ${paid.ok ? "approved" : "failed"}`,
+      metadata: { provider: "payway", ok: paid.ok, reason: paid.reason ?? null },
+    }).catch(() => {});
 
     return NextResponse.json({
       ok: paid.ok,
@@ -116,6 +129,16 @@ export async function POST(
       approvedByUserId: session.userId,
     });
 
+    recordAdminAction({
+      adminUserId: session.userId,
+      adminEmail: session.email,
+      action: "recheck_payment",
+      targetType: "payment_order",
+      targetId: order.id,
+      detail: `Rechecked KHQRcc order — ${paid.ok ? "approved" : "failed"}`,
+      metadata: { provider: "khqrcc", ok: paid.ok, reason: paid.reason ?? null },
+    }).catch(() => {});
+
     return NextResponse.json({
       ok: paid.ok,
       status: paid.ok ? "approved" : paid.reason === "ORDER_EXPIRED" ? "expired" : "failed",
@@ -145,6 +168,16 @@ export async function POST(
       ? `Admin recheck approved by Bakong MD5 verification. Hash: ${verification.transactionHash}`
       : "Admin recheck approved by Bakong MD5 verification.",
   });
+
+  recordAdminAction({
+    adminUserId: session.userId,
+    adminEmail: session.email,
+    action: "recheck_payment",
+    targetType: "payment_order",
+    targetId: order.id,
+    detail: `Rechecked Bakong order — ${approved.ok ? "approved" : "failed"}`,
+    metadata: { provider: "bakong", ok: approved.ok, reason: approved.reason ?? null },
+  }).catch(() => {});
 
   return NextResponse.json({
     ok: approved.ok,

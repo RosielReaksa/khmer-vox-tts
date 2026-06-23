@@ -5,6 +5,7 @@ import { isAdminEmail } from "@/lib/admin";
 import { readSessionFromCookie } from "@/lib/session";
 import { getModalAccounts, readAccountsConfig, writeAccountsConfig, clearModalBillingCache } from "@/lib/modal-accounts";
 import { getUpstreamEndpoints } from "@/lib/tts-endpoints";
+import { recordAdminAction } from "@/lib/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -132,6 +133,16 @@ export async function POST(request: Request) {
 
     // Clear cache to force a re-evaluation next time details are retrieved
     clearModalBillingCache();
+
+    recordAdminAction({
+      adminUserId: admin.session.userId,
+      adminEmail: admin.session.email,
+      action: "save_modal_config",
+      targetType: "modal_account",
+      targetId: label,
+      detail: `Saved Modal account configuration for "${label}"`,
+      metadata: { label, profile, initialCredits, notes },
+    }).catch(() => {});
 
     return NextResponse.json({ ok: true });
   } catch (error) {

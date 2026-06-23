@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { isAdminEmail } from "@/lib/admin";
 import { readSessionFromCookie } from "@/lib/session";
-import { getSystemSetting, setSystemSetting } from "@/lib/store";
+import { getSystemSetting, recordAdminAction, setSystemSetting } from "@/lib/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,5 +42,15 @@ export async function POST(request: Request) {
   }
 
   await setSystemSetting("admin_active", String(parsed.data.active));
+
+  recordAdminAction({
+    adminUserId: admin.session.userId,
+    adminEmail: admin.session.email,
+    action: "toggle_admin_status",
+    targetType: "system",
+    targetId: "admin_active",
+    detail: `Set admin status to ${parsed.data.active ? "ONLINE" : "OFFLINE"}`,
+  }).catch(() => {});
+
   return NextResponse.json({ ok: true, active: parsed.data.active });
 }

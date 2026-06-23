@@ -6,6 +6,7 @@ import { useAdminCachedJson } from "@/app/app/admin/admin-data-cache";
 import { Portal } from "@/app/components/portal";
 
 import { AdminPanelSkeleton, InlineAdminError } from "@/app/app/admin/admin-shared";
+import { adminPost } from "@/lib/admin-fetch";
 import { formatUsd } from "@/lib/plans";
 import type { PaymentOrderWithUser } from "@/lib/store";
 
@@ -50,11 +51,7 @@ export function PaymentsAdminClient({
     setPendingDecision(null);
 
     try {
-      const response = await fetch(`/api/admin/payments/${orderId}/${action}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ adminNote }),
-      });
+      const response = await adminPost(`/api/admin/payments/${orderId}/${action}`, { adminNote });
       const data = (await response.json()) as {
         error?: string;
         order?: PaymentOrderWithUser;
@@ -83,9 +80,7 @@ export function PaymentsAdminClient({
     setMessage("");
 
     try {
-      const response = await fetch(`/api/admin/payments/${orderId}/recheck`, {
-        method: "POST",
-      });
+      const response = await adminPost(`/api/admin/payments/${orderId}/recheck`);
       const data = (await response.json()) as {
         error?: string;
         message?: string;

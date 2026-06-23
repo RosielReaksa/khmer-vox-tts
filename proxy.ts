@@ -47,6 +47,7 @@ async function verifyAdminSession(
 }
 
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+const adminRateLimitMap = new Map<string, { count: number; resetTime: number }>();
 const ALLOWED_MULTIPART_API_ROUTES = new Set([
   "/api/batch-clone",
   "/api/dashboard/voices",
@@ -86,6 +87,25 @@ function isRateLimited(ip: string): boolean {
 
   if (!record || now > record.resetTime) {
     rateLimitMap.set(ip, { count: 1, resetTime: now + windowMs });
+    return false;
+  }
+
+  if (record.count >= limit) {
+    return true;
+  }
+
+  record.count++;
+  return false;
+}
+
+function isAdminRateLimited(ip: string): boolean {
+  const limit = Math.max(1, Number(process.env.ADMIN_RATE_LIMIT_MAX) || 30);
+  const windowMs = Math.max(1000, Number(process.env.ADMIN_RATE_LIMIT_WINDOW_MS) || 60_000);
+  const now = Date.now();
+  const record = adminRateLimitMap.get(ip);
+
+  if (!record || now > record.resetTime) {
+    adminRateLimitMap.set(ip, { count: 1, resetTime: now + windowMs });
     return false;
   }
 
@@ -147,6 +167,22 @@ export async function proxy(request: NextRequest) {
   if (!pathname.startsWith("/_next") && !pathname.includes(".")) {
     const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
     const ip = forwarded || request.headers.get("x-real-ip") || "unknown";
+
+    // Stricter limit for admin mutation endpoints
+    const isAdminMutation = pathname.startsWith("/api/admin/") && ["POST", "PUT", "DELETE", "PATCH"].includes(method);
+    if (isAdminMutation && isAdminRateLimited(ip)) {
+      return new NextResponse(
+        JSON.stringify({ error: "Too many admin requests. Please slow down." }),
+        {
+          status: 429,
+          headers: {
+            "Content-Type": "application/json",
+            "Retry-After": "60",
+          },
+        }
+      );
+    }
+
     if (isRateLimited(ip)) {
       return new NextResponse(
         JSON.stringify({ error: "Too many requests. Please try again later." }),
@@ -217,6 +253,18 @@ export async function proxy(request: NextRequest) {
         );
       }
     }
+
+    // Token-based CSRF validation for admin API mutation routes (defense-in-depth)
+    if (pathname.startsWith("/api/admin/")) {
+      const cookieToken = request.cookies.get("csrf-token")?.value;
+      const headerToken = request.headers.get("x-csrf-token");
+      if (cookieToken && headerToken && cookieToken !== headerToken) {
+        return new NextResponse(
+          JSON.stringify({ error: "CSRF validation failed: token mismatch" }),
+          { status: 403, headers: { "Content-Type": "application/json" } }
+        );
+      }
+    }
   }
 
   // Protect admin page routes: /app/admin/*
@@ -243,7 +291,6 @@ export async function proxy(request: NextRequest) {
 
   if (didGenerateCsrf && csrfToken) {
     response.cookies.set("csrf-token", csrfToken, {
-      httpOnly: true,
       secure: shouldUseSecureCookie(request, hostname),
       sameSite: "lax",
       path: "/",

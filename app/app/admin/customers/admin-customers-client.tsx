@@ -10,6 +10,7 @@ import {
   InlineAdminError,
   MetricCard,
 } from "@/app/app/admin/admin-shared";
+import { adminPost } from "@/lib/admin-fetch";
 import type { AdminCustomerSummary } from "@/lib/types";
 
 type AdminCustomersData = {
@@ -43,11 +44,7 @@ export function AdminCustomersClient() {
   const filteredCustomers = filterCustomers(customers, query, statusFilter);
 
   async function postJson(path: string, body?: unknown) {
-    const response = await fetch(path, {
-      method: "POST",
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    const response = await adminPost(path, body);
     const result = (await response.json().catch(() => ({}))) as {
       error?: string;
       balance?: number | null;

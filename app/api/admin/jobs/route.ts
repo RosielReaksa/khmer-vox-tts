@@ -16,6 +16,7 @@ import {
   listBatchJobsForAdmin,
   listWorkerHeartbeats,
   purgeQueuedBatchJobs,
+  recordAdminAction,
   retryBatchJob,
 } from "@/lib/store";
 import {
@@ -123,6 +124,15 @@ export async function POST(request: Request) {
 
   if (body.action === "purge_queue") {
     const result = await purgeQueuedBatchJobs(auth.userId, "Cancelled by admin purge.");
+    recordAdminAction({
+      adminUserId: auth.userId,
+      adminEmail: auth.email,
+      action: "job_purge_queue",
+      targetType: "system",
+      targetId: "batch_queue",
+      detail: `Purged ${result} queued batch jobs`,
+      metadata: { purged: result },
+    }).catch(() => {});
     return NextResponse.json({
       ok: true,
       purged: result,
@@ -132,6 +142,15 @@ export async function POST(request: Request) {
 
   if (body.action === "process_next") {
     const result = await processNextBatchJob({ workerId: "admin-manual" });
+    recordAdminAction({
+      adminUserId: auth.userId,
+      adminEmail: auth.email,
+      action: "job_process_next",
+      targetType: "system",
+      targetId: "batch_queue",
+      detail: `Processed next batch job: ${result.job?.id ?? "none"}`,
+      metadata: { processedId: result.job?.id ?? null },
+    }).catch(() => {});
     return NextResponse.json({
       ok: true,
       worker: result.job ? "processed" : "idle",
@@ -145,6 +164,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Job ID is required." }, { status: 400 });
     }
     const result = await processBatchJob(jobId, { workerId: "admin-manual-selected" });
+    recordAdminAction({
+      adminUserId: auth.userId,
+      adminEmail: auth.email,
+      action: "job_process_job",
+      targetType: "batch_job",
+      targetId: jobId,
+      detail: `Manually processed batch job ${jobId}`,
+      metadata: { processed: Boolean(result.job) },
+    }).catch(() => {});
     return NextResponse.json({
       ok: true,
       worker: result.job ? "processed-job" : "job-idle",
@@ -155,6 +183,14 @@ export async function POST(request: Request) {
   if (body.action === "reset_modal_pool") {
     resetEndpointPool();
     forceReloadEndpoints();
+    recordAdminAction({
+      adminUserId: auth.userId,
+      adminEmail: auth.email,
+      action: "job_reset_modal_pool",
+      targetType: "system",
+      targetId: "modal_pool",
+      detail: "Reset Modal endpoint pool",
+    }).catch(() => {});
     return NextResponse.json({
       ok: true,
       worker: "modal-pool-reset",
@@ -167,6 +203,22 @@ export async function POST(request: Request) {
       limit: body.limit,
       dryRun: Boolean(body.dryRun),
     });
+    recordAdminAction({
+      adminUserId: auth.userId,
+      adminEmail: auth.email,
+      action: "job_cleanup_audio",
+      targetType: "system",
+      targetId: "audio_storage",
+      detail: `${body.dryRun ? "Dry-run" : "Executed"} audio storage cleanup`,
+      metadata: {
+        dryRun: Boolean(body.dryRun),
+        retentionDays: body.retentionDays,
+        batchItemsCleared: result.batchItemsCleared,
+        generationsCleared: result.generationsCleared,
+        cloneSamplesCleared: result.cloneSamplesCleared,
+        estimatedBytesReleased: result.estimatedBytesReleased,
+      },
+    }).catch(() => {});
     return NextResponse.json({
       ok: true,
       worker: body.dryRun ? "audio-cleanup-dry-run" : "audio-cleanup",
@@ -176,6 +228,15 @@ export async function POST(request: Request) {
 
   if (body.action === "recover_stuck") {
     const result = await recoverStuckBatchQueue();
+    recordAdminAction({
+      adminUserId: auth.userId,
+      adminEmail: auth.email,
+      action: "job_recover_stuck",
+      targetType: "system",
+      targetId: "batch_queue",
+      detail: `Recovered stuck batch queue: ${result.recoveredJobs} recovered, ${result.movedToReviewJobs} moved to review`,
+      metadata: { recoveredJobs: result.recoveredJobs, movedToReviewJobs: result.movedToReviewJobs },
+    }).catch(() => {});
     return NextResponse.json({
       ok: true,
       worker: `recovered-${result.recoveredJobs}-${result.movedToReviewJobs}`,
@@ -186,6 +247,15 @@ export async function POST(request: Request) {
   if (body.action === "retry_webhook") {
     const jobId = body.jobId?.trim();
     const retried = jobId ? await retryBatchJobWebhook(jobId) : false;
+    recordAdminAction({
+      adminUserId: auth.userId,
+      adminEmail: auth.email,
+      action: "job_retry_webhook",
+      targetType: "batch_job",
+      targetId: jobId ?? "unknown",
+      detail: `Retried webhook for batch job ${jobId}: ${retried}`,
+      metadata: { jobId, retried },
+    }).catch(() => {});
     return NextResponse.json({
       ok: retried,
       worker: retried ? "webhook-retry" : "webhook-idle",
@@ -201,6 +271,15 @@ export async function POST(request: Request) {
       retried += 1;
       kickBatchWorker(job.id);
     }
+    recordAdminAction({
+      adminUserId: auth.userId,
+      adminEmail: auth.email,
+      action: "job_retry_jobs",
+      targetType: "batch_job",
+      targetId: `bulk-${jobIds.length}`,
+      detail: `Retried ${retried}/${jobIds.length} batch jobs`,
+      metadata: { total: jobIds.length, retried },
+    }).catch(() => {});
     return NextResponse.json({
       ok: true,
       retried,
@@ -212,6 +291,15 @@ export async function POST(request: Request) {
     const jobId = body.jobId?.trim();
     const job = jobId ? await retryBatchJob(jobId) : null;
     if (job) kickBatchWorker(job.id);
+    recordAdminAction({
+      adminUserId: auth.userId,
+      adminEmail: auth.email,
+      action: "job_retry_job",
+      targetType: "batch_job",
+      targetId: jobId ?? "unknown",
+      detail: `Retried single batch job ${jobId}: ${Boolean(job)}`,
+      metadata: { jobId, found: Boolean(job) },
+    }).catch(() => {});
     return NextResponse.json({
       ok: Boolean(job),
       retried: job ? 1 : 0,

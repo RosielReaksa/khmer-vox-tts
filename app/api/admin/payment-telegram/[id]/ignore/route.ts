@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { isAdminEmail } from "@/lib/admin";
 import { readSessionFromCookie } from "@/lib/session";
-import { updateTelegramPaymentEventDecision } from "@/lib/store";
+import { recordAdminAction, updateTelegramPaymentEventDecision } from "@/lib/store";
 
 async function readReturnTo(request: Request): Promise<{ adminNote: string | null; returnTo: string | null }> {
   const contentType = request.headers.get("content-type") ?? "";
@@ -57,6 +57,16 @@ export async function POST(
   if (!event) {
     return redirectOrJson(request, returnTo, { error: "Telegram payment event not found." }, 404);
   }
+
+  recordAdminAction({
+    adminUserId: session.userId,
+    adminEmail: session.email,
+    action: "ignore_telegram_payment",
+    targetType: "telegram_event",
+    targetId: id,
+    detail: `Ignored Telegram payment event${adminNote ? `: ${adminNote}` : ""}`,
+    metadata: { adminNote },
+  }).catch(() => {});
 
   return redirectOrJson(request, returnTo, { ok: true, event });
 }

@@ -13,6 +13,7 @@ import {
 } from "@/app/app/admin/admin-shared";
 import type { BatchJobWebhookAttemptWithUser, BatchJobWithUser, BatchQueueHealth } from "@/lib/store";
 import type { BatchJobStatus, WorkerHeartbeatRecord, BatchJobItemRecord } from "@/lib/types";
+import { adminPost } from "@/lib/admin-fetch";
 
 type AdminJobsData = {
   jobs: BatchJobWithUser[];
@@ -104,11 +105,7 @@ export function AdminJobsClient() {
     setActionLoading(action);
     setMessage("");
     try {
-      const response = await fetch("/api/admin/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, ...payload }),
-      });
+      const response = await adminPost("/api/admin/jobs", { action, ...payload });
       const result = (await response.json()) as {
         error?: string;
         worker?: string;

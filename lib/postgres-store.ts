@@ -3,6 +3,8 @@ import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import "server-only";
 
 import type {
+  AdminAuditLogFilter,
+  AdminAuditLogRecord,
   AdminCustomerDetail,
   AdminCustomerSummary,
   ApiKeyRecord,
@@ -852,6 +854,22 @@ create table if not exists system_settings (
 );
 
 insert into system_settings (key, value) values ('admin_active', 'true') on conflict (key) do nothing;
+
+create table if not exists admin_audit_logs (
+  id text primary key,
+  admin_user_id text not null references users(id) on delete cascade,
+  admin_email text not null,
+  action text not null,
+  target_type text not null,
+  target_id text not null,
+  detail text not null,
+  metadata text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists admin_audit_logs_created_idx on admin_audit_logs(created_at desc);
+create index if not exists admin_audit_logs_action_idx on admin_audit_logs(action);
+create index if not exists admin_audit_logs_admin_idx on admin_audit_logs(admin_user_id, created_at desc);
 `;
 
 type UserRow = QueryResultRow & {
@@ -5579,4 +5597,101 @@ export async function setSystemSetting(key: string, value: string): Promise<void
     `,
     [key, value],
   );
+}
+
+export async function recordAdminAction(input: {
+  adminUserId: string;
+  adminEmail: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  detail: string;
+  metadata?: Record<string, unknown> | null;
+}): Promise<AdminAuditLogRecord> {
+  const id = randomUUID();
+  const createdAt = new Date().toISOString();
+  const metadata = input.metadata ? JSON.stringify(input.metadata) : null;
+  await queryRows(
+    `
+    insert into admin_audit_logs (id, admin_user_id, admin_email, action, target_type, target_id, detail, metadata, created_at)
+    values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `,
+    [id, input.adminUserId, input.adminEmail, input.action, input.targetType, input.targetId, input.detail, metadata, createdAt],
+  );
+  return {
+    id,
+    adminUserId: input.adminUserId,
+    adminEmail: input.adminEmail,
+    action: input.action,
+    targetType: input.targetType,
+    targetId: input.targetId,
+    detail: input.detail,
+    metadata,
+    createdAt,
+  };
+}
+
+export async function listAdminAuditLogsForAdmin(
+  filter: AdminAuditLogFilter = {},
+): Promise<{ rows: AdminAuditLogRecord[]; total: number }> {
+  const { limit = 100, offset = 0, action, adminUserId, targetType, fromDate, toDate } = filter;
+
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let paramIndex = 1;
+
+  if (action) {
+    conditions.push(`action = $${paramIndex++}`);
+    params.push(action);
+  }
+  if (adminUserId) {
+    conditions.push(`admin_user_id = $${paramIndex++}`);
+    params.push(adminUserId);
+  }
+  if (targetType) {
+    conditions.push(`target_type = $${paramIndex++}`);
+    params.push(targetType);
+  }
+  if (fromDate) {
+    conditions.push(`created_at >= $${paramIndex++}`);
+    params.push(fromDate);
+  }
+  if (toDate) {
+    conditions.push(`created_at < $${paramIndex++}`);
+    params.push(toDate);
+  }
+
+  const whereClause = conditions.length > 0 ? `where ${conditions.join(' and ')}` : '';
+
+  const countParams = [...params];
+  const countResult = await queryRows<{ count: string }>(
+    `select count(*) as count from admin_audit_logs ${whereClause}`,
+    countParams,
+  );
+  const total = Number(countResult[0]?.count ?? 0);
+
+  const dataParams = [...params, limit, offset];
+  const dataParamIndex = paramIndex;
+  const rows = await queryRows<AdminAuditLogRecord>(
+    `
+    select
+      id,
+      admin_user_id as "adminUserId",
+      admin_email as "adminEmail",
+      action,
+      target_type as "targetType",
+      target_id as "targetId",
+      detail,
+      metadata,
+      created_at as "createdAt"
+    from admin_audit_logs
+    ${whereClause}
+    order by created_at desc
+    limit $${dataParamIndex}
+    offset $${dataParamIndex + 1}
+    `,
+    dataParams,
+  );
+
+  return { rows, total };
 }

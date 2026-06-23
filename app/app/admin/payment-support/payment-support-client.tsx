@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { formatUsd } from "@/lib/plans";
+import { adminPost } from "@/lib/admin-fetch";
 import type { PaymentSupportTicketWithOrder } from "@/lib/store";
 import type { PaymentSupportTicketStatus } from "@/lib/types";
 import { MetricCard } from "../admin-shared";
@@ -82,10 +83,8 @@ export function PaymentSupportClient({
     setMessage("");
 
     try {
-      const response = await fetch(`/api/admin/payment-support/${ticketId}/resolve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ adminNote: adminNoteById[ticketId] ?? "" }),
+      const response = await adminPost(`/api/admin/payment-support/${ticketId}/resolve`, {
+        adminNote: adminNoteById[ticketId] ?? "",
       });
       const data = (await response.json()) as {
         ticket?: PaymentSupportTicketWithOrder;

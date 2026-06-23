@@ -7,6 +7,7 @@ import {
   adjustCustomerTokens,
   createBusinessApiRequest,
   findUserById,
+  recordAdminAction,
   reviewBusinessApiRequest,
 } from "@/lib/store";
 
@@ -89,6 +90,25 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
     balance = tokenResult.balance;
   }
+
+  recordAdminAction({
+    adminUserId: session.userId,
+    adminEmail: session.email,
+    action: "grant_business_access",
+    targetType: "user",
+    targetId: id,
+    detail: `Granted Business API access${tokenCredit > 0 ? ` with ${tokenCredit} token credit` : ""}: ${note}`,
+    metadata: {
+      tokenCredit,
+      dailyTokenLimit: data.dailyTokenLimit ?? null,
+      monthlyTokenLimit: data.monthlyTokenLimit ?? null,
+      maxConcurrentRequests: data.maxConcurrentRequests ?? null,
+      maxConcurrentJobs: data.maxConcurrentJobs ?? null,
+      maxQueuedJobs: data.maxQueuedJobs ?? null,
+      cloneCreditRate: data.cloneCreditRate ?? 1.5,
+      applyToActiveKeys: data.applyToActiveKeys !== false,
+    },
+  }).catch(() => {});
 
   return NextResponse.json({
     ok: true,

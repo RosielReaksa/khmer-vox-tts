@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { isAdminEmail } from "@/lib/admin";
 import { readSessionFromCookie } from "@/lib/session";
-import { resolvePaymentSupportTicket } from "@/lib/store";
+import { recordAdminAction, resolvePaymentSupportTicket } from "@/lib/store";
 
 export const runtime = "nodejs";
 
@@ -57,6 +57,16 @@ export async function POST(request: Request, context: RouteContext) {
       { status: result.reason === "TICKET_NOT_FOUND" ? 404 : 409 },
     );
   }
+
+  recordAdminAction({
+    adminUserId: session.userId,
+    adminEmail: session.email,
+    action: "resolve_support_ticket",
+    targetType: "support_ticket",
+    targetId: parsedParams.data.id,
+    detail: `Resolved payment support ticket`,
+    metadata: { adminNote: parsedBody.data.adminNote?.trim() ?? null },
+  }).catch(() => {});
 
   return NextResponse.json({
     ok: true,

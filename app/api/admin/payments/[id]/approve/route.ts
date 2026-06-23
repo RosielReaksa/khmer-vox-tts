@@ -4,7 +4,7 @@ import { z } from "zod";
 import { isAdminEmail } from "@/lib/admin";
 import { invalidateDashboardCountCache } from "@/lib/dashboard-count-cache";
 import { readSessionFromCookie } from "@/lib/session";
-import { approvePaymentOrder } from "@/lib/store";
+import { approvePaymentOrder, recordAdminAction } from "@/lib/store";
 
 const actionSchema = z.object({
   adminNote: z.string().max(500).optional(),
@@ -53,6 +53,16 @@ export async function POST(
     if (result.order) {
       await invalidateDashboardCountCache(result.order.userId, ["api", "billing", "history"]);
     }
+
+    recordAdminAction({
+      adminUserId: session.userId,
+      adminEmail: session.email,
+      action: "approve_payment",
+      targetType: "payment_order",
+      targetId: id,
+      detail: "Approved payment order",
+      metadata: { orderUserId: result.order?.userId ?? null, adminNote: parsed.data.adminNote?.trim() ?? null },
+    }).catch(() => {});
 
     return NextResponse.json({ ok: true, order: result.order });
   } catch {

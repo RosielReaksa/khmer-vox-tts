@@ -4,6 +4,8 @@ import path from "node:path";
 import "server-only";
 
 import type {
+  AdminAuditLogFilter,
+  AdminAuditLogRecord,
   AdminCustomerDetail,
   AdminCustomerSummary,
   ApiKeyRecord,
@@ -72,6 +74,7 @@ const EMPTY_STORE: DataStore = {
   userVoices: [],
   apiErrors: [],
   systemSettings: [],
+  adminAuditLogs: [],
 };
 
 let mutationQueue: Promise<unknown> = Promise.resolve();
@@ -3305,4 +3308,63 @@ export async function setSystemSetting(key: string, value: string): Promise<void
       store.systemSettings.push({ key, value, updatedAt: now });
     }
   });
+}
+
+export async function recordAdminAction(input: {
+  adminUserId: string;
+  adminEmail: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  detail: string;
+  metadata?: Record<string, unknown> | null;
+}): Promise<AdminAuditLogRecord> {
+  const record: AdminAuditLogRecord = {
+    id: randomUUID(),
+    adminUserId: input.adminUserId,
+    adminEmail: input.adminEmail,
+    action: input.action,
+    targetType: input.targetType,
+    targetId: input.targetId,
+    detail: input.detail,
+    metadata: input.metadata ? JSON.stringify(input.metadata) : null,
+    createdAt: new Date().toISOString(),
+  };
+  await updateStore((store) => {
+    store.adminAuditLogs ??= [];
+    store.adminAuditLogs.push(record);
+  });
+  return record;
+}
+
+export async function listAdminAuditLogsForAdmin(
+  filter: AdminAuditLogFilter = {},
+): Promise<{ rows: AdminAuditLogRecord[]; total: number }> {
+  const { limit = 100, offset = 0, action, adminUserId, targetType, fromDate, toDate } = filter;
+  const store = await readStore();
+  const logs = store.adminAuditLogs ?? [];
+
+  let filtered = logs;
+  if (action) {
+    filtered = filtered.filter((l) => l.action === action);
+  }
+  if (adminUserId) {
+    filtered = filtered.filter((l) => l.adminUserId === adminUserId);
+  }
+  if (targetType) {
+    filtered = filtered.filter((l) => l.targetType === targetType);
+  }
+  if (fromDate) {
+    filtered = filtered.filter((l) => l.createdAt >= fromDate);
+  }
+  if (toDate) {
+    filtered = filtered.filter((l) => l.createdAt < toDate);
+  }
+
+  // Newest first
+  filtered.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+
+  const total = filtered.length;
+  const rows = filtered.slice(offset, offset + limit);
+  return { rows, total };
 }

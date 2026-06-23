@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { adminPatch, adminPost } from "@/lib/admin-fetch";
+
 export function CustomerActions({
   customerId,
   customerEmail,
@@ -28,24 +30,6 @@ export function CustomerActions({
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState("");
 
-  async function postJson(path: string, body?: unknown) {
-    const response = await fetch(path, {
-      method: "POST",
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const data = (await response.json().catch(() => ({}))) as {
-      error?: string;
-      balance?: number | null;
-      creditedTokens?: number;
-      revokedCount?: number;
-    };
-    if (!response.ok) {
-      throw new Error(data.error ?? "Action failed.");
-    }
-    return data;
-  }
-
   async function adjustTokens(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const parsedAmount = Number(amount);
@@ -57,10 +41,14 @@ export function CustomerActions({
     setLoading("tokens");
     setMessage("");
     try {
-      const data = await postJson(`/api/admin/customers/${customerId}/tokens`, {
+      const response = await adminPost(`/api/admin/customers/${customerId}/tokens`, {
         amount: parsedAmount,
         note,
       });
+      const data = (await response.json().catch(() => ({}))) as { error?: string; balance?: number };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Token adjustment failed.");
+      }
       setMessage(`Token balance updated to ${(data.balance ?? 0).toLocaleString()}.`);
       setNote("");
       router.refresh();
@@ -81,7 +69,11 @@ export function CustomerActions({
     setLoading("suspend");
     setMessage("");
     try {
-      await postJson(`/api/admin/customers/${customerId}/suspend`, { reason });
+      const response = await adminPost(`/api/admin/customers/${customerId}/suspend`, { reason });
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Suspend failed.");
+      }
       setMessage("Customer suspended.");
       router.refresh();
     } catch (error) {
@@ -95,7 +87,11 @@ export function CustomerActions({
     setLoading("unsuspend");
     setMessage("");
     try {
-      await postJson(`/api/admin/customers/${customerId}/unsuspend`);
+      const response = await adminPost(`/api/admin/customers/${customerId}/unsuspend`);
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Unsuspend failed.");
+      }
       setMessage("Customer unsuspended.");
       setReason("");
       router.refresh();
@@ -112,7 +108,11 @@ export function CustomerActions({
     setLoading("revoke");
     setMessage("");
     try {
-      const data = await postJson(`/api/admin/customers/${customerId}/revoke-keys`);
+      const response = await adminPost(`/api/admin/customers/${customerId}/revoke-keys`);
+      const data = (await response.json().catch(() => ({}))) as { error?: string; revokedCount?: number };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Key revoke failed.");
+      }
       setMessage(`Revoked ${(data.revokedCount ?? 0).toLocaleString()} active API keys.`);
       router.refresh();
     } catch (error) {
@@ -128,7 +128,7 @@ export function CustomerActions({
     setMessage("");
     try {
       const tokenCredit = parseOptionalTokenCredit(businessTokens);
-      const data = await postJson(`/api/admin/customers/${customerId}/business-access`, {
+      const response = await adminPost(`/api/admin/customers/${customerId}/business-access`, {
         tokenCredit,
         dailyTokenLimit: parseOptionalLimit(businessDaily, "Daily token limit"),
         monthlyTokenLimit: parseOptionalLimit(businessMonthly, "Monthly token limit"),
@@ -139,6 +139,14 @@ export function CustomerActions({
         note: businessNote,
         applyToActiveKeys: applyBusinessToKeys,
       });
+      const data = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        balance?: number | null;
+        creditedTokens?: number;
+      };
+      if (!response.ok) {
+        throw new Error(data.error ?? "Could not grant business access.");
+      }
       const balanceText = data.balance === null || data.balance === undefined
         ? ""
         : ` Balance is now ${data.balance.toLocaleString()}.`;
@@ -341,11 +349,7 @@ export function ApiKeyBusinessControls({
         maxConcurrentJobs: parseOptionalLimit(runningJobs, "Running job limit"),
         maxQueuedJobs: parseOptionalLimit(queuedJobs, "Queued job limit"),
       };
-      const response = await fetch(`/api/admin/customers/${customerId}/keys/${keyId}/limits`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(limits),
-      });
+      const response = await adminPatch(`/api/admin/customers/${customerId}/keys/${keyId}/limits`, limits);
       const data = (await response.json().catch(() => ({}))) as { error?: string };
       if (!response.ok) {
         throw new Error(data.error ?? "Could not update key limits.");

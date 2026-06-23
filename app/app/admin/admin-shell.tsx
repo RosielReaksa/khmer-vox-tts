@@ -26,6 +26,7 @@ const primaryNavItems: AdminNavItem[] = [
   { href: "/app/admin/business", label: "Business API", shortLabel: "BA" },
   { href: "/app/admin/usage", label: "Usage", shortLabel: "US" },
   { href: "/app/admin/activity", label: "Activity Log", shortLabel: "AL" },
+  { href: "/app/admin/audit", label: "Audit Log", shortLabel: "AU" },
   { href: "/app/admin/errors", label: "API Error Log", shortLabel: "EL" },
   { href: "/app/admin/jobs", label: "Worker Queue", shortLabel: "WQ" },
   { href: "/app/admin/payments", label: "Payments", shortLabel: "PM" },

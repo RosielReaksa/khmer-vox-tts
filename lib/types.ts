@@ -465,10 +465,33 @@ export type DataStore = {
   userVoices: UserVoiceRecord[];
   apiErrors: ApiErrorRecord[];
   systemSettings?: SystemSettingRecord[];
+  adminAuditLogs?: AdminAuditLogRecord[];
 };
 
 export type SystemSettingRecord = {
   key: string;
   value: string;
   updatedAt: string;
+};
+
+export type AdminAuditLogRecord = {
+  id: string;
+  adminUserId: string;
+  adminEmail: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  detail: string;
+  metadata: string | null;
+  createdAt: string;
+};
+
+export type AdminAuditLogFilter = {
+  limit?: number;
+  offset?: number;
+  action?: string;
+  adminUserId?: string;
+  targetType?: string;
+  fromDate?: string | null;
+  toDate?: string | null;
 };

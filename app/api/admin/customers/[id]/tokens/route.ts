@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { isAdminEmail } from "@/lib/admin";
 import { readSessionFromCookie } from "@/lib/session";
-import { adjustCustomerTokens } from "@/lib/store";
+import { adjustCustomerTokens, recordAdminAction } from "@/lib/store";
 
 const tokenAdjustmentSchema = z.object({
   amount: z.number().int().min(-100_000_000).max(100_000_000).refine((value) => value !== 0),
@@ -41,6 +41,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         : "Customer not found.";
     return NextResponse.json({ error: message, reason: result.reason, balance: result.balance }, { status });
   }
+
+  recordAdminAction({
+    adminUserId: session.userId,
+    adminEmail: session.email,
+    action: "adjust_tokens",
+    targetType: "user",
+    targetId: id,
+    detail: `Adjusted tokens by ${parsed.data.amount}${parsed.data.note ? `: ${parsed.data.note}` : ""}`,
+    metadata: { amount: parsed.data.amount, newBalance: result.balance },
+  }).catch(() => {});
 
   return NextResponse.json({
     ok: true,

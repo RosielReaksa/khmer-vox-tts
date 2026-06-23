@@ -1,6 +1,8 @@
 import "server-only";
 
 import type {
+  AdminAuditLogFilter,
+  AdminAuditLogRecord,
   AdminCustomerDetail,
   AdminCustomerSummary,
   ApiKeyRecord,
@@ -952,4 +954,22 @@ export async function getSystemSetting(key: string, defaultValue: string): Promi
 
 export async function setSystemSetting(key: string, value: string): Promise<void> {
   return (await activeStore()).setSystemSetting(key, value);
+}
+
+export async function recordAdminAction(input: {
+  adminUserId: string;
+  adminEmail: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  detail: string;
+  metadata?: Record<string, unknown> | null;
+}): Promise<AdminAuditLogRecord> {
+  return (await activeStore()).recordAdminAction(input);
+}
+
+export async function listAdminAuditLogsForAdmin(
+  filter: AdminAuditLogFilter = {},
+): Promise<{ rows: AdminAuditLogRecord[]; total: number }> {
+  return (await activeStore()).listAdminAuditLogsForAdmin(filter);
 }

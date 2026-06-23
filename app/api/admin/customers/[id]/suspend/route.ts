@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { isAdminEmail } from "@/lib/admin";
 import { readSessionFromCookie } from "@/lib/session";
-import { suspendCustomer } from "@/lib/store";
+import { suspendCustomer, recordAdminAction } from "@/lib/store";
 
 const suspendSchema = z.object({
   reason: z.string().trim().min(2).max(500),
@@ -37,6 +37,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!user) {
     return NextResponse.json({ error: "Customer not found." }, { status: 404 });
   }
+
+  recordAdminAction({
+    adminUserId: session.userId,
+    adminEmail: session.email,
+    action: "suspend_customer",
+    targetType: "user",
+    targetId: id,
+    detail: `Suspended customer: ${parsed.data.reason}`,
+    metadata: { reason: parsed.data.reason },
+  }).catch(() => {});
 
   return NextResponse.json({ ok: true, user });
 }

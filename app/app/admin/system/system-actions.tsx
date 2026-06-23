@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { adminPost } from "@/lib/admin-fetch";
+
 type SystemAction =
   | "database"
   | "telegram"
@@ -125,11 +127,7 @@ export function SystemTestPanel() {
   async function run(action: SystemAction) {
     setLoadingAction(action);
     try {
-      const response = await fetch("/api/admin/system/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      });
+      const response = await adminPost("/api/admin/system/test", { action });
       const data = (await response.json()) as Partial<TestResult> & {
         error?: string;
       };
@@ -283,11 +281,7 @@ export function AdminStatusPanel() {
     setMessage("");
     const target = !active;
     try {
-      const res = await fetch("/api/admin/admin-status", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ active: target }),
-      });
+      const res = await adminPost("/api/admin/admin-status", { active: target });
       if (res.ok) {
         const data = await res.json();
         setActive(data.active);

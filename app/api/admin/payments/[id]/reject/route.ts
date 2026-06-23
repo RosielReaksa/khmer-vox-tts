@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { isAdminEmail } from "@/lib/admin";
 import { readSessionFromCookie } from "@/lib/session";
-import { rejectPaymentOrder } from "@/lib/store";
+import { rejectPaymentOrder, recordAdminAction } from "@/lib/store";
 
 const actionSchema = z.object({
   adminNote: z.string().max(500).optional(),
@@ -48,6 +48,16 @@ export async function POST(
         { status: result.reason === "ORDER_NOT_FOUND" ? 404 : 409 },
       );
     }
+
+    recordAdminAction({
+      adminUserId: session.userId,
+      adminEmail: session.email,
+      action: "reject_payment",
+      targetType: "payment_order",
+      targetId: id,
+      detail: "Rejected payment order",
+      metadata: { orderUserId: result.order?.userId ?? null, adminNote: parsed.data.adminNote?.trim() ?? null },
+    }).catch(() => {});
 
     return NextResponse.json({ ok: true, order: result.order });
   } catch {

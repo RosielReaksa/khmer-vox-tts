@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { isAdminEmail } from "@/lib/admin";
 import { readSessionFromCookie } from "@/lib/session";
-import { updateApiKeyLimits } from "@/lib/store";
+import { updateApiKeyLimits, recordAdminAction } from "@/lib/store";
 
 const optionalLimitSchema = z.number().int().positive().max(100_000_000).nullable().optional();
 
@@ -38,6 +38,16 @@ export async function PATCH(
   if (!key) {
     return NextResponse.json({ error: "API key not found." }, { status: 404 });
   }
+
+  recordAdminAction({
+    adminUserId: session.userId,
+    adminEmail: session.email,
+    action: "update_key_limits",
+    targetType: "api_key",
+    targetId: keyId,
+    detail: `Updated business limits for API key ${keyId}`,
+    metadata: { userId: id, ...parsed.data },
+  }).catch(() => {});
 
   return NextResponse.json({ ok: true, key });
 }
