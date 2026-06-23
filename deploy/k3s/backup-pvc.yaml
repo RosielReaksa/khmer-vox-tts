@@ -1,0 +1,21 @@
+# PersistentVolumeClaim for automated database backups
+#
+# This creates a dedicated 20Gi volume for storing PostgreSQL backups.
+# Sized to hold ~14 days of daily backups (each ~50-200MB depending on data).
+#
+# Apply before the CronJob:
+#   kubectl apply -f backup-pvc.yaml
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: voxtts-backup-pvc
+  namespace: khmer-vox
+  labels:
+    app: voxtts-backup
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi

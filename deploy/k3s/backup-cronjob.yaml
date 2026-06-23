@@ -1,0 +1,125 @@
+# Automated daily PostgreSQL backup CronJob for Khmer Vox TTS
+#
+# Deploys to the khmer-vox namespace. Runs daily at 03:00 UTC.
+# Stores backups on a dedicated PVC (/backups) with 14-day retention.
+#
+# Prerequisites:
+#   1. Apply the backup PVC first: kubectl apply -f backup-pvc.yaml
+#   2. Then apply this CronJob: kubectl apply -f backup-cronjob.yaml
+#
+# Manual trigger:
+#   kubectl -n khmer-vox create job --from=cronjob/voxtts-db-backup voxtts-db-backup-manual-$(date +%s)
+#
+# Check logs:
+#   kubectl -n khmer-vox logs job/voxtts-db-backup -f
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: voxtts-db-backup
+  namespace: khmer-vox
+  labels:
+    app: voxtts-db-backup
+spec:
+  # Run daily at 03:00 UTC (10:00 AM ICT)
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900  # 15 min max
+      template:
+        metadata:
+          labels:
+            app: voxtts-db-backup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+
+                  # Extract password from DATABASE_URL if PGPASSWORD is not set
+                  if [ -z "${PGPASSWORD:-}" ] && [ -n "${DATABASE_URL:-}" ]; then
+                    export PGPASSWORD=$(echo "${DATABASE_URL}" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p')
+                  fi
+
+                  TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+                  BACKUP_DIR="/backups/${TIMESTAMP}"
+                  mkdir -p "${BACKUP_DIR}"
+                  chmod 700 "${BACKUP_DIR}"
+
+                  echo "[${TIMESTAMP}] Starting backup..."
+
+                  # Wait for postgres to be ready
+                  until pg_isready -h "${PG_HOST}" -U "${PG_USER}" -d "${PG_DB}" -q; do
+                    echo "Waiting for postgres..."
+                    sleep 5
+                  done
+
+                  # Full custom-format dump (restorable with pg_restore)
+                  echo "Dumping database (custom format)..."
+                  pg_dump -h "${PG_HOST}" -U "${PG_USER}" -d "${PG_DB}" \
+                    --format=custom --no-owner --no-privileges \
+                    > "${BACKUP_DIR}/postgres-voxtts.dump"
+
+                  # Schema-only snapshot for quick reference
+                  echo "Dumping schema..."
+                  pg_dump -h "${PG_HOST}" -U "${PG_USER}" -d "${PG_DB}" \
+                    --schema-only --no-owner --no-privileges \
+                    > "${BACKUP_DIR}/postgres-schema.sql"
+
+                  # Verify dump is not empty
+                  DUMP_SIZE=$(wc -c < "${BACKUP_DIR}/postgres-voxtts.dump")
+                  if [ "${DUMP_SIZE}" -lt 100 ]; then
+                    echo "ERROR: Backup dump is suspiciously small (${DUMP_SIZE} bytes)"
+                    exit 1
+                  fi
+
+                  # Checksums
+                  cd "${BACKUP_DIR}"
+                  sha256sum postgres-voxtts.dump postgres-schema.sql > SHA256SUMS
+
+                  echo "Backup completed: ${BACKUP_DIR} (${DUMP_SIZE} bytes)"
+
+                  # Cleanup old backups (keep last 14 days)
+                  echo "Cleaning up backups older than 14 days..."
+                  find /backups -mindepth 1 -maxdepth 1 -type d -name '20*T*Z' -mtime +14 -exec rm -rf {} + 2>/dev/null || true
+
+                  REMAINING=$(find /backups -mindepth 1 -maxdepth 1 -type d -name '20*T*Z' | wc -l)
+                  echo "Backups remaining: ${REMAINING}"
+                  echo "Done."
+              env:
+                - name: PG_HOST
+                  value: "khmer-vox-postgres"
+                - name: PG_USER
+                  value: "postgres"
+                - name: PG_DB
+                  value: "voxtts"
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: khmer-vox-secrets
+                      key: DATABASE_URL
+                      optional: true
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+              resources:
+                requests:
+                  memory: "128Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "256Mi"
+                  cpu: "500m"
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: voxtts-backup-pvc

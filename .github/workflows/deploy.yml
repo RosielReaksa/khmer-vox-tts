@@ -1,0 +1,170 @@
+# Deploy Pipeline — manual trigger for production deployment
+#
+# Builds Docker image, pushes to GHCR, deploys to K3s on the VPS.
+#
+# Required GitHub Secrets:
+#   GHCR_TOKEN         - GitHub Container Registry token (PAT with write:packages)
+#   VPS_HOST           - Production VPS IP address
+#   VPS_SSH_KEY        - SSH private key for the VPS
+#   VPS_USER           - SSH username (usually 'root')
+#
+# Usage:
+#   Go to Actions → Deploy to Production → Run workflow
+#   Enter the tag (e.g., prod-20260623-1) and click Run.
+
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (e.g., prod-20260623-1)"
+        required: true
+        type: string
+      skip_tests:
+        description: "Skip CI tests (emergency deploy only)"
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: rosielreaksa/khmer-vox-tts
+
+jobs:
+  # ──────────────────────────────────────────────────────
+  # Stage 1: Validate (unless skipped)
+  # ──────────────────────────────────────────────────────
+  test:
+    name: Pre-deploy Validation
+    if: ${{ !inputs.skip_tests }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - run: npx eslint app lib scripts --max-warnings 100
+      - run: npx tsc --noEmit
+      - run: npm run build
+        env:
+          DATABASE_URL: "postgresql://dummy:dummy@localhost:5432/dummy"
+          SESSION_SECRET: "build-time-dummy-secret-at-least-32-chars-long"
+          NODE_ENV: "production"
+
+  # ──────────────────────────────────────────────────────
+  # Stage 2: Build & Push Docker image
+  # ──────────────────────────────────────────────────────
+  build:
+    name: Build & Push Image
+    needs: [test]
+    if: ${{ !cancelled() && (needs.test.result == 'success' || inputs.skip_tests) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image_tag: ${{ inputs.tag }}
+      image_digest: ${{ steps.build-push.outputs.digest }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        id: build-push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ──────────────────────────────────────────────────────
+  # Stage 3: Deploy to K3s on VPS
+  # ──────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to K3s
+    needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            TAG="${{ inputs.tag }}"
+            NAMESPACE="khmer-vox"
+            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
+
+            echo "=== Deploying ${TAG} ==="
+
+            # Set image on both deployments
+            kubectl -n ${NAMESPACE} set image deployment/khmer-vox-web web=${IMAGE}
+            kubectl -n ${NAMESPACE} set image deployment/khmer-vox-worker worker=${IMAGE}
+
+            # Wait for rollout
+            echo "Waiting for web rollout..."
+            kubectl -n ${NAMESPACE} rollout status deployment/khmer-vox-web --timeout=180s
+            echo "Waiting for worker rollout..."
+            kubectl -n ${NAMESPACE} rollout status deployment/khmer-vox-worker --timeout=180s
+
+            # Verify health
+            echo "Verifying health..."
+            sleep 5
+            HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" https://voxtts.online/api/health || echo "000")
+            if [ "${HTTP_CODE}" = "200" ]; then
+              echo "Health check passed (HTTP ${HTTP_CODE})"
+            else
+              echo "WARNING: Health check returned HTTP ${HTTP_CODE}"
+              echo "Check pod status: kubectl -n ${NAMESPACE} get pods"
+            fi
+
+            # Show final state
+            echo "=== Final State ==="
+            kubectl -n ${NAMESPACE} get deploy -o wide
+            kubectl -n ${NAMESPACE} get pods
+
+  # ──────────────────────────────────────────────────────
+  # Stage 4: Post-deploy verification
+  # ──────────────────────────────────────────────────────
+  verify:
+    name: Post-deploy Verify
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify endpoints
+        run: |
+          echo "Checking production endpoints..."
+          for ENDPOINT in "/api/health" "/app/signin" "/" "/docs"; do
+            CODE=$(curl -sk -o /dev/null -w "%{http_code}" "https://voxtts.online${ENDPOINT}" || echo "000")
+            echo "  ${ENDPOINT}: HTTP ${CODE}"
+            if [ "${CODE}" = "000" ]; then
+              echo "  WARNING: Could not reach ${ENDPOINT}"
+            fi
+          done

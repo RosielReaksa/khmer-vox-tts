@@ -1,0 +1,26 @@
+# Monitoring Stack for Khmer Vox TTS
+#
+# Lightweight Prometheus + Grafana setup for K3s.
+# Designed for a 2 vCPU / 4 GB RAM VPS.
+#
+# Components:
+#   - Prometheus (metrics collection, 200MB RAM limit)
+#   - Grafana (dashboards, 200MB RAM limit)
+#   - Node Exporter (VPS-level metrics, DaemonSet)
+#
+# Deploy:
+#   kubectl apply -f deploy/monitoring/namespace.yaml
+#   kubectl apply -f deploy/monitoring/prometheus.yaml
+#   kubectl apply -f deploy/monitoring/grafana.yaml
+#   kubectl apply -f deploy/monitoring/node-exporter.yaml
+#
+# Access Grafana:
+#   kubectl -n monitoring port-forward svc/grafana 3001:3000
+#   Open http://localhost:3001 (admin / admin — change on first login)
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/part-of: monitoring
