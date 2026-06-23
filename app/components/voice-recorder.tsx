@@ -43,6 +43,7 @@ export default function VoiceRecorder({
   const [barHeights, setBarHeights] = useState<number[]>(
     Array.from({ length: BAR_COUNT }, () => 0)
   );
+  const [permDenied, setPermDenied] = useState(false);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -52,6 +53,27 @@ export default function VoiceRecorder({
       stopRaf();
       if (audioUrl) URL.revokeObjectURL(audioUrl);
     };
+  }, []);
+
+  // Check mic permission state on mount
+  useEffect(() => {
+    if (typeof navigator !== "undefined" && navigator.permissions) {
+      navigator.permissions.query({ name: "microphone" as PermissionName }).then((result) => {
+        if (result.state === "denied") {
+          setPermDenied(true);
+        }
+        // Also listen for changes
+        result.onchange = () => {
+          if (result.state === "denied") {
+            setPermDenied(true);
+          } else {
+            setPermDenied(false);
+          }
+        };
+      }).catch(() => {
+        // Permissions API not available — fall back to getUserMedia prompt
+      });
+    }
   }, []);
 
   // Auto-start mic when component mounts with autoStart=true
@@ -424,11 +446,40 @@ export default function VoiceRecorder({
 
       {/* Error message */}
       {state === "error" && (
-        <div className="flex items-start gap-2 px-1">
-          <span className="material-symbols-outlined text-sm text-red-500 shrink-0 mt-0.5" aria-hidden="true">error</span>
-          <p className="font-body text-xs leading-relaxed text-red-500">
-            {errorMsg}
-          </p>
+        <div className="grid gap-2 px-1">
+          <div className="flex items-start gap-2">
+            <span className="material-symbols-outlined text-sm text-red-500 shrink-0 mt-0.5" aria-hidden="true">error</span>
+            <p className="font-body text-xs leading-relaxed text-red-500">
+              {errorMsg}
+            </p>
+          </div>
+          {permDenied && (
+            <div className="border border-red-400/30 bg-red-950/20 rounded-lg px-3 py-2.5 grid gap-2">
+              <p className="font-headline text-[10px] font-bold uppercase text-red-400">
+                Microphone is blocked. To fix this:
+              </p>
+              <ol className="list-decimal list-inside font-body text-[11px] leading-relaxed text-red-300/80 space-y-1">
+                <li>Click the <span className="font-bold">lock icon 🔒</span> next to the URL in the address bar</li>
+                <li>Click <span className="font-bold">Site settings</span></li>
+                <li>Find <span className="font-bold">Microphone</span> and change it to <span className="font-bold">"Ask"</span> or <span className="font-bold">"Allow"</span></li>
+                <li>Refresh this page and try recording again</li>
+              </ol>
+              <p className="font-body text-[10px] text-red-400/60">
+                Or type <span className="font-mono bg-red-950/40 px-1 rounded">chrome://settings/content/microphone</span> in the address bar, find this site and remove it from the blocked list.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  // Try to open browser settings (Brave/Chrome)
+                  try { window.open("brave://settings/content/microphone", "_blank"); } catch { /* ignore */ }
+                }}
+                className="self-start mt-1 flex items-center gap-1 border border-red-400/30 bg-red-950/40 px-3 py-1.5 font-headline text-[9px] font-bold uppercase tracking-wide text-red-300 hover:bg-red-950/60 transition-colors rounded"
+              >
+                <span className="material-symbols-outlined text-xs" aria-hidden="true">settings</span>
+                Open mic settings
+              </button>
+            </div>
+          )}
         </div>
       )}
 
