@@ -30,6 +30,7 @@ export default function VoiceRecorder({
   const rafRef = useRef<number | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const isRecordingRef = useRef(false);
+  const isStartingRef = useRef(false);
 
   const [state, setState] = useState<RecorderState>("idle");
   const [elapsed, setElapsed] = useState(0);
@@ -103,7 +104,8 @@ export default function VoiceRecorder({
   }
 
   async function startRecording() {
-    if (disabled) return;
+    if (disabled || isStartingRef.current) return;
+    isStartingRef.current = true;
     setState("requesting");
     setErrorMsg("");
 
@@ -144,6 +146,7 @@ export default function VoiceRecorder({
       recorder.onstop = () => {
         stopTracks();
         isRecordingRef.current = false;
+        isStartingRef.current = false;
 
         if (analyserRef.current) {
           analyserRef.current.disconnect();
@@ -166,6 +169,7 @@ export default function VoiceRecorder({
 
       recorder.onerror = () => {
         stopTracks();
+        isStartingRef.current = false;
         setState("error");
         setErrorMsg("Recording failed. Please try again.");
       };
@@ -173,6 +177,7 @@ export default function VoiceRecorder({
       recorder.start(250);
       setState("recording");
       isRecordingRef.current = true;
+      isStartingRef.current = false;
 
       // Start drawing waveform bars
       if (analyserRef.current) {
@@ -189,13 +194,14 @@ export default function VoiceRecorder({
       }, 200);
     } catch (err) {
       stopTracks();
+      isStartingRef.current = false;
       setState("error");
       if (err instanceof DOMException && err.name === "NotAllowedError") {
-        setErrorMsg("Microphone access denied. Please allow microphone permissions in your browser settings.");
+        setErrorMsg("Could not start recording. Please check microphone permissions.");
       } else if (err instanceof DOMException && err.name === "NotFoundError") {
         setErrorMsg("No microphone found. Please connect a microphone and try again.");
       } else {
-        setErrorMsg("Could not start recording. Please check your microphone permissions.");
+        setErrorMsg("Could not start recording. Please check microphone permissions.");
       }
     }
   }
@@ -209,6 +215,7 @@ export default function VoiceRecorder({
 
   function stopRecording() {
     isRecordingRef.current = false;
+    isStartingRef.current = false;
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
@@ -216,6 +223,7 @@ export default function VoiceRecorder({
 
   function clearRecording() {
     isRecordingRef.current = false;
+    isStartingRef.current = false;
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
