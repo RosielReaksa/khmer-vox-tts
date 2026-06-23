@@ -96,37 +96,35 @@ export default function HomePlayground() {
         />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
-        <div className="flex flex-col gap-2">
-          <label className="font-label text-sm uppercase font-bold text-primary">{t("playground.voiceModel")}</label>
-          <div className="grid grid-cols-1 gap-2.5">
-            <VoicePreviewCard
-              voice="female"
-              selected={voice === "female"}
-              onSelect={() => setVoice("female")}
-              disabled={busy}
-              name="Sokha"
-              gender={t("playground.femaleLabel")}
-              costRate="1.5 tok/sec"
-              icon="face_3"
-              previewLabel={t("playground.preview")}
-              playLabel={t("playground.previewPlay")}
-              stopLabel={t("playground.previewStop")}
-            />
-            <VoicePreviewCard
-              voice="male"
-              selected={voice === "male"}
-              onSelect={() => setVoice("male")}
-              disabled={busy}
-              name="Piseth"
-              gender={t("playground.maleLabel")}
-              costRate="1.5 tok/sec"
-              icon="face"
-              previewLabel={t("playground.preview")}
-              playLabel={t("playground.previewPlay")}
-              stopLabel={t("playground.previewStop")}
-            />
-          </div>
+      <div className="flex flex-col gap-2">
+        <label className="font-label text-sm uppercase font-bold text-primary">{t("playground.voiceModel")}</label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <VoicePreviewCard
+            voice="female"
+            selected={voice === "female"}
+            onSelect={() => setVoice("female")}
+            disabled={busy}
+            name="Sokha"
+            gender={t("playground.femaleLabel")}
+            costRate="1.5 tok/sec"
+            icon="face_3"
+            previewLabel={t("playground.preview")}
+            playLabel={t("playground.previewPlay")}
+            stopLabel={t("playground.previewStop")}
+          />
+          <VoicePreviewCard
+            voice="male"
+            selected={voice === "male"}
+            onSelect={() => setVoice("male")}
+            disabled={busy}
+            name="Piseth"
+            gender={t("playground.maleLabel")}
+            costRate="1.5 tok/sec"
+            icon="face"
+            previewLabel={t("playground.preview")}
+            playLabel={t("playground.previewPlay")}
+            stopLabel={t("playground.previewStop")}
+          />
         </div>
       </div>
 

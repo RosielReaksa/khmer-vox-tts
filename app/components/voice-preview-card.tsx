@@ -32,7 +32,6 @@ export default function VoicePreviewCard({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
 
-  // Pause playback if the component becomes disabled (e.g. during generation).
   useEffect(() => {
     if (disabled && audioRef.current) {
       audioRef.current.pause();
@@ -40,7 +39,6 @@ export default function VoicePreviewCard({
     }
   }, [disabled]);
 
-  // Stop audio when the card is unmounted.
   useEffect(() => {
     return () => {
       audioRef.current?.pause();
@@ -64,7 +62,7 @@ export default function VoicePreviewCard({
       await audio.play();
       setPlaying(true);
     } catch {
-      // Autoplay can be blocked by the browser; fail silently.
+      // autoplay blocked
     }
   }
 
@@ -74,9 +72,9 @@ export default function VoicePreviewCard({
 
   return (
     <div
-      role="button"
+      role="radio"
       tabIndex={0}
-      aria-pressed={selected}
+      aria-checked={selected}
       onClick={() => !disabled && onSelect()}
       onKeyDown={(event) => {
         if ((event.key === "Enter" || event.key === " ") && !disabled) {
@@ -84,73 +82,78 @@ export default function VoicePreviewCard({
           onSelect();
         }
       }}
-      className={`relative flex flex-col gap-3 border-4 p-3.5 md:p-4 transition-all shadow-[3px_3px_0px_0px_rgba(26,26,26,1)] active:translate-y-0.5 active:shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-tertiary ${
-        selected
-          ? "bg-primary text-primary-fixed border-primary"
-          : "bg-surface text-primary border-primary hover:bg-[#faf7f2]"
-      } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+      className={`relative flex flex-col gap-2.5 border-3 p-3.5 cursor-pointer outline-none transition-all duration-100 ease-linear
+        ${selected
+          ? "bg-primary text-primary-fixed border-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]"
+          : "bg-surface text-primary border-primary hover:bg-[#faf7f2] shadow-[3px_3px_0px_0px_rgba(26,26,26,1)] hover:shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:translate-x-0.5 hover:translate-y-0.5"
+        }
+        ${disabled ? "opacity-50 cursor-not-allowed" : ""}
+      `}
     >
       <audio ref={audioRef} src={`/voices/reference_${voice}.wav`} preload="none" onEnded={handleEnded} />
 
-      {/* Header row: icon + name + selected check */}
+      {/* Top row: icon + name + selected badge */}
       <div className="flex items-center gap-2.5">
         <span
-          className={`grid h-9 w-9 shrink-0 place-items-center border-2 border-primary ${
+          className={`grid h-8 w-8 shrink-0 place-items-center border-2 border-primary text-base ${
             selected ? "bg-primary-fixed text-primary" : "bg-tertiary text-on-tertiary"
           }`}
         >
-          <span className="material-symbols-outlined text-lg" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
+          <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
             {icon}
           </span>
         </span>
         <div className="min-w-0 flex-1">
-          <p className="font-headline text-sm font-black uppercase leading-none tracking-tight truncate">
+          <p className="font-headline text-sm font-black uppercase leading-tight truncate">
             {name}
           </p>
-          <p className={`font-label text-[10px] uppercase font-bold ${selected ? "text-primary-fixed/80" : "text-on-surface-variant"}`}>
+          <p className={`font-label text-[10px] uppercase font-bold ${selected ? "text-primary-fixed/75" : "text-on-surface-variant"}`}>
             {gender}
           </p>
         </div>
-        {selected ? (
-          <span className="material-symbols-outlined text-xl shrink-0" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
+        {selected && (
+          <span className="material-symbols-outlined text-lg shrink-0" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
             check_circle
           </span>
-        ) : null}
+        )}
       </div>
 
-      {/* Cost rate */}
-      <p className={`font-headline text-[10px] font-bold uppercase tracking-wide ${selected ? "text-primary-fixed/80" : "text-on-surface-variant"}`}>
-        {costRate}
-      </p>
-
-      {/* Preview button + equalizer */}
-      <button
-        type="button"
-        onClick={togglePreview}
-        disabled={disabled}
-        aria-label={playing ? stopLabel : playLabel}
-        className={`flex items-center gap-2 border-2 px-3 py-1.5 font-headline text-[11px] font-bold uppercase tracking-wide transition-colors ${
-          selected
-            ? "border-primary-fixed bg-primary-fixed/15 text-primary-fixed hover:bg-primary-fixed/25"
-            : "border-primary bg-white text-primary hover:bg-[#f2ede5]"
-        } disabled:cursor-not-allowed self-start`}
-      >
-        <span className="material-symbols-outlined text-base" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
-          {playing ? "stop" : "play_arrow"}
+      {/* Bottom row: cost rate + preview button */}
+      <div className="flex items-center justify-between gap-2">
+        <span className={`font-headline text-[10px] font-bold uppercase tracking-wide ${selected ? "text-primary-fixed/70" : "text-on-surface-variant"}`}>
+          {costRate}
         </span>
-        {playing ? stopLabel : previewLabel}
-        {playing ? (
-          <span className="flex items-end gap-[2px] ml-0.5" aria-hidden="true">
-            {[0, 1, 2, 3, 4].map((i) => (
-              <span
-                key={i}
-                className="voice-eq-bar w-[2px] bg-current"
-                style={{ animationDelay: `${i * 0.12}s` }}
-              />
-            ))}
+
+        <button
+          type="button"
+          onClick={togglePreview}
+          disabled={disabled}
+          aria-label={playing ? stopLabel : playLabel}
+          className={`flex items-center gap-1.5 border-2 px-2.5 py-1 font-headline text-[10px] font-bold uppercase tracking-wide transition-all shrink-0
+            ${selected
+              ? "border-primary-fixed bg-primary-fixed/15 text-primary-fixed hover:bg-primary-fixed/25"
+              : "border-primary bg-white text-primary hover:bg-[#f2ede5]"
+            }
+            disabled:cursor-not-allowed
+          `}
+        >
+          <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
+            {playing ? "stop" : "play_arrow"}
           </span>
-        ) : null}
-      </button>
+          <span>{playing ? stopLabel : previewLabel}</span>
+          {playing && (
+            <span className="flex items-end gap-[2.5px] h-3" aria-hidden="true">
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <span
+                  key={i}
+                  className="voice-eq-bar block w-[2.5px] bg-current rounded-[1px]"
+                  style={{ animationDelay: `${i * 0.1}s`, height: `${8 + (i % 3) * 5}px` }}
+                />
+              ))}
+            </span>
+          )}
+        </button>
+      </div>
     </div>
   );
 }
@@ -199,14 +202,14 @@ export function VoicePreviewButton({ voice }: { voice: "female" | "male" }) {
         <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
           {playing ? "stop" : "play_arrow"}
         </span>
-        {playing ? "Stop" : "Preview"}
-        {playing ? (
-          <span className="flex items-end gap-[2px] ml-0.5" aria-hidden="true">
+        <span>{playing ? "Stop" : "Preview"}</span>
+        {playing && (
+          <span className="flex items-end gap-[2px] h-3" aria-hidden="true">
             {[0, 1, 2].map((i) => (
-              <span key={i} className="voice-eq-bar w-[2px] bg-current" style={{ animationDelay: `${i * 0.12}s` }} />
+              <span key={i} className="voice-eq-bar w-[2px] bg-current rounded-[1px]" style={{ animationDelay: `${i * 0.12}s` }} />
             ))}
           </span>
-        ) : null}
+        )}
       </button>
     </>
   );
