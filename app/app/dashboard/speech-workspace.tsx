@@ -6,7 +6,7 @@ import { clearDashboardCache } from "@/app/app/dashboard/dashboard-data-cache";
 import { useDashboardUser } from "@/app/app/dashboard/dashboard-user-context";
 import LineAudioPlayer from "@/app/components/line-audio-player";
 import { Portal } from "@/app/components/portal";
-import VoicePreviewCard, { VoicePreviewButton } from "@/app/components/voice-preview-card";
+import VoicePreviewCard from "@/app/components/voice-preview-card";
 
 import { MAX_DASHBOARD_TTS_CHARS } from "@/lib/usage-policy";
 import {
@@ -838,7 +838,6 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                 const isFemale = voice === "female";
                 const isMale = voice === "male";
                 const isTempClone = voice === DEFAULT_CLONE_VOICE_INSTRUCTION;
-                const isPreset = isFemale || isMale;
 
                 let name = "";
                 let type = "";
@@ -894,9 +893,6 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                         <span className="font-body text-[9px] font-bold text-gray-500 uppercase">
                           ({type})
                         </span>
-                        {isPreset ? (
-                          <VoicePreviewButton voice={isFemale ? "female" : "male"} />
-                        ) : null}
                       </div>
                       <p className="font-body text-xs text-gray-700 leading-normal">
                         {description}
