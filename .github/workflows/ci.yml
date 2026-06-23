@@ -1,4 +1,4 @@
-# CI Pipeline — runs on every push and pull request
+# CI Pipeline â€” runs on every push and pull request
 #
 # Validates: install, lint, typecheck, build
 # Does NOT deploy anything.
