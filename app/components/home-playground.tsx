@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import LineAudioPlayer from "@/app/components/line-audio-player";
+import VoicePreviewCard from "@/app/components/voice-preview-card";
 import { useT } from "@/app/components/locale-provider";
 
 export default function HomePlayground() {
@@ -98,37 +99,33 @@ export default function HomePlayground() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
         <div className="flex flex-col gap-2">
           <label className="font-label text-sm uppercase font-bold text-primary">{t("playground.voiceModel")}</label>
-          <div className="grid grid-cols-2 gap-2 w-full">
-            <button
-              type="button"
+          <div className="grid grid-cols-1 gap-2.5">
+            <VoicePreviewCard
+              voice="female"
+              selected={voice === "female"}
+              onSelect={() => setVoice("female")}
               disabled={busy}
-              onClick={() => setVoice("female")}
-              className={`flex items-center justify-center gap-1.5 border-4 p-2.5 font-label font-bold text-xs sm:text-sm md:text-base transition-all shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none ${
-                voice === "female"
-                  ? "bg-primary text-primary-fixed border-primary"
-                  : "bg-surface text-primary border-primary hover:bg-[#faf7f2]"
-              } disabled:opacity-50 disabled:cursor-not-allowed`}
-            >
-              <span className="material-symbols-outlined text-sm md:text-base shrink-0" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
-                face_3
-              </span>
-              <span className="truncate">{t("playground.female")}</span>
-            </button>
-            <button
-              type="button"
+              name="Sokha"
+              gender={t("playground.femaleLabel")}
+              costRate="1.5 tok/sec"
+              icon="face_3"
+              previewLabel={t("playground.preview")}
+              playLabel={t("playground.previewPlay")}
+              stopLabel={t("playground.previewStop")}
+            />
+            <VoicePreviewCard
+              voice="male"
+              selected={voice === "male"}
+              onSelect={() => setVoice("male")}
               disabled={busy}
-              onClick={() => setVoice("male")}
-              className={`flex items-center justify-center gap-1.5 border-4 p-2.5 font-label font-bold text-xs sm:text-sm md:text-base transition-all shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none ${
-                voice === "male"
-                  ? "bg-primary text-primary-fixed border-primary"
-                  : "bg-surface text-primary border-primary hover:bg-[#faf7f2]"
-              } disabled:opacity-50 disabled:cursor-not-allowed`}
-            >
-              <span className="material-symbols-outlined text-sm md:text-base shrink-0" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
-                face
-              </span>
-              <span className="truncate">{t("playground.male")}</span>
-            </button>
+              name="Piseth"
+              gender={t("playground.maleLabel")}
+              costRate="1.5 tok/sec"
+              icon="face"
+              previewLabel={t("playground.preview")}
+              playLabel={t("playground.previewPlay")}
+              stopLabel={t("playground.previewStop")}
+            />
           </div>
         </div>
       </div>

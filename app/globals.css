@@ -713,3 +713,17 @@ html[lang="km"] .font-body {
     -ms-overflow-style: none; /* IE and Edge */
     scrollbar-width: none; /* Firefox */
 }
+
+/* Voice preview equalizer bars */
+.voice-eq-bar {
+    height: 12px;
+    transform-origin: bottom;
+    animation: voice-eq 0.9s ease-in-out infinite alternate;
+}
+@keyframes voice-eq {
+    0% { transform: scaleY(0.3); }
+    100% { transform: scaleY(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .voice-eq-bar { animation: none; transform: scaleY(0.7); }
+}
