@@ -14,6 +14,8 @@ type VoiceRecorderProps = {
   disabled?: boolean;
 };
 
+const BAR_COUNT = 24;
+
 export default function VoiceRecorder({
   onRecordingComplete,
   onClear,
@@ -25,18 +27,25 @@ export default function VoiceRecorder({
   const chunksRef = useRef<Blob[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const isRecordingRef = useRef(false);
 
   const [state, setState] = useState<RecorderState>("idle");
   const [elapsed, setElapsed] = useState(0);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [playing, setPlaying] = useState(false);
+  const [barHeights, setBarHeights] = useState<number[]>(
+    Array.from({ length: BAR_COUNT }, () => 0)
+  );
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopTracks();
-      if (timerRef.current) clearInterval(timerRef.current);
+      stopTimer();
+      stopRaf();
       if (audioUrl) URL.revokeObjectURL(audioUrl);
     };
   }, []);
@@ -48,21 +57,71 @@ export default function VoiceRecorder({
     }
   }
 
+  function stopTimer() {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  function stopRaf() {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  }
+
   function formatTime(seconds: number): string {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
-    return `${m}:${s.toString().padStart(2, "0")}`;
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  }
+
+  function drawBars() {
+    const analyser = analyserRef.current;
+    if (!analyser) return;
+
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    analyser.getByteFrequencyData(dataArray);
+
+    // Sample down to BAR_COUNT bars
+    const step = Math.floor(bufferLength / BAR_COUNT);
+    const heights: number[] = [];
+    for (let i = 0; i < BAR_COUNT; i++) {
+      let sum = 0;
+      for (let j = 0; j < step; j++) {
+        sum += dataArray[i * step + j] ?? 0;
+      }
+      const avg = sum / step;
+      // Normalize: 0-255 → 0-1
+      heights.push(avg / 255);
+    }
+    setBarHeights(heights);
+
+    rafRef.current = requestAnimationFrame(drawBars);
   }
 
   async function startRecording() {
     if (disabled) return;
     setState("requesting");
     setErrorMsg("");
-    chunksRef.current = [];
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+
+      // Set up audio analyser for waveform visualization
+      try {
+        const audioCtx = new AudioContext();
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 64;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+      } catch {
+        // Analyser is optional — waveform bars will stay at 0
+      }
 
       // Determine a supported mime type
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -74,6 +133,8 @@ export default function VoiceRecorder({
       const recorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = recorder;
 
+      chunksRef.current = [];
+
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           chunksRef.current.push(event.data);
@@ -82,6 +143,13 @@ export default function VoiceRecorder({
 
       recorder.onstop = () => {
         stopTracks();
+        isRecordingRef.current = false;
+
+        if (analyserRef.current) {
+          analyserRef.current.disconnect();
+          analyserRef.current = null;
+        }
+
         const blob = new Blob(chunksRef.current, { type: mimeType });
         const file = new File([blob], `recording.${mimeType.includes("mp4") ? "mp4" : "webm"}`, {
           type: blob.type,
@@ -91,8 +159,9 @@ export default function VoiceRecorder({
         setState("done");
         onRecordingComplete(file);
 
-        if (timerRef.current) clearInterval(timerRef.current);
-        setElapsed(0);
+        stopTimer();
+        stopRaf();
+        setBarHeights(Array.from({ length: BAR_COUNT }, () => 0));
       };
 
       recorder.onerror = () => {
@@ -101,8 +170,17 @@ export default function VoiceRecorder({
         setErrorMsg("Recording failed. Please try again.");
       };
 
-      recorder.start(250); // collect data every 250ms
+      recorder.start(250);
       setState("recording");
+      isRecordingRef.current = true;
+
+      // Start drawing waveform bars
+      if (analyserRef.current) {
+        rafRef.current = requestAnimationFrame(drawBars);
+      } else {
+        // Fallback: animate bars randomly
+        animateFallbackBars();
+      }
 
       // Start elapsed timer
       const startTime = Date.now();
@@ -117,18 +195,27 @@ export default function VoiceRecorder({
       } else if (err instanceof DOMException && err.name === "NotFoundError") {
         setErrorMsg("No microphone found. Please connect a microphone and try again.");
       } else {
-        setErrorMsg("Could not start recording. Please check your microphone.");
+        setErrorMsg("Could not start recording. Please check your microphone permissions.");
       }
     }
   }
 
+  function animateFallbackBars() {
+    if (!isRecordingRef.current) return;
+    const heights = Array.from({ length: BAR_COUNT }, () => Math.random());
+    setBarHeights(heights);
+    rafRef.current = requestAnimationFrame(animateFallbackBars);
+  }
+
   function stopRecording() {
+    isRecordingRef.current = false;
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
     }
   }
 
   function clearRecording() {
+    isRecordingRef.current = false;
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
@@ -142,7 +229,9 @@ export default function VoiceRecorder({
     setElapsed(0);
     setErrorMsg("");
     chunksRef.current = [];
-    if (timerRef.current) clearInterval(timerRef.current);
+    stopTimer();
+    stopRaf();
+    setBarHeights(Array.from({ length: BAR_COUNT }, () => 0));
     onClear?.();
   }
 
@@ -158,12 +247,11 @@ export default function VoiceRecorder({
     }
   }
 
-  // Whether there is a recorded or already uploaded file to show
-  const hasFile = state === "done" || Boolean(existingFile && !audioUrl);
+  const hasDoneFile = state === "done" && audioUrl;
 
   return (
-    <div className="grid gap-2.5">
-      {/* Hidden audio element for playback — only render when we have a recording */}
+    <div className="grid gap-2">
+      {/* Hidden audio for playback */}
       {audioUrl && (
         <audio
           ref={audioRef}
@@ -175,123 +263,11 @@ export default function VoiceRecorder({
         />
       )}
 
-      {/* State: idle — show start button */}
-      {state === "idle" && !existingFile && (
-        <button
-          type="button"
-          onClick={startRecording}
-          disabled={disabled}
-          className="flex items-center justify-center gap-2 border-4 border-primary bg-white px-4 py-3 font-headline text-sm font-bold uppercase text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#faf7f2] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-red-600">
-            <span className="h-2.5 w-2.5 rounded-full bg-white" />
-          </span>
-          Start Recording
-        </button>
-      )}
-
-      {/* State: requesting permission */}
-      {state === "requesting" && (
-        <div className="flex items-center gap-3 border-4 border-primary bg-white px-4 py-3 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <span className="font-headline text-xs font-bold uppercase text-primary">Requesting microphone access...</span>
-        </div>
-      )}
-
-      {/* State: recording */}
-      {state === "recording" && (
-        <div className="flex flex-wrap items-center gap-3 border-4 border-primary bg-red-50 px-4 py-3 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-3 w-3 animate-ping rounded-full bg-red-600" />
-            <span className="font-headline text-xs font-bold uppercase text-red-800">REC</span>
-          </span>
-          <span className="font-headline text-sm font-black text-primary tabular-nums">
-            {formatTime(elapsed)}
-          </span>
-          <div className="flex items-end gap-[2px] h-6 ml-1" aria-hidden="true">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <span
-                key={i}
-                className="voice-rec-bar block w-[3px] bg-red-500 rounded-[1px]"
-                style={{
-                  height: `${12 + Math.random() * 16}px`,
-                  animationDelay: `${i * 0.08}s`,
-                }}
-              />
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={stopRecording}
-            className="ml-auto flex items-center gap-1.5 border-2 border-primary bg-red-600 px-3 py-1.5 font-headline text-[10px] font-bold uppercase text-white shadow-[1px_1px_0px_0px_rgba(26,26,26,1)] hover:bg-red-700 transition-all"
-          >
-            <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
-              stop
-            </span>
-            Stop
-          </button>
-        </div>
-      )}
-
-      {/* State: done — show preview */}
-      {state === "done" && audioUrl && (
-        <div className="flex flex-wrap items-center gap-3 border-4 border-primary bg-white px-4 py-3 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-          <span className="flex h-7 w-7 items-center justify-center border-2 border-primary bg-emerald-100">
-            <span className="material-symbols-outlined text-sm text-emerald-800" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
-              check
-            </span>
-          </span>
-          <span className="font-headline text-xs font-bold uppercase text-primary">
-            Recorded ({formatTime(elapsed)})
-          </span>
-
-          <button
-            type="button"
-            onClick={togglePlayback}
-            className="flex items-center gap-1.5 border-2 border-primary bg-white px-2.5 py-1 font-headline text-[10px] font-bold uppercase text-primary hover:bg-[#f2ede5] transition-colors"
-          >
-            <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
-              {playing ? "pause" : "play_arrow"}
-            </span>
-            {playing ? "Playing" : "Listen"}
-          </button>
-
-          <button
-            type="button"
-            onClick={clearRecording}
-            className="ml-auto flex items-center gap-1.5 border-2 border-primary bg-white px-2.5 py-1 font-headline text-[10px] font-bold uppercase text-primary hover:bg-red-50 transition-colors"
-          >
-            <span className="material-symbols-outlined text-sm" aria-hidden="true">
-              delete
-            </span>
-            Re-record
-          </button>
-        </div>
-      )}
-
-      {/* Error state */}
-      {state === "error" && (
-        <div className="flex flex-wrap items-center gap-2 border-4 border-[#e63b2e] bg-[#ffdad6] px-4 py-3 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-          <span className="font-headline text-xs font-bold uppercase text-[#93000a] flex-1">
-            {errorMsg}
-          </span>
-          <button
-            type="button"
-            onClick={() => setState("idle")}
-            className="border-2 border-[#e63b2e] bg-white px-2.5 py-1 font-headline text-[10px] font-bold uppercase text-[#93000a] hover:bg-[#ffdad6] transition-colors"
-          >
-            Try again
-          </button>
-        </div>
-      )}
-
-      {/* Existing file from upload — show a summary */}
+      {/* Existing file summary (when switching from upload tab) */}
       {existingFile && !audioUrl && (
         <div className="flex items-center gap-3 border-4 border-primary bg-white px-4 py-3 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
           <span className="flex h-7 w-7 items-center justify-center border-2 border-primary bg-amber-100">
-            <span className="material-symbols-outlined text-sm text-amber-800" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
-              upload_file
-            </span>
+            <span className="material-symbols-outlined text-sm text-amber-800" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">upload_file</span>
           </span>
           <div className="min-w-0 flex-1">
             <p className="font-headline text-xs font-bold uppercase text-primary truncate">{existingFile.name}</p>
@@ -302,12 +278,145 @@ export default function VoiceRecorder({
             onClick={clearRecording}
             className="flex items-center gap-1 border-2 border-primary bg-white px-2 py-1 font-headline text-[9px] font-bold uppercase text-primary hover:bg-red-50 transition-colors"
           >
-            <span className="material-symbols-outlined text-xs" aria-hidden="true">
-              close
-            </span>
+            <span className="material-symbols-outlined text-xs" aria-hidden="true">close</span>
             Remove
           </button>
         </div>
+      )}
+
+      {/* Main recorder card — dark style with amber glow */}
+      {(!existingFile || audioUrl || hasDoneFile) && (
+        <div className="relative overflow-hidden rounded-2xl border-2 border-white/15 shadow-xl"
+          style={{
+            background: "radial-gradient(ellipse at center, rgba(255,180,40,0.12) 0%, rgba(0,0,0,0.95) 70%)",
+            backgroundColor: "#111",
+          }}
+        >
+          {/* Inner content */}
+          <div className="relative z-10 flex flex-col items-center gap-3 px-5 py-6">
+
+            {/* Header */}
+            <span className="font-headline text-[10px] font-bold uppercase tracking-[0.18em] text-white/50">
+              Voice Recorder
+            </span>
+
+            {/* Timer */}
+            <span className="font-headline text-3xl font-black tracking-[0.08em] text-white/90 tabular-nums">
+              {state === "recording" ? formatTime(elapsed) : formatTime(0)}
+            </span>
+
+            {/* Recording indicator dot */}
+            {state === "recording" && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                <span className="font-headline text-[9px] font-bold uppercase tracking-widest text-red-400">REC</span>
+              </span>
+            )}
+
+            {/* Done state: play / re-record buttons */}
+            {hasDoneFile && (
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={togglePlayback}
+                  className="flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-4 py-2 font-headline text-xs font-bold uppercase text-white hover:bg-white/20 transition-all backdrop-blur-sm"
+                >
+                  <span className="material-symbols-outlined text-base" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
+                    {playing ? "pause" : "play_arrow"}
+                  </span>
+                  {playing ? "Playing" : "Listen"}
+                </button>
+                <button
+                  type="button"
+                  onClick={clearRecording}
+                  className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-4 py-2 font-headline text-xs font-bold uppercase text-white/60 hover:bg-white/10 transition-all"
+                >
+                  <span className="material-symbols-outlined text-base" aria-hidden="true">refresh</span>
+                  Re-record
+                </button>
+              </div>
+            )}
+
+            {/* Main mic button — centered, large, circular */}
+            {!hasDoneFile && (
+              <button
+                type="button"
+                onClick={state === "recording" ? stopRecording : startRecording}
+                disabled={disabled || state === "requesting"}
+                className={`flex items-center justify-center rounded-full border border-white/30 bg-black/40 w-[72px] h-[72px] transition-all backdrop-blur-sm
+                  ${state === "recording" ? "animate-pulse border-red-400/60" : "hover:bg-white/10 hover:scale-105 active:scale-95"}
+                  disabled:opacity-50 disabled:cursor-not-allowed
+                `}
+                aria-label={state === "recording" ? "Stop recording" : "Start recording"}
+              >
+                <span className="material-symbols-outlined text-3xl text-white" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
+                  {state === "recording" ? "stop" : "mic"}
+                </span>
+              </button>
+            )}
+
+            {/* Idle / requesting hint text */}
+            {state === "idle" && !hasDoneFile && (
+              <span className="font-headline text-[10px] font-bold uppercase tracking-wide text-white/40">
+                Tap to record
+              </span>
+            )}
+            {state === "requesting" && (
+              <span className="flex items-center gap-2 font-headline text-[10px] font-bold uppercase tracking-wide text-white/60">
+                <span className="inline-block h-2.5 w-2.5 animate-spin rounded-full border-2 border-white/60 border-t-transparent" />
+                Requesting microphone...
+              </span>
+            )}
+          </div>
+
+          {/* Waveform visualizer at the bottom */}
+          <div className="absolute bottom-0 left-0 right-0 z-0 flex items-end justify-center gap-[3px] px-4 pb-3">
+            {state === "recording"
+              ? barHeights.map((h, i) => (
+                  <div
+                    key={i}
+                    className="w-[5px] rounded-t-full transition-all duration-75"
+                    style={{
+                      height: `${Math.max(2, h * 32)}px`,
+                      background: "linear-gradient(to top, rgba(255,180,40,0.3), rgba(255,200,80,0.8))",
+                    }}
+                  />
+                ))
+              : state === "idle"
+                ? Array.from({ length: BAR_COUNT }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="w-[5px] rounded-t-full"
+                      style={{
+                        height: "3px",
+                        background: "rgba(255,255,255,0.08)",
+                      }}
+                    />
+                  ))
+                : null}
+          </div>
+        </div>
+      )}
+
+      {/* Error message */}
+      {state === "error" && (
+        <div className="flex items-start gap-2 px-1">
+          <span className="material-symbols-outlined text-sm text-red-500 shrink-0 mt-0.5" aria-hidden="true">error</span>
+          <p className="font-body text-xs leading-relaxed text-red-500">
+            {errorMsg}
+          </p>
+        </div>
+      )}
+
+      {/* Retry button after error */}
+      {state === "error" && (
+        <button
+          type="button"
+          onClick={() => setState("idle")}
+          className="self-start rounded-lg border border-red-500/40 bg-red-950/30 px-3 py-1.5 font-headline text-[10px] font-bold uppercase tracking-wide text-red-400 hover:bg-red-950/50 transition-colors"
+        >
+          Try again
+        </button>
       )}
     </div>
   );
