@@ -733,3 +733,16 @@ html[lang="km"] .font-body {
 @media (prefers-reduced-motion: reduce) {
     .voice-eq-bar { animation: none; }
 }
+
+/* Voice recording equalizer bars */
+.voice-rec-bar {
+    transform-origin: bottom;
+    animation: voice-rec 0.5s ease-in-out infinite alternate;
+}
+.voice-rec-bar:nth-child(odd) {
+    animation-duration: 0.65s;
+}
+@keyframes voice-rec {
+    0% { transform: scaleY(0.2); }
+    100% { transform: scaleY(1); }
+}

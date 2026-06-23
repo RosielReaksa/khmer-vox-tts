@@ -7,6 +7,7 @@ import { useDashboardUser } from "@/app/app/dashboard/dashboard-user-context";
 import LineAudioPlayer from "@/app/components/line-audio-player";
 import { Portal } from "@/app/components/portal";
 import VoicePreviewCard from "@/app/components/voice-preview-card";
+import VoiceRecorder from "@/app/components/voice-recorder";
 
 import { MAX_DASHBOARD_TTS_CHARS } from "@/lib/usage-policy";
 import {
@@ -137,6 +138,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
   const [sampleFile, setSampleFile] = useState<File | null>(snapshot.sampleFile);
   const [voiceConsent, setVoiceConsent] = useState(snapshot.voiceConsent);
   const [denoiseReference, setDenoiseReference] = useState(false);
+  const [cloneInputMode, setCloneInputMode] = useState<"upload" | "record">("upload");
   const [result, setResult] = useState<GenerationResponse | null>(snapshot.result);
   const [audioUrl, setAudioUrl] = useState(snapshot.audioUrl);
   const [error, setError] = useState(snapshot.error);
@@ -703,9 +705,42 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
               </div>
             ) : (
               <div className="mt-5 grid gap-3">
-                <label className="grid gap-2 text-sm font-headline font-black uppercase text-primary">
-                  Reference voice
-                  <span className="grid cursor-pointer place-items-center gap-2 border-4 border-dashed border-primary bg-white px-5 py-6 text-center hover:bg-[#eee9e0] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+                <span className="text-sm font-headline font-black uppercase text-primary">Reference voice</span>
+
+                {/* Tabs: Upload / Record */}
+                <div className="flex gap-0 border-b-4 border-primary">
+                  <button
+                    type="button"
+                    onClick={() => { setCloneInputMode("upload"); setSampleFile(null); setError(""); }}
+                    className={`px-4 py-2 border-4 border-b-0 -mb-[4px] font-headline text-[11px] font-bold uppercase tracking-wide transition-colors ${
+                      cloneInputMode === "upload"
+                        ? "bg-primary text-primary-fixed border-primary"
+                        : "bg-white text-primary border-primary hover:bg-[#faf7f2]"
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">upload</span>
+                      Upload audio
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setCloneInputMode("record"); setSampleFile(null); setError(""); }}
+                    className={`px-4 py-2 border-4 border-b-0 -mb-[4px] font-headline text-[11px] font-bold uppercase tracking-wide transition-colors ${
+                      cloneInputMode === "record"
+                        ? "bg-primary text-primary-fixed border-primary"
+                        : "bg-white text-primary border-primary hover:bg-[#faf7f2]"
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">mic</span>
+                      Record voice
+                    </span>
+                  </button>
+                </div>
+
+                {cloneInputMode === "upload" ? (
+                  <label className="grid gap-2 cursor-pointer">
                     <input
                       type="file"
                       accept="audio/*"
@@ -715,17 +750,45 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                         setError("");
                       }}
                     />
-                    <span className="flex h-9 w-9 items-center justify-center border-2 border-primary bg-[#ffcc00] text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-                      <UploadIcon />
-                    </span>
-                    <span className="grid gap-1 mt-1">
-                      <span className="font-headline font-black text-sm text-primary">
-                        {sampleFile ? sampleFile.name : "Upload reference audio"}
+                    {sampleFile ? (
+                      <div className="flex items-center gap-3 border-4 border-primary bg-white px-4 py-3 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+                        <span className="flex h-8 w-8 items-center justify-center border-2 border-primary bg-amber-100">
+                          <span className="material-symbols-outlined text-sm text-amber-800" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">upload_file</span>
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-headline text-xs font-bold uppercase text-primary truncate">{sampleFile.name}</p>
+                          <p className="font-body text-[10px] text-gray-500">{(sampleFile.size / 1024).toFixed(0)} KB · {sampleFile.type || "audio"}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(event) => { event.stopPropagation(); setSampleFile(null); }}
+                          className="flex items-center gap-1 border-2 border-primary bg-white px-2 py-1 font-headline text-[9px] font-bold uppercase text-primary hover:bg-red-50 transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-xs" aria-hidden="true">close</span>
+                          Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="grid cursor-pointer place-items-center gap-2 border-4 border-dashed border-primary bg-white px-5 py-6 text-center hover:bg-[#eee9e0] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+                        <span className="flex h-9 w-9 items-center justify-center border-2 border-primary bg-[#ffcc00] text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+                          <UploadIcon />
+                        </span>
+                        <span className="grid gap-1 mt-1">
+                          <span className="font-headline font-black text-sm text-primary">Upload reference audio</span>
+                          <span className="text-[10px] font-bold text-[#4a4a4a]">MP3, WAV - 5-30 seconds recommended</span>
+                        </span>
                       </span>
-                      <span className="text-[10px] font-bold text-[#4a4a4a]">MP3, WAV - 5-30 seconds recommended</span>
-                    </span>
-                  </span>
-                </label>
+                    )}
+                  </label>
+                ) : (
+                  <VoiceRecorder
+                    onRecordingComplete={(file) => setSampleFile(file)}
+                    onClear={() => setSampleFile(null)}
+                    existingFile={sampleFile}
+                    disabled={busy}
+                  />
+                )}
+
                 <label
                   className={`flex items-center gap-3 border-4 border-primary px-4 py-3 text-xs font-headline uppercase font-black cursor-pointer shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] ${
                     voiceConsent
@@ -744,7 +807,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                   <span>I own this voice or have permission from the owner.</span>
                 </label>
                 <label
-                  className={`mt-3 flex items-center gap-3 border-4 border-primary px-4 py-3 text-xs font-headline uppercase font-black cursor-pointer shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] ${
+                  className={`flex items-center gap-3 border-4 border-primary px-4 py-3 text-xs font-headline uppercase font-black cursor-pointer shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] ${
                     denoiseReference ? "bg-[#def3e5] text-primary" : "bg-white text-primary"
                   }`}
                 >
