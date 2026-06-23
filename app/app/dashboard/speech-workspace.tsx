@@ -6,7 +6,7 @@ import { clearDashboardCache } from "@/app/app/dashboard/dashboard-data-cache";
 import { useDashboardUser } from "@/app/app/dashboard/dashboard-user-context";
 import LineAudioPlayer from "@/app/components/line-audio-player";
 import { Portal } from "@/app/components/portal";
-import { VoicePreviewButton } from "@/app/components/voice-preview-card";
+import VoicePreviewCard, { VoicePreviewButton } from "@/app/components/voice-preview-card";
 
 import { MAX_DASHBOARD_TTS_CHARS } from "@/lib/usage-policy";
 import {
@@ -782,40 +782,56 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                   </button>
                 ) : null}
               </div>
-              <select
-                value={voice}
-                aria-label={isCloneMode ? "Voice source" : "Voice style"}
-                onChange={(event) => {
-                  setVoice(event.target.value);
-                  setError("");
-                }}
-                className="h-11 w-full border-4 border-primary bg-white px-4 text-xs font-headline font-bold uppercase text-primary outline-none focus:bg-[#faf7f2] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] cursor-pointer"
-              >
-                {isCloneMode ? (
-                  <>
-                    <option value={DEFAULT_CLONE_VOICE_INSTRUCTION}>Upload new reference file</option>
-                    {savedVoices.length > 0 && (
-                      <optgroup label="Saved Voices">
-                        {savedVoices.map((v) => (
-                          <option key={v.id} value={v.id}>
-                            {v.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <optgroup label="Preset Voices">
-                      {DASHBOARD_TTS_VOICE_PRESETS.map((item) => (
-                        <option key={item} value={item}>
-                          {item === "female" ? "Female (Sokha) (1.5 tokens/sec)" : "Male (Piseth) (1.5 tokens/sec)"}
+
+              {isCloneMode ? (
+                <select
+                  value={voice}
+                  aria-label="Voice source"
+                  onChange={(event) => {
+                    setVoice(event.target.value);
+                    setError("");
+                  }}
+                  className="h-11 w-full border-4 border-primary bg-white px-4 text-xs font-headline font-bold uppercase text-primary outline-none focus:bg-[#faf7f2] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] cursor-pointer"
+                >
+                  <option value={DEFAULT_CLONE_VOICE_INSTRUCTION}>Upload new reference file</option>
+                  {savedVoices.length > 0 && (
+                    <optgroup label="Saved Voices">
+                      {savedVoices.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name}
                         </option>
                       ))}
                     </optgroup>
-                  </>
-                )}
-              </select>
+                  )}
+                </select>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <VoicePreviewCard
+                    voice="female"
+                    selected={voice === "female"}
+                    onSelect={() => { setVoice("female"); setError(""); }}
+                    name="Sokha"
+                    gender="Female"
+                    costRate="1.5 tok/sec"
+                    icon="face_3"
+                    previewLabel="Preview"
+                    playLabel="Play preview"
+                    stopLabel="Stop"
+                  />
+                  <VoicePreviewCard
+                    voice="male"
+                    selected={voice === "male"}
+                    onSelect={() => { setVoice("male"); setError(""); }}
+                    name="Piseth"
+                    gender="Male"
+                    costRate="1.5 tok/sec"
+                    icon="face"
+                    previewLabel="Preview"
+                    playLabel="Play preview"
+                    stopLabel="Stop"
+                  />
+                </div>
+              )}
 
               {/* Dynamic Active Voice Info Card */}
               {(() => {
