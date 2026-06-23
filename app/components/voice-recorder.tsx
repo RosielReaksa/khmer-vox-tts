@@ -12,6 +12,8 @@ type VoiceRecorderProps = {
   /** Existing file — if present, show as already selected */
   existingFile?: File | null;
   disabled?: boolean;
+  /** If true, auto-start mic permission request on mount */
+  autoStart?: boolean;
 };
 
 const BAR_COUNT = 24;
@@ -21,6 +23,7 @@ export default function VoiceRecorder({
   onClear,
   existingFile,
   disabled = false,
+  autoStart = false,
 }: VoiceRecorderProps) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -50,6 +53,19 @@ export default function VoiceRecorder({
       if (audioUrl) URL.revokeObjectURL(audioUrl);
     };
   }, []);
+
+  // Auto-start mic when component mounts with autoStart=true
+  const autoStartTriggeredRef = useRef(false);
+  useEffect(() => {
+    if (autoStart && !autoStartTriggeredRef.current && state === "idle" && !disabled) {
+      autoStartTriggeredRef.current = true;
+      // Small delay so the DOM renders before permission dialog appears
+      const id = setTimeout(() => {
+        startRecording();
+      }, 300);
+      return () => clearTimeout(id);
+    }
+  }, [autoStart]);
 
   function stopTracks() {
     if (streamRef.current) {

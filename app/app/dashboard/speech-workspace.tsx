@@ -139,6 +139,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
   const [voiceConsent, setVoiceConsent] = useState(snapshot.voiceConsent);
   const [denoiseReference, setDenoiseReference] = useState(false);
   const [cloneInputMode, setCloneInputMode] = useState<"upload" | "record">("upload");
+  const [recordAutoStart, setRecordAutoStart] = useState(false);
   const [result, setResult] = useState<GenerationResponse | null>(snapshot.result);
   const [audioUrl, setAudioUrl] = useState(snapshot.audioUrl);
   const [error, setError] = useState(snapshot.error);
@@ -725,7 +726,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setCloneInputMode("record"); setSampleFile(null); setError(""); }}
+                    onClick={() => { setCloneInputMode("record"); setSampleFile(null); setError(""); setRecordAutoStart(true); }}
                     className={`px-4 py-2 border-4 border-b-0 -mb-[4px] font-headline text-[11px] font-bold uppercase tracking-wide transition-colors ${
                       cloneInputMode === "record"
                         ? "bg-primary text-primary-fixed border-primary"
@@ -786,6 +787,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                     onClear={() => setSampleFile(null)}
                     existingFile={sampleFile}
                     disabled={busy}
+                    autoStart={recordAutoStart}
                   />
                 )}
 
