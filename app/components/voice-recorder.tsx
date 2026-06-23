@@ -163,15 +163,17 @@ export default function VoiceRecorder({
 
   return (
     <div className="grid gap-2.5">
-      {/* Hidden audio element for playback */}
-      <audio
-        ref={audioRef}
-        src={audioUrl ?? ""}
-        onEnded={() => setPlaying(false)}
-        onPause={() => setPlaying(false)}
-        onPlay={() => setPlaying(true)}
-        preload="auto"
-      />
+      {/* Hidden audio element for playback — only render when we have a recording */}
+      {audioUrl && (
+        <audio
+          ref={audioRef}
+          src={audioUrl}
+          onEnded={() => setPlaying(false)}
+          onPause={() => setPlaying(false)}
+          onPlay={() => setPlaying(true)}
+          preload="auto"
+        />
+      )}
 
       {/* State: idle — show start button */}
       {state === "idle" && !existingFile && (
