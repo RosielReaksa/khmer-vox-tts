@@ -12,18 +12,27 @@ type VoiceRecorderProps = {
   /** Existing file — if present, show as already selected */
   existingFile?: File | null;
   disabled?: boolean;
-  /** If true, auto-start mic permission request on mount */
-  autoStart?: boolean;
 };
 
 const BAR_COUNT = 24;
+
+async function isMicrophoneBlocked(): Promise<boolean> {
+  if (typeof navigator === "undefined" || !navigator.permissions) {
+    return false;
+  }
+  try {
+    const result = await navigator.permissions.query({ name: "microphone" as PermissionName });
+    return result.state === "denied";
+  } catch {
+    return false;
+  }
+}
 
 export default function VoiceRecorder({
   onRecordingComplete,
   onClear,
   existingFile,
   disabled = false,
-  autoStart = false,
 }: VoiceRecorderProps) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -75,19 +84,6 @@ export default function VoiceRecorder({
       });
     }
   }, []);
-
-  // Auto-start mic when component mounts with autoStart=true
-  const autoStartTriggeredRef = useRef(false);
-  useEffect(() => {
-    if (autoStart && !autoStartTriggeredRef.current && state === "idle" && !disabled) {
-      autoStartTriggeredRef.current = true;
-      // Small delay so the DOM renders before permission dialog appears
-      const id = setTimeout(() => {
-        startRecording();
-      }, 300);
-      return () => clearTimeout(id);
-    }
-  }, [autoStart]);
 
   function stopTracks() {
     if (streamRef.current) {
@@ -235,11 +231,21 @@ export default function VoiceRecorder({
       isStartingRef.current = false;
       setState("error");
       if (err instanceof DOMException && err.name === "NotAllowedError") {
-        setErrorMsg("Could not start recording. Please check microphone permissions.");
+        const blocked = await isMicrophoneBlocked();
+        setPermDenied(blocked);
+        setErrorMsg(
+          blocked
+            ? "Microphone access is blocked for this site. Allow it in browser settings, then refresh."
+            : "Microphone access was denied. Click the mic button and choose Allow when prompted.",
+        );
       } else if (err instanceof DOMException && err.name === "NotFoundError") {
         setErrorMsg("No microphone found. Please connect a microphone and try again.");
       } else {
-        setErrorMsg("Could not start recording. Please check microphone permissions.");
+        setErrorMsg(
+          err instanceof Error && err.message
+            ? err.message
+            : "Could not start recording. Please try again.",
+        );
       }
     }
   }
@@ -461,7 +467,7 @@ export default function VoiceRecorder({
               <ol className="list-decimal list-inside font-body text-[11px] leading-relaxed text-red-300/80 space-y-1">
                 <li>Click the <span className="font-bold">lock icon 🔒</span> next to the URL in the address bar</li>
                 <li>Click <span className="font-bold">Site settings</span></li>
-                <li>Find <span className="font-bold">Microphone</span> and change it to <span className="font-bold">"Ask"</span> or <span className="font-bold">"Allow"</span></li>
+                <li>Find <span className="font-bold">Microphone</span> and change it to <span className="font-bold">&quot;Ask&quot;</span> or <span className="font-bold">&quot;Allow&quot;</span></li>
                 <li>Refresh this page and try recording again</li>
               </ol>
               <p className="font-body text-[10px] text-red-400/60">
@@ -470,8 +476,14 @@ export default function VoiceRecorder({
               <button
                 type="button"
                 onClick={() => {
-                  // Try to open browser settings (Brave/Chrome)
-                  try { window.open("brave://settings/content/microphone", "_blank"); } catch { /* ignore */ }
+                  // Detect browser and open the correct microphone settings page
+                  const ua = navigator.userAgent.toLowerCase();
+                  const isBrave = !!(navigator as unknown as Record<string, unknown>).brave;
+                  let url = "chrome://settings/content/microphone";
+                  if (isBrave) url = "brave://settings/content/microphone";
+                  else if (ua.includes("edg")) url = "edge://settings/content/microphone";
+                  else if (ua.includes("firefox")) url = "about:preferences#privacy";
+                  try { window.open(url, "_blank"); } catch { /* ignore */ }
                 }}
                 className="self-start mt-1 flex items-center gap-1 border border-red-400/30 bg-red-950/40 px-3 py-1.5 font-headline text-[9px] font-bold uppercase tracking-wide text-red-300 hover:bg-red-950/60 transition-colors rounded"
               >
@@ -487,7 +499,10 @@ export default function VoiceRecorder({
       {state === "error" && (
         <button
           type="button"
-          onClick={() => setState("idle")}
+          onClick={() => {
+            setErrorMsg("");
+            void startRecording();
+          }}
           className="self-start rounded-lg border border-red-500/40 bg-red-950/30 px-3 py-1.5 font-headline text-[10px] font-bold uppercase tracking-wide text-red-400 hover:bg-red-950/50 transition-colors"
         >
           Try again
