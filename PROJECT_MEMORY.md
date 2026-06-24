@@ -1,6 +1,37 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-06-21
+Last updated: 2026-06-24
+
+## Production deploy from main (2026-06-24)
+
+Deployed latest `main` to production VPS `152.42.203.77` (voxtts.online) via
+GitHub Actions `Deploy` workflow (`workflow_dispatch`, environment=production).
+
+- **Previous image:** `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260618-4`
+- **New image:** `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260623-6`
+- Both `khmer-vox-web` (2 replicas) and `khmer-vox-worker` rolled out
+  successfully; zero-downtime rollout.
+- Verified: `https://voxtts.online/api/health` → 200, `store: postgres`.
+- Cloudflare remains active in front of production.
+
+**Infrastructure also deployed to production (was staging-only before):**
+- `voxtts-db-backup` CronJob (daily 03:00 UTC, 14-day retention, 20Gi PVC)
+- Manual backup test completed (~419MB dump, checksums OK)
+- Monitoring namespace: Prometheus, Grafana, Node Exporter — all Running
+
+**GitHub Actions secrets:** `VPS_HOST` now points to production
+`152.42.203.77` (was staging `178.128.103.120`). Deploy workflow updated to
+set image on both web and worker with `prod-YYYYMMDD-<run>` tags.
+
+**Staging VPS** (`178.128.103.120`) unchanged; still has its own stack for
+testing. Use GitHub Environments with per-env `VPS_HOST` if both need CI/CD.
+
+## PWA / touch icons (2026-06-24, local until deployed)
+
+Added `public/apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, and
+`app/apple-icon.png` (generated from `app/icon.svg`). Fixes bot/crawler 404s on
+`/apple-touch-icon.png` and improves Add-to-Home-Screen. Regenerate after logo
+changes: `npm run icons:generate`.
 
 ## Purpose
 

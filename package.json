@@ -11,6 +11,7 @@
     "db:check": "node scripts/db.mjs check",
     "db:migrate-json": "node scripts/db.mjs migrate-json",
     "deploy:check": "npm run lint && npm run build && npm run db:check",
+    "icons:generate": "node scripts/generate-icons.mjs",
     "worker:jobs": "node scripts/job-worker.mjs --loop",
     "smoke:prelaunch": "node scripts/prelaunch-smoke.mjs",
     "smoke:payment": "node scripts/payment-smoke.mjs",
