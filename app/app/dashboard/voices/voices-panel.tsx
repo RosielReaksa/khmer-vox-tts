@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import VoiceRecorder from "@/app/components/voice-recorder";
 import { useCachedJson, clearDashboardCache } from "@/app/app/dashboard/dashboard-data-cache";
 import { VoxLoader } from "@/app/components/vox-loader";
 import { MAX_CLONE_SAMPLE_BYTES } from "@/lib/usage-policy";
@@ -26,6 +27,7 @@ export function VoicesPanel({ initialVoices = [], onNavigate }: VoicesPanelProps
   const [newVoiceName, setNewVoiceName] = useState("");
   const [newVoiceDesc, setNewVoiceDesc] = useState("");
   const [newVoiceFile, setNewVoiceFile] = useState<File | null>(null);
+  const [inputMode, setInputMode] = useState<"upload" | "record">("upload");
   const [voiceConsent, setVoiceConsent] = useState(false);
   const [isSavingVoice, setIsSavingVoice] = useState(false);
   const [saveVoiceError, setSaveVoiceError] = useState("");
@@ -167,7 +169,7 @@ export function VoicesPanel({ initialVoices = [], onNavigate }: VoicesPanelProps
         <div>
           <h2 className="text-4xl md:text-6xl font-black font-headline uppercase tracking-tighter text-primary">Voice Library</h2>
           <p className="font-body text-base md:text-lg text-on-surface-variant mt-2 font-bold">
-            Upload, store, and manage your custom Khmer voice clone templates.
+            Upload or record Khmer voice templates and save them to your library.
           </p>
         </div>
         <button
@@ -190,7 +192,7 @@ export function VoicesPanel({ initialVoices = [], onNavigate }: VoicesPanelProps
         {/* Save Voice Form */}
         <article className="border-4 border-primary bg-surface-bright p-5 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]">
           <h3 className="font-headline font-black text-lg uppercase text-primary border-b-2 border-[#eee9e0] pb-2 mb-4">
-            Upload New Voice
+            Add New Voice
           </h3>
 
           <form onSubmit={handleSaveVoice} className="space-y-4">
@@ -235,29 +237,81 @@ export function VoicesPanel({ initialVoices = [], onNavigate }: VoicesPanelProps
             </div>
 
             <div className="grid gap-2">
-              <label className="text-xs font-headline uppercase font-black text-[#4a4a4a]">
-                Reference Audio * (MP3/WAV, max 8MB)
-              </label>
-              <label className="flex flex-col items-center justify-center border-4 border-dashed border-primary p-5 bg-white hover:bg-[#eee9e0] cursor-pointer transition shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-                <input
-                  type="file"
-                  required
-                  accept="audio/wav,audio/x-wav,audio/mpeg,audio/mp3"
-                  onChange={(e) => {
-                    setNewVoiceFile(e.target.files?.[0] ?? null);
+              <span className="text-xs font-headline uppercase font-black text-[#4a4a4a]">
+                Reference Audio *
+              </span>
+
+              <div className="flex gap-0 border-b-4 border-primary">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInputMode("upload");
+                    setNewVoiceFile(null);
                     setSaveVoiceError("");
                   }}
-                  className="hidden"
+                  className={`px-3 py-2 border-4 border-b-0 -mb-[4px] font-headline text-[10px] font-bold uppercase tracking-wide transition-colors ${
+                    inputMode === "upload"
+                      ? "bg-primary text-primary-fixed border-primary"
+                      : "bg-white text-primary border-primary hover:bg-[#faf7f2]"
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">upload</span>
+                    Upload
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInputMode("record");
+                    setNewVoiceFile(null);
+                    setSaveVoiceError("");
+                  }}
+                  className={`px-3 py-2 border-4 border-b-0 -mb-[4px] font-headline text-[10px] font-bold uppercase tracking-wide transition-colors ${
+                    inputMode === "record"
+                      ? "bg-primary text-primary-fixed border-primary"
+                      : "bg-white text-primary border-primary hover:bg-[#faf7f2]"
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">mic</span>
+                    Record
+                  </span>
+                </button>
+              </div>
+
+              {inputMode === "upload" ? (
+                <label className="flex flex-col items-center justify-center border-4 border-dashed border-primary p-5 bg-white hover:bg-[#eee9e0] cursor-pointer transition shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+                  <input
+                    type="file"
+                    accept="audio/wav,audio/x-wav,audio/mpeg,audio/mp3,audio/webm,audio/mp4"
+                    onChange={(e) => {
+                      setNewVoiceFile(e.target.files?.[0] ?? null);
+                      setSaveVoiceError("");
+                    }}
+                    className="hidden"
+                  />
+                  <span className="flex h-9 w-9 items-center justify-center border-2 border-primary bg-[#ffcc00] text-primary shadow-[1px_1px_0px_0px_rgba(26,26,26,1)]">
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
+                    </svg>
+                  </span>
+                  <span className="text-center mt-2 max-w-[240px] truncate block font-headline font-black text-xs text-primary">
+                    {newVoiceFile ? newVoiceFile.name : "Select Audio File"}
+                  </span>
+                  <span className="text-[10px] font-bold text-[#4a4a4a] mt-1">MP3, WAV — max 8MB</span>
+                </label>
+              ) : (
+                <VoiceRecorder
+                  onRecordingComplete={(file) => {
+                    setNewVoiceFile(file);
+                    setSaveVoiceError("");
+                  }}
+                  onClear={() => setNewVoiceFile(null)}
+                  existingFile={newVoiceFile}
+                  disabled={isSavingVoice}
                 />
-                <span className="flex h-9 w-9 items-center justify-center border-2 border-primary bg-[#ffcc00] text-primary shadow-[1px_1px_0px_0px_rgba(26,26,26,1)]">
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
-                  </svg>
-                </span>
-                <span className="text-center mt-2 max-w-[240px] truncate block font-headline font-black text-xs text-primary">
-                  {newVoiceFile ? newVoiceFile.name : "Select Audio File"}
-                </span>
-              </label>
+              )}
             </div>
 
             <label
@@ -300,7 +354,7 @@ export function VoicesPanel({ initialVoices = [], onNavigate }: VoicesPanelProps
             <div className="border-4 border-dashed border-primary bg-white p-10 text-center shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
               <p className="text-sm font-label font-bold uppercase text-primary">No saved voice templates found</p>
               <p className="mt-2 text-xs text-on-surface-variant font-body">
-                Upload your first reference audio template on the left panel to save it.
+                Upload or record your first reference audio on the left to save it.
               </p>
             </div>
           ) : (

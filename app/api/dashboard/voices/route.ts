@@ -101,20 +101,32 @@ export async function POST(request: Request) {
     const lowerName = sample.name.toLowerCase();
     const isMp3 = sample.type === "audio/mpeg" || sample.type === "audio/mp3" || lowerName.endsWith(".mp3");
     const isWav = sample.type === "audio/wav" || sample.type === "audio/x-wav" || lowerName.endsWith(".wav");
+    const isWebm =
+      sample.type === "audio/webm" ||
+      sample.type.startsWith("audio/webm") ||
+      lowerName.endsWith(".webm");
+    const isMp4 = sample.type === "audio/mp4" || lowerName.endsWith(".mp4");
 
-    if (!isMp3 && !isWav) {
-      return NextResponse.json({ error: "Only MP3 and WAV files are supported." }, { status: 400 });
+    if (!isMp3 && !isWav && !isWebm && !isMp4) {
+      return NextResponse.json(
+        { error: "Supported formats: MP3, WAV, WebM, or MP4 (recordings)." },
+        { status: 400 },
+      );
     }
 
     const arrayBuffer = await sample.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString("base64");
+
+    const mimeType =
+      sample.type ||
+      (isMp3 ? "audio/mpeg" : isWebm ? "audio/webm" : isMp4 ? "audio/mp4" : "audio/wav");
 
     const newVoice = await createUserVoice({
       userId: session.userId,
       name: nameParsed.data,
       description: descParsed.data || null,
       fileName: sample.name,
-      mimeType: sample.type || (isMp3 ? "audio/mpeg" : "audio/wav"),
+      mimeType,
       fileSize: sample.size,
       audioBase64: base64,
     });
