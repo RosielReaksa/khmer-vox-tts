@@ -19,13 +19,25 @@ function pickDuration(...candidates: number[]): number {
   return 0;
 }
 
+function clampTime(time: number, duration: number): number {
+  if (!Number.isFinite(time) || time < 0) return 0;
+  if (duration > 0) return Math.min(time, duration);
+  return time;
+}
+
+type PlaybackState = {
+  offset: number;
+  startCtxTime: number;
+  rate: number;
+  playing: boolean;
+};
+
 /**
- * Simple linear audio scrubber — a thin track with a draggable playhead dot,
- * like a video player progress bar. Replaces the heavier waveform visualization
- * with a cleaner, familiar control. Click/drag anywhere on the line to seek.
+ * Linear audio scrubber for dashboard / playground results.
  *
- * Renders its own <audio> element (hidden) and drives the playhead with
- * requestAnimationFrame for smooth ~60fps movement while playing.
+ * Uses the Web Audio API (decoded AudioBuffer) instead of relying on
+ * `<audio>.currentTime`, because large generated WAVs — even as blob URLs —
+ * often cannot be seeked reliably in HTMLMediaElement.
  */
 export default function LineAudioPlayer({
   src,
@@ -33,71 +45,182 @@ export default function LineAudioPlayer({
   onPlayingChange,
 }: {
   src: string;
-  /** Fallback when `<audio>` metadata is missing (common for large data-URI WAV). */
+  /** Fallback while decoding or when buffer metadata is unavailable. */
   durationHint?: number;
   onPlayingChange?: (playing: boolean) => void;
 }) {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
   const rafRef = useRef<number | null>(null);
   const blobUrlRef = useRef<string | null>(null);
-  // Mirror `scrubbing` in a ref so the pointermove handler always reads the
-  // current value without waiting for a re-render (avoids a stale-closure race
-  // where the first move after pointer-down was ignored).
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const bufferRef = useRef<AudioBuffer | null>(null);
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const playbackRef = useRef<PlaybackState>({
+    offset: 0,
+    startCtxTime: 0,
+    rate: 1,
+    playing: false,
+  });
   const scrubbingRef = useRef(false);
   const resumeAfterScrubRef = useRef(false);
-  // The last position the USER dragged to. After scrubbing ends, the rAF tick
-  // only syncs from audio.currentTime if the audio has actually reached near
-  // this target. This prevents the playhead snapping back to 0 on media where
-  // setting currentTime silently fails (e.g. some WAV data URIs).
-  const lastSeekTargetRef = useRef<number | null>(null);
-  const isDataSrc = src.startsWith("data:");
-  const [blobPlayback, setBlobPlayback] = useState<{ forSrc: string; url: string } | null>(null);
-  const playbackSrc = isDataSrc
-    ? (blobPlayback?.forSrc === src ? blobPlayback.url : null)
-    : src;
-  const [playing, setPlaying] = useState(false);
+  const endedHandlerRef = useRef<(() => void) | null>(null);
+
+  const [ready, setReady] = useState(false);
+  const [decodeError, setDecodeError] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [scrubbing, setScrubbing] = useState(false);
+  const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(1);
 
-  // Large dashboard WAVs are often delivered as data: URIs. Browsers struggle to
-  // seek those (duration stays 0, currentTime snaps back). Blob URLs fix that.
-  useEffect(() => {
-    if (!isDataSrc) return;
+  const readPosition = useCallback((): number => {
+    const playback = playbackRef.current;
+    const ctx = audioContextRef.current;
+    if (!playback.playing || !ctx || !sourceRef.current) {
+      return playback.offset;
+    }
+    const elapsed = (ctx.currentTime - playback.startCtxTime) * playback.rate;
+    return playback.offset + elapsed;
+  }, []);
 
-    let cancelled = false;
-    void (async () => {
+  const stopSource = useCallback((captureOffset = true) => {
+    const source = sourceRef.current;
+    if (source) {
+      if (endedHandlerRef.current) {
+        source.removeEventListener("ended", endedHandlerRef.current);
+        endedHandlerRef.current = null;
+      }
       try {
-        const response = await fetch(src);
-        const blob = await response.blob();
-        if (cancelled) return;
-        const url = URL.createObjectURL(blob);
-        blobUrlRef.current = url;
-        setBlobPlayback({ forSrc: src, url });
+        source.stop();
       } catch {
-        if (!cancelled) setBlobPlayback(null);
+        // already stopped
       }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-      }
-    };
-  }, [src, isDataSrc]);
+      source.disconnect();
+      sourceRef.current = null;
+    }
+    if (captureOffset && playbackRef.current.playing) {
+      playbackRef.current.offset = readPosition();
+      playbackRef.current.playing = false;
+    }
+  }, [readPosition]);
 
   const effectiveDuration = useMemo(
     () => pickDuration(duration, durationHint ?? 0),
     [duration, durationHint],
   );
 
-  // Smooth playhead via rAF while playing (browser timeupdate is ~4Hz).
-  // Depends only on `playing` — reads scrubbingRef at runtime so the effect
-  // doesn't tear down and recreate on every scrub (which caused a snap-back).
+  const startAt = useCallback(
+    async (offset: number) => {
+      const ctx = audioContextRef.current;
+      const buffer = bufferRef.current;
+      if (!ctx || !buffer) return;
+
+      await ctx.resume();
+
+      const startOffset = clampTime(offset, buffer.duration);
+      stopSource(true);
+
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.playbackRate.value = playbackRef.current.rate;
+      source.connect(ctx.destination);
+
+      const onEnded = () => {
+        const atEnd = startOffset >= buffer.duration - 0.05;
+        stopSource(false);
+        playbackRef.current.playing = false;
+        playbackRef.current.offset = atEnd ? 0 : startOffset;
+        setPlaying(false);
+        setCurrentTime(atEnd ? 0 : startOffset);
+      };
+      endedHandlerRef.current = onEnded;
+      source.addEventListener("ended", onEnded);
+
+      source.start(0, startOffset);
+      sourceRef.current = source;
+      playbackRef.current.offset = startOffset;
+      playbackRef.current.startCtxTime = ctx.currentTime;
+      playbackRef.current.playing = true;
+      setPlaying(true);
+      setCurrentTime(startOffset);
+    },
+    [stopSource],
+  );
+
+  const applySeek = useCallback((targetTime: number) => {
+    const buffer = bufferRef.current;
+    const dur = pickDuration(buffer?.duration ?? 0, effectiveDuration);
+    const next = clampTime(targetTime, dur);
+    playbackRef.current.offset = next;
+    setCurrentTime(next);
+  }, [effectiveDuration]);
+
+  // Decode audio into an AudioBuffer for sample-accurate seeking.
+  useEffect(() => {
+    let cancelled = false;
+
+    const resetPlayback = () => {
+      stopSource(false);
+      playbackRef.current = {
+        offset: 0,
+        startCtxTime: 0,
+        rate: playbackRef.current.rate,
+        playing: false,
+      };
+      bufferRef.current = null;
+      setReady(false);
+      setDecodeError(false);
+      setDuration(0);
+      setCurrentTime(0);
+      setPlaying(false);
+    };
+
+    resetPlayback();
+
+    void (async () => {
+      try {
+        let fetchUrl = src;
+        if (src.startsWith("data:")) {
+          const response = await fetch(src);
+          const blob = await response.blob();
+          if (cancelled) return;
+          if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+          const url = URL.createObjectURL(blob);
+          blobUrlRef.current = url;
+          fetchUrl = url;
+        }
+
+        const response = await fetch(fetchUrl);
+        const arrayBuffer = await response.arrayBuffer();
+        if (cancelled) return;
+
+        const ctx = audioContextRef.current ?? new AudioContext();
+        audioContextRef.current = ctx;
+        const buffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+        if (cancelled) return;
+
+        bufferRef.current = buffer;
+        setDuration(pickDuration(buffer.duration, durationHint ?? 0));
+        setReady(true);
+      } catch {
+        if (!cancelled) {
+          setDecodeError(true);
+          setDuration(durationHint ?? 0);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      stopSource(false);
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+    };
+  }, [src, durationHint, stopSource]);
+
+  // Smooth playhead while playing.
   useEffect(() => {
     if (!playing) {
       if (rafRef.current !== null) {
@@ -106,33 +229,22 @@ export default function LineAudioPlayer({
       }
       return;
     }
+
     const tick = () => {
-      const audio = audioRef.current;
-      if (audio && !scrubbingRef.current) {
-        const actual = audio.currentTime;
-        const target = lastSeekTargetRef.current;
-        // If we recently seeked and the audio hasn't caught up yet (within
-        // 0.5s), keep showing the user's dragged position instead of the
-        // audio's stale position. This handles media where the seek is slow
-        // or silently fails.
-        if (target !== null && Math.abs(actual - target) > 0.5) {
-          setCurrentTime(target);
-        } else {
-          // Audio has caught up (or no pending seek) — sync normally.
-          lastSeekTargetRef.current = null;
-          setCurrentTime(actual);
-        }
+      if (!scrubbingRef.current) {
+        setCurrentTime(readPosition());
       }
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
+
     return () => {
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
     };
-  }, [playing]);
+  }, [playing, readPosition]);
 
   useEffect(() => {
     onPlayingChange?.(playing);
@@ -140,161 +252,129 @@ export default function LineAudioPlayer({
 
   const progress = effectiveDuration > 0 ? currentTime / effectiveDuration : 0;
 
-  const seekToClientX = useCallback((clientX: number) => {
-    const track = trackRef.current;
-    const audio = audioRef.current;
-    if (!track || !audio) return;
-    const dur = pickDuration(
-      Number.isFinite(audio.duration) ? audio.duration : 0,
-      effectiveDuration,
-    );
-    if (!dur || dur <= 0) return;
-    const rect = track.getBoundingClientRect();
-    if (rect.width <= 0) return;
-    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    const targetTime = ratio * dur;
-    // Setting currentTime can throw on some media that doesn't support seeking
-    // (e.g. certain data URIs before metadata is parsed); guard it.
-    try {
-      audio.currentTime = targetTime;
-    } catch {
-      // ignore — the UI still moves via setCurrentTime below.
-    }
-    // Record the user's intended position so the rAF tick doesn't snap the
-    // playhead back to the audio's stale position before the seek lands.
-    lastSeekTargetRef.current = targetTime;
-    setCurrentTime(targetTime);
-  }, [effectiveDuration]);
+  const seekToClientX = useCallback(
+    (clientX: number) => {
+      const track = trackRef.current;
+      if (!track || !ready) return;
+      const dur = effectiveDuration;
+      if (!dur || dur <= 0) return;
+      const rect = track.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      applySeek(ratio * dur);
+    },
+    [applySeek, effectiveDuration, ready],
+  );
 
   const handlePointerDown = useCallback(
     (event: PointerEvent) => {
+      if (!ready) return;
       event.preventDefault();
-      const audio = audioRef.current;
-      if (audio && !audio.paused) {
-        resumeAfterScrubRef.current = true;
-        audio.pause();
-      } else {
-        resumeAfterScrubRef.current = false;
-      }
+      resumeAfterScrubRef.current = playbackRef.current.playing;
+      stopSource(true);
+      setPlaying(false);
       scrubbingRef.current = true;
       setScrubbing(true);
       event.currentTarget.setPointerCapture(event.pointerId);
       seekToClientX(event.clientX);
     },
-    [seekToClientX],
+    [ready, seekToClientX, stopSource],
   );
 
   const handlePointerMove = useCallback(
     (event: PointerEvent) => {
-      // Read from the ref, not state, so the first move after pointer-down is
-      // not dropped waiting for React to re-render with the new scrubbing flag.
       if (!scrubbingRef.current) return;
       seekToClientX(event.clientX);
     },
     [seekToClientX],
   );
 
-  const handlePointerUp = useCallback((event: PointerEvent) => {
-    if (!scrubbingRef.current) return;
-    scrubbingRef.current = false;
-    setScrubbing(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    const audio = audioRef.current;
-    if (audio && resumeAfterScrubRef.current) {
-      resumeAfterScrubRef.current = false;
-      void audio.play();
-    }
-  }, []);
+  const finishScrub = useCallback(
+    (event: PointerEvent) => {
+      if (!scrubbingRef.current) return;
+      scrubbingRef.current = false;
+      setScrubbing(false);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      if (resumeAfterScrubRef.current) {
+        resumeAfterScrubRef.current = false;
+        void startAt(playbackRef.current.offset);
+      }
+    },
+    [startAt],
+  );
 
-  const handlePointerCancel = useCallback((event: PointerEvent) => {
-    handlePointerUp(event);
-  }, [handlePointerUp]);
+  const handlePointerUp = useCallback(
+    (event: PointerEvent) => {
+      finishScrub(event);
+    },
+    [finishScrub],
+  );
 
-  const togglePlay = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (audio.paused) {
-      void audio.play();
-    } else {
-      audio.pause();
+  const handlePointerCancel = useCallback(
+    (event: PointerEvent) => {
+      finishScrub(event);
+    },
+    [finishScrub],
+  );
+
+  const togglePlay = useCallback(async () => {
+    if (!ready) return;
+    if (playbackRef.current.playing) {
+      stopSource(true);
+      setPlaying(false);
+      setCurrentTime(playbackRef.current.offset);
+      return;
     }
-  }, []);
+    await startAt(playbackRef.current.offset);
+  }, [ready, startAt, stopSource]);
 
   const skipToStart = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = 0;
+    const wasPlaying = playbackRef.current.playing;
+    stopSource(true);
+    playbackRef.current.offset = 0;
     setCurrentTime(0);
-  }, []);
+    setPlaying(false);
+    if (wasPlaying) {
+      void startAt(0);
+    }
+  }, [startAt, stopSource]);
 
   const cycleRate = useCallback(() => {
     const order = [1, 1.25, 1.5, 0.75];
     setRate((prev) => {
       const idx = order.indexOf(prev);
       const next = order[(idx + 1) % order.length];
-      if (audioRef.current) audioRef.current.playbackRate = next;
+      playbackRef.current.rate = next;
+      if (playbackRef.current.playing) {
+        const position = readPosition();
+        stopSource(true);
+        playbackRef.current.offset = position;
+        void startAt(position);
+      }
       return next;
     });
-  }, []);
+  }, [readPosition, startAt, stopSource]);
 
   return (
     <div className="flex flex-col gap-3 w-full">
-      {playbackSrc ? (
-      <audio
-        key={playbackSrc}
-        ref={audioRef}
-        src={playbackSrc}
-        preload="metadata"
-        onLoadedMetadata={(event) => {
-          lastSeekTargetRef.current = null;
-          setCurrentTime(0);
-          setPlaying(false);
-          const parsed = pickDuration(event.currentTarget.duration, durationHint ?? 0);
-          setDuration(parsed);
-        }}
-        onDurationChange={(event) => {
-          const parsed = pickDuration(event.currentTarget.duration, durationHint ?? 0);
-          if (parsed > 0) setDuration(parsed);
-        }}
-        onSeeked={(event) => {
-          const actual = event.currentTarget.currentTime;
-          lastSeekTargetRef.current = null;
-          setCurrentTime(actual);
-        }}
-        onTimeUpdate={(event) => {
-          // Respect a pending seek: if the user just dragged to a position the
-          // audio hasn't reached yet, don't snap the playhead back to the
-          // audio's stale currentTime. Once the audio catches up (within 0.5s),
-          // resume normal syncing.
-          if (scrubbingRef.current) return;
-          const target = lastSeekTargetRef.current;
-          const actual = event.currentTarget.currentTime;
-          if (target !== null && Math.abs(actual - target) > 0.5) return;
-          lastSeekTargetRef.current = null;
-          setCurrentTime(actual);
-        }}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => {
-          setPlaying(false);
-          setCurrentTime(0);
-        }}
-        className="hidden"
-      />
+      {!ready && !decodeError ? (
+        <p className="text-center text-[10px] font-headline font-bold uppercase text-[#4a4a4a]">
+          Loading audio…
+        </p>
+      ) : null}
+      {decodeError ? (
+        <p className="text-center text-[10px] font-headline font-bold uppercase text-red-700">
+          Could not decode audio for seeking.
+        </p>
       ) : null}
 
-      {/* Scrubber row: time | full-width line | time.
-          The line gets its own row with maximum width so the playhead dot has
-          a large, easy-to-grab drag target — like mainstream TTS/video players. */}
       <div className="flex items-center gap-3 w-full">
         <span className="shrink-0 w-10 text-right font-headline font-black tabular-nums text-[11px] text-[#1a1a1a]">
           {formatClock(currentTime)}
         </span>
 
-        {/* The thin scrub line. Taller hit area (h-10) than the visible line
-            (h-1.5) so the user has a generous grab target for drag-to-seek. */}
         <div
           ref={trackRef}
           onPointerDown={handlePointerDown}
@@ -306,16 +386,16 @@ export default function LineAudioPlayer({
           aria-valuemin={0}
           aria-valuemax={Math.max(0, Math.floor(effectiveDuration))}
           aria-valuenow={Math.floor(currentTime)}
-          className="group relative flex h-10 flex-1 cursor-pointer items-center touch-none select-none"
+          aria-disabled={!ready}
+          className={`group relative flex h-10 flex-1 items-center touch-none select-none ${
+            ready ? "cursor-pointer" : "cursor-not-allowed opacity-70"
+          }`}
         >
-          {/* Track */}
           <div className="absolute left-0 right-0 h-1.5 rounded-full bg-[#1a1a1a]/15" />
-          {/* Played portion */}
           <div
             className="absolute left-0 h-1.5 rounded-full bg-[#ffcc00]"
             style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%` }}
           />
-          {/* Draggable playhead dot */}
           <div
             className={`pointer-events-none absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#1a1a1a] bg-white shadow-[0_1px_4px_rgba(0,0,0,0.35)] transition-transform ${
               scrubbing ? "scale-125" : "group-hover:scale-110"
@@ -329,13 +409,13 @@ export default function LineAudioPlayer({
         </span>
       </div>
 
-      {/* Controls row: play, restart, speed. */}
       <div className="flex items-center justify-center gap-3">
         <button
           type="button"
-          onClick={togglePlay}
+          onClick={() => void togglePlay()}
+          disabled={!ready}
           aria-label={playing ? "Pause" : "Play"}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#ffcc00] text-[#1a1a1a] shadow-[0_1px_3px_rgba(0,0,0,0.2)] hover:bg-[#ffd633] transition-colors cursor-pointer"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#ffcc00] text-[#1a1a1a] shadow-[0_1px_3px_rgba(0,0,0,0.2)] hover:bg-[#ffd633] transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
         >
           {playing ? (
             <svg aria-hidden="true" viewBox="0 0 24 24" className="h-6 w-6" fill="currentColor">
@@ -351,8 +431,9 @@ export default function LineAudioPlayer({
         <button
           type="button"
           onClick={skipToStart}
+          disabled={!ready}
           aria-label="Restart"
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[#4a4a4a] hover:bg-[#1a1a1a]/5 hover:text-[#1a1a1a] transition-colors cursor-pointer"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[#4a4a4a] hover:bg-[#1a1a1a]/5 hover:text-[#1a1a1a] transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
         >
           <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
             <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
@@ -362,8 +443,9 @@ export default function LineAudioPlayer({
         <button
           type="button"
           onClick={cycleRate}
+          disabled={!ready}
           aria-label="Playback speed"
-          className="flex h-10 shrink-0 items-center justify-center rounded-full border border-[#1a1a1a]/20 px-3 text-[11px] font-headline font-black uppercase text-[#1a1a1a] hover:bg-[#1a1a1a]/5 transition-colors cursor-pointer"
+          className="flex h-10 shrink-0 items-center justify-center rounded-full border border-[#1a1a1a]/20 px-3 text-[11px] font-headline font-black uppercase text-[#1a1a1a] hover:bg-[#1a1a1a]/5 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
         >
           {rate}x
         </button>
