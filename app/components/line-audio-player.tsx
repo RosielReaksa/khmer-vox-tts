@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type PointerEvent = React.PointerEvent<HTMLDivElement>;
 
@@ -10,6 +10,13 @@ function formatClock(seconds: number): string {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
+function pickDuration(...candidates: number[]): number {
+  for (const value of candidates) {
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 0;
 }
 
 /**
@@ -22,28 +29,71 @@ function formatClock(seconds: number): string {
  */
 export default function LineAudioPlayer({
   src,
+  durationHint,
   onPlayingChange,
 }: {
   src: string;
+  /** Fallback when `<audio>` metadata is missing (common for large data-URI WAV). */
+  durationHint?: number;
   onPlayingChange?: (playing: boolean) => void;
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
   // Mirror `scrubbing` in a ref so the pointermove handler always reads the
   // current value without waiting for a re-render (avoids a stale-closure race
   // where the first move after pointer-down was ignored).
   const scrubbingRef = useRef(false);
+  const resumeAfterScrubRef = useRef(false);
   // The last position the USER dragged to. After scrubbing ends, the rAF tick
   // only syncs from audio.currentTime if the audio has actually reached near
   // this target. This prevents the playhead snapping back to 0 on media where
   // setting currentTime silently fails (e.g. some WAV data URIs).
   const lastSeekTargetRef = useRef<number | null>(null);
+  const isDataSrc = src.startsWith("data:");
+  const [blobPlayback, setBlobPlayback] = useState<{ forSrc: string; url: string } | null>(null);
+  const playbackSrc = isDataSrc
+    ? (blobPlayback?.forSrc === src ? blobPlayback.url : null)
+    : src;
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [scrubbing, setScrubbing] = useState(false);
   const [rate, setRate] = useState(1);
+
+  // Large dashboard WAVs are often delivered as data: URIs. Browsers struggle to
+  // seek those (duration stays 0, currentTime snaps back). Blob URLs fix that.
+  useEffect(() => {
+    if (!isDataSrc) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch(src);
+        const blob = await response.blob();
+        if (cancelled) return;
+        const url = URL.createObjectURL(blob);
+        blobUrlRef.current = url;
+        setBlobPlayback({ forSrc: src, url });
+      } catch {
+        if (!cancelled) setBlobPlayback(null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+    };
+  }, [src, isDataSrc]);
+
+  const effectiveDuration = useMemo(
+    () => pickDuration(duration, durationHint ?? 0),
+    [duration, durationHint],
+  );
 
   // Smooth playhead via rAF while playing (browser timeupdate is ~4Hz).
   // Depends only on `playing` — reads scrubbingRef at runtime so the effect
@@ -88,16 +138,16 @@ export default function LineAudioPlayer({
     onPlayingChange?.(playing);
   }, [playing, onPlayingChange]);
 
-  const progress = duration > 0 ? currentTime / duration : 0;
+  const progress = effectiveDuration > 0 ? currentTime / effectiveDuration : 0;
 
   const seekToClientX = useCallback((clientX: number) => {
     const track = trackRef.current;
     const audio = audioRef.current;
     if (!track || !audio) return;
-    // Duration can be NaN/Infinity for streaming or not-yet-loaded sources.
-    // Fall back to the React state value (set from onLoadedMetadata) so the
-    // scrubber still works when audio.duration is not directly usable.
-    const dur = Number.isFinite(audio.duration) ? audio.duration : duration;
+    const dur = pickDuration(
+      Number.isFinite(audio.duration) ? audio.duration : 0,
+      effectiveDuration,
+    );
     if (!dur || dur <= 0) return;
     const rect = track.getBoundingClientRect();
     if (rect.width <= 0) return;
@@ -114,11 +164,18 @@ export default function LineAudioPlayer({
     // playhead back to the audio's stale position before the seek lands.
     lastSeekTargetRef.current = targetTime;
     setCurrentTime(targetTime);
-  }, [duration]);
+  }, [effectiveDuration]);
 
   const handlePointerDown = useCallback(
     (event: PointerEvent) => {
       event.preventDefault();
+      const audio = audioRef.current;
+      if (audio && !audio.paused) {
+        resumeAfterScrubRef.current = true;
+        audio.pause();
+      } else {
+        resumeAfterScrubRef.current = false;
+      }
       scrubbingRef.current = true;
       setScrubbing(true);
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -144,7 +201,16 @@ export default function LineAudioPlayer({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    const audio = audioRef.current;
+    if (audio && resumeAfterScrubRef.current) {
+      resumeAfterScrubRef.current = false;
+      void audio.play();
+    }
   }, []);
+
+  const handlePointerCancel = useCallback((event: PointerEvent) => {
+    handlePointerUp(event);
+  }, [handlePointerUp]);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
@@ -175,11 +241,28 @@ export default function LineAudioPlayer({
 
   return (
     <div className="flex flex-col gap-3 w-full">
+      {playbackSrc ? (
       <audio
+        key={playbackSrc}
         ref={audioRef}
-        src={src}
+        src={playbackSrc}
         preload="metadata"
-        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)}
+        onLoadedMetadata={(event) => {
+          lastSeekTargetRef.current = null;
+          setCurrentTime(0);
+          setPlaying(false);
+          const parsed = pickDuration(event.currentTarget.duration, durationHint ?? 0);
+          setDuration(parsed);
+        }}
+        onDurationChange={(event) => {
+          const parsed = pickDuration(event.currentTarget.duration, durationHint ?? 0);
+          if (parsed > 0) setDuration(parsed);
+        }}
+        onSeeked={(event) => {
+          const actual = event.currentTarget.currentTime;
+          lastSeekTargetRef.current = null;
+          setCurrentTime(actual);
+        }}
         onTimeUpdate={(event) => {
           // Respect a pending seek: if the user just dragged to a position the
           // audio hasn't reached yet, don't snap the playhead back to the
@@ -200,6 +283,7 @@ export default function LineAudioPlayer({
         }}
         className="hidden"
       />
+      ) : null}
 
       {/* Scrubber row: time | full-width line | time.
           The line gets its own row with maximum width so the playhead dot has
@@ -216,10 +300,11 @@ export default function LineAudioPlayer({
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
           role="slider"
           aria-label="Seek"
           aria-valuemin={0}
-          aria-valuemax={Math.max(0, Math.floor(duration))}
+          aria-valuemax={Math.max(0, Math.floor(effectiveDuration))}
           aria-valuenow={Math.floor(currentTime)}
           className="group relative flex h-10 flex-1 cursor-pointer items-center touch-none select-none"
         >
@@ -240,7 +325,7 @@ export default function LineAudioPlayer({
         </div>
 
         <span className="shrink-0 w-10 font-headline font-black tabular-nums text-[11px] text-[#4a4a4a]">
-          {formatClock(duration)}
+          {formatClock(effectiveDuration)}
         </span>
       </div>
 

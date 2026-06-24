@@ -1344,7 +1344,7 @@ function AudioResultPanel({
                 <p className="text-[10px] font-headline font-bold uppercase text-primary">{updatedLabel}</p>
               </div>
             </div>
-            <LineAudioPlayer src={audioUrl} />
+            <LineAudioPlayer src={audioUrl} durationHint={result.outputSeconds} />
             <a
               href={audioUrl}
               download={`voxtts-${mode}-${result.generationId}.${extensionFor(result.contentType)}`}
