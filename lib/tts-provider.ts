@@ -8,7 +8,7 @@ import {
 } from "@/lib/audio-api";
 import { hasSpeakableText } from "@/lib/speech-text-sanitizer";
 import type { GenerationMode } from "@/lib/types";
-import { DEFAULT_CLONE_VOICE_INSTRUCTION } from "@/lib/voice-defaults";
+import { DEFAULT_CLONE_VOICE_INSTRUCTION, PRESET_TTS_VOICE_INSTRUCTION } from "@/lib/voice-defaults";
 import {
   disableEndpoint,
   getUpstreamEndpoints,
@@ -2492,6 +2492,54 @@ function resolveChunkConcurrency(): number {
   return Math.min(ceiling, Math.max(1, poolSize));
 }
 
+type ChunkContinuationPrompt = {
+  wavBytes: Uint8Array;
+  text: string;
+};
+
+function chunkContinuationEnabled(): boolean {
+  return readBooleanEnv("TTS_CHUNK_CONTINUATION", true);
+}
+
+function continuationPromptSeconds(): number {
+  return readNumericEnv("TTS_CONTINUATION_PROMPT_SECONDS", 6, 2, 15);
+}
+
+function extractWavTailBytes(wavBytes: Uint8Array, tailSeconds: number): Uint8Array {
+  const info = readPcm16Wav(wavBytes);
+  const buffer = Buffer.from(wavBytes.buffer, wavBytes.byteOffset, wavBytes.byteLength);
+  const dataEnd = Math.min(buffer.length, info.dataOffset + info.dataSize);
+  const pcm = buffer.subarray(info.dataOffset, dataEnd);
+  const bytesPerSecond = info.sampleRate * info.channels * 2;
+  const tailBytes = Math.min(
+    pcm.length,
+    Math.max(bytesPerSecond, Math.round(tailSeconds * bytesPerSecond)),
+  );
+  const tailPcm = pcm.subarray(pcm.length - tailBytes);
+  return createPcm16Wav(tailPcm, info.channels, info.sampleRate);
+}
+
+function tailTextForContinuation(
+  chunkText: string,
+  tailSeconds: number,
+  charsPerSecond: number,
+): string {
+  const trimmed = chunkText.trim();
+  if (!trimmed) return trimmed;
+  const maxChars = Math.max(24, Math.round(tailSeconds * charsPerSecond));
+  const chars = Array.from(trimmed);
+  if (chars.length <= maxChars) return trimmed;
+  const slice = chars.slice(-maxChars).join("");
+  const boundary = slice.search(/(?:^|[\s\u17d4.!?])([^\s\u17d4.!?].*)$/u);
+  if (boundary >= 0) {
+    const adjusted = slice.slice(boundary).replace(/^[\s\u17d4.!?]+/u, "").trim();
+    if (adjusted.length >= Math.min(12, Math.floor(maxChars / 3))) {
+      return adjusted;
+    }
+  }
+  return slice.trim();
+}
+
 async function synthesizeSingleChunk(
   params: {
     mode: GenerationMode;
@@ -2500,6 +2548,7 @@ async function synthesizeSingleChunk(
     model?: string;
     cloneSample?: CloneSample;
     denoiseReference?: boolean;
+    continuationPrompt?: ChunkContinuationPrompt;
   },
   model: string,
   responseFormat: AudioResponseFormat,
@@ -2548,6 +2597,14 @@ async function synthesizeSingleChunk(
     payload.ref_audio_wav_base64 = base64;
     payload.ref_audio_wav_format = "wav";
 
+    if (params.continuationPrompt?.wavBytes.byteLength && params.continuationPrompt.text.trim()) {
+      payload.prompt_wav_base64 = Buffer.from(params.continuationPrompt.wavBytes).toString(
+        "base64",
+      );
+      payload.prompt_wav_format = "wav";
+      payload.prompt_text = params.continuationPrompt.text.trim();
+    }
+
     if (
       params.mode === "clone" &&
       !isPresetReferenceSample(params.cloneSample)
@@ -2574,9 +2631,9 @@ async function synthesizeSingleChunk(
       // OFFICIAL VoxCPM2 default temperature is 1.0 (see nanovllm_voxcpm source).
       // Lower values (0.45-0.55) make output deterministic but can cause the
       // model to get stuck on patterns, producing more buzz/noise artifacts.
-      // For clone mode, use 0.8 for more consistent voice across segments.
+      // For clone mode, use a lower temperature for more consistent delivery.
       payload.temperature = retryAdjustedTemperature(
-        readNumericEnv("TTS_CLONE_TEMPERATURE", 0.8, 0.1, 2.0),
+        readNumericEnv("TTS_CLONE_TEMPERATURE", 0.55, 0.1, 2.0),
         qualityRetryAttempt,
       );
       // CFG (guidance scale): official VoxCPM2 default is 2.0. The docs recommend
@@ -2593,7 +2650,7 @@ async function synthesizeSingleChunk(
       // Add consistent voice description for preset voices to ensure consistency.
       payload.voice =
         params.voice === "male" || params.voice === "female"
-          ? "same speaker as the reference audio, natural clear speech, consistent tone, smooth pace, same voice every time, same timbre, same pitch"
+          ? PRESET_TTS_VOICE_INSTRUCTION
           : params.voice;
       // OFFICIAL VoxCPM2 default temperature is 1.0 (see nanovllm_voxcpm source).
       // Lower values (0.45-0.55) make output deterministic but can cause the
@@ -2861,6 +2918,7 @@ async function synthesizeChunkWithSilenceRetry(
     model?: string;
     cloneSample?: CloneSample;
     denoiseReference?: boolean;
+    continuationPrompt?: ChunkContinuationPrompt;
   },
   model: string,
   responseFormat: AudioResponseFormat,
@@ -2972,6 +3030,60 @@ async function analyzeDeliveredAudio(
   }
 }
 
+async function synthesizeAllChunks(
+  chunks: string[],
+  params: {
+    mode: GenerationMode;
+    voice: string;
+    model?: string;
+    cloneSample?: CloneSample;
+    denoiseReference?: boolean;
+  },
+  model: string,
+  responseFormat: AudioResponseFormat,
+  expectedContentType: string,
+): Promise<ChunkSynthesisResult[]> {
+  const synthesizeOne = (chunkText: string, continuationPrompt?: ChunkContinuationPrompt) =>
+    synthesizeChunkWithSilenceRetry(
+      { ...params, text: chunkText, continuationPrompt },
+      model,
+      responseFormat,
+      expectedContentType,
+    );
+
+  if (!chunkContinuationEnabled() || chunks.length <= 1) {
+    return mapWithConcurrency(chunks, resolveChunkConcurrency(), (chunkText) =>
+      synthesizeOne(chunkText),
+    );
+  }
+
+  const results: ChunkSynthesisResult[] = [];
+  let continuation: ChunkContinuationPrompt | undefined;
+
+  for (let index = 0; index < chunks.length; index++) {
+    const result = await synthesizeOne(chunks[index], continuation);
+    results.push(result);
+
+    if (index < chunks.length - 1) {
+      const tailSeconds = continuationPromptSeconds();
+      try {
+        continuation = {
+          wavBytes: extractWavTailBytes(result.audioBytes, tailSeconds),
+          text: tailTextForContinuation(
+            chunks[index],
+            tailSeconds,
+            estimatedCharsPerSecond(params.mode),
+          ),
+        };
+      } catch {
+        continuation = undefined;
+      }
+    }
+  }
+
+  return results;
+}
+
 async function synthesizeMergedAudio(params: {
   mode: GenerationMode;
   text: string;
@@ -2996,20 +3108,15 @@ async function synthesizeMergedAudio(params: {
     upstreamChunkChars(params.mode),
   );
 
-  // Chunks are independent generations, so run them against the endpoint pool
-  // with bounded concurrency (defaults to the number of configured endpoints)
-  // instead of strictly one-at-a-time. Order is preserved by index. Set
-  // TTS_CHUNK_CONCURRENCY=1 to restore the original sequential behavior.
-  const chunkResults: ChunkSynthesisResult[] = await mapWithConcurrency(
+  // Long text is split into ~1-minute chunks. When continuation is enabled,
+  // each chunk after the first also receives the tail of the previous chunk as
+  // prompt audio so VoxCPM2 keeps the same speaking style (not just timbre).
+  const chunkResults: ChunkSynthesisResult[] = await synthesizeAllChunks(
     chunks,
-    resolveChunkConcurrency(),
-    (chunkText) =>
-      synthesizeChunkWithSilenceRetry(
-        { ...params, text: chunkText },
-        model,
-        responseFormat,
-        expectedContentType,
-      ),
+    params,
+    model,
+    responseFormat,
+    expectedContentType,
   );
 
   // Independently generated chunks drift in volume, which makes long audio get

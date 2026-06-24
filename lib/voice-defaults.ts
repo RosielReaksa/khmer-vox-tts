@@ -1,7 +1,11 @@
 export const DEFAULT_TTS_VOICE_PROMPT = "female";
 
 export const DEFAULT_CLONE_VOICE_INSTRUCTION =
-  "same speaker as the reference audio, natural clear speech, consistent tone, smooth pace";
+  "same speaker as the reference audio, neutral calm tone, natural clear speech, steady even pace, no emotional exaggeration, consistent delivery throughout";
+
+/** Prepended to preset male/female TTS so VoxCPM2 does not infer mood per chunk. */
+export const PRESET_TTS_VOICE_INSTRUCTION =
+  "same speaker as the reference audio, neutral calm tone, natural clear speech, steady even pace, no emotional exaggeration, same timbre and pitch throughout";
 
 export const DASHBOARD_TTS_VOICE_PRESETS = [
   "female",
