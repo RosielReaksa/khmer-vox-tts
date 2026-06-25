@@ -1,14 +1,22 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth/require-admin";
+
+import { isAdminEmail } from "@/lib/admin";
+import { readSessionFromCookie } from "@/lib/session";
 import { getEndpointPoolSnapshot } from "@/lib/tts-endpoints";
 
-// Live snapshot of the TTS upstream round-robin: every account in the pool,
-// its cooldown status, which one the round-robin would pick next, and the
-// current remaining-credits value (when reported by the Modal account page).
-//
-// Used by the admin /app/admin/modal page so operators can see *right now*
-// which Modal account is serving traffic and which are temporarily disabled.
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+async function requireAdmin() {
+  const session = await readSessionFromCookie();
+  if (!session) {
+    return { ok: false as const, response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+  }
+  if (!isAdminEmail(session.email)) {
+    return { ok: false as const, response: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
+  }
+  return { ok: true as const, session };
+}
 
 export async function GET() {
   const admin = await requireAdmin();
