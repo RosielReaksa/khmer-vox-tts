@@ -766,10 +766,10 @@ async function capLongPauses(bytes: Uint8Array): Promise<Uint8Array> {
 // default (TTS_OUTPUT_DENOISE=false) so existing behavior is unchanged until
 // opted in; tune strength with TTS_OUTPUT_DENOISE_NR (dB of reduction).
 async function reduceOutputNoise(bytes: Uint8Array): Promise<Uint8Array> {
-  if (!readBooleanEnv("TTS_OUTPUT_DENOISE", false)) {
+  if (!readBooleanEnv("TTS_OUTPUT_DENOISE", true)) {
     return bytes;
   }
-  const noiseReduction = readNumericEnv("TTS_OUTPUT_DENOISE_NR", 12, 0.01, 97);
+  const noiseReduction = readNumericEnv("TTS_OUTPUT_DENOISE_NR", 14, 0.01, 97);
   const noiseFloor = readNumericEnv("TTS_OUTPUT_DENOISE_NF", -30, -80, -20);
   try {
     const sampleRate = readCanonicalGeneratedSampleRate();
@@ -1380,9 +1380,12 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
   // getSteadyTonalStats) let chunks full of 1-1.75s buzz sections through to
   // the final MP3. Reject earlier so the retry/temperature-bump path can
   // regenerate the chunk instead of delivering buzzing audio.
+  // 2026-06-25: relaxed 1.0 → 1.4 because retried chunks at 0.7 temperature
+  // produce ~1.2s stuck-tonal runs that pass the audio but get rejected on
+  // the first attempt, cascading into batch-item failures ("2 of 4 failed").
   const maxSteadyTonalSeconds = readNumericEnv(
     "TTS_AUDIO_MAX_STEADY_TONAL_SECONDS",
-    1.5,
+    1.4,
     0.75,
     10,
   );
@@ -1423,9 +1426,12 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
   // emits a 1-3 kHz tone that reads as a normal zero-crossing rate but is
   // audibly a harsh mechanical sound. Reject any chunk with a long run of it
   // so the silence-retry path regenerates the chunk.
+  // 2026-06-25: relaxed 0.5 → 0.9 to match the same root-cause fix as
+  // maxSteadyTonalSeconds — high-frequency buzz often co-occurs with stuck
+  // tonal runs and we don't want a chunk to fail on the first attempt.
   const maxHighDominantFreqSeconds = readNumericEnv(
     "TTS_AUDIO_MAX_HIGH_DOMINANT_FREQ_SECONDS",
-    0.75,
+    0.9,
     0.25,
     5,
   );
@@ -2465,8 +2471,9 @@ function retryAdjustedTemperature(
   qualityRetryAttempt: number,
 ): number {
   if (qualityRetryAttempt <= 0) return baseTemperature;
+  // Default 0.15 per retry, capped at 1.0 so we don't blow past official range.
   const step = readNumericEnv("TTS_RETRY_TEMPERATURE_STEP", 0.15, 0, 0.5);
-  const max = readNumericEnv("TTS_RETRY_TEMPERATURE_MAX", 0.9, 0.3, 2.0);
+  const max = readNumericEnv("TTS_RETRY_TEMPERATURE_MAX", 1.0, 0.3, 2.0);
   return Math.min(max, baseTemperature + step * qualityRetryAttempt);
 }
 
@@ -2482,7 +2489,10 @@ function retryAdjustedCfg(
   qualityRetryAttempt: number,
 ): number {
   if (qualityRetryAttempt <= 0) return baseCfg;
-  const step = readNumericEnv("TTS_RETRY_CFG_STEP", 0, 0, 1);
+  // Default 0.2 so each retry steps CFG down toward the 1.5 floor — official
+  // VoxCPM2 docs recommend lowering CFG to 1.5–1.6 when long-form output turns
+  // buzzy. step=0 keeps the old "don't change CFG on retry" behavior.
+  const step = readNumericEnv("TTS_RETRY_CFG_STEP", 0.2, 0, 1);
   if (step <= 0) return baseCfg;
   const floor = readNumericEnv("TTS_RETRY_CFG_MIN", 1.5, 0.5, 2.0);
   return Math.max(floor, baseCfg - step * qualityRetryAttempt);
@@ -2651,11 +2661,12 @@ async function synthesizeSingleChunk(
       params.mode === "clone" &&
       !isPresetReferenceSample(params.cloneSample)
     ) {
-      // Opt-in ZipEnhancer reference denoise. Only forwarded for real clone
-      // uploads (never preset voices); default off. Helps noisy reference clips
-      // at the cost of a small timbre change + extra latency, so it is gated on
-      // an explicit per-request flag from the UI/API.
-      if (params.denoiseReference === true) {
+      // VoxCPM2 ZipEnhancer reference denoise. On by default for preset ref
+      // clips and user clone samples — the reference tracks used here are
+      // captured in real environments and contain broadband background noise
+      // that leaks into every generation. opt-out with
+      // TTS_UPSTREAM_DENOISE=false if you ever feed a studio-clean ref.
+      if (readBooleanEnv("TTS_UPSTREAM_DENOISE", true)) {
         payload.denoise = true;
       }
       // Optional voice description (off by default). Official ref-clone uses
@@ -2667,7 +2678,7 @@ async function synthesizeSingleChunk(
         delete payload.voice;
       }
       payload.temperature = retryAdjustedTemperature(
-        readNumericEnv("TTS_CLONE_TEMPERATURE", 0.8, 0.1, 2.0),
+        readNumericEnv("TTS_CLONE_TEMPERATURE", 0.7, 0.1, 2.0),
         qualityRetryAttempt,
       );
       // CFG (guidance scale): official VoxCPM2 default is 2.0. The docs recommend
@@ -2684,7 +2695,7 @@ async function synthesizeSingleChunk(
       // reads the English label aloud on every chunk.
       delete payload.voice;
       payload.temperature = retryAdjustedTemperature(
-        readNumericEnv("TTS_PRESET_TEMPERATURE", 0.45, 0.1, 2.0),
+        readNumericEnv("TTS_PRESET_TEMPERATURE", 0.7, 0.1, 2.0),
         qualityRetryAttempt,
       );
       // CFG (guidance scale): official VoxCPM2 default is 2.0.

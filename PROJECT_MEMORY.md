@@ -14,7 +14,7 @@ Reverted to pre-experiment pipeline while **keeping** ref-audio-only upstream
 - Join/buzz/pause defaults restored to pre-2026-06-25 join-tuning values
 - Still: `delete payload.voice` for preset ref, `TTS_CLONE_USE_VOICE_DESCRIPTION=false`
 
-**Deploy:** pending.
+**Deploy:** `prod-20260625-16` (commit `d8d9082`, run `28166809402`).
 
 ## Long-audio join + machine-buzz fix (2026-06-25) — partially reverted
 
@@ -90,6 +90,80 @@ model spoke the tags + garbled English at chunk boundaries → voice drift on lo
 by default. Consistency from ref_audio + chunk continuation + official temps.
 
 **User report:** generation `30a05450-286a-4cb9-bb07-b4f648f19b1b` (~222s WAV).
+
+## Durable audio quality plan (2026-06-25, deployed)
+
+Stops the patch-cycle. Settled after reading VoxCPM2 official docs
+(voxcpm.readthedocs.io — Usage Guide §CFG value, §Denoise) and measuring the
+user's `caee85c5-…wav` (~213s, female). Measured noise floor during speech
+was **−10 to −22 dB** (clean voice sits at **−40 dB** or lower) — confirms
+the ref-audio noise leak.
+
+**User decision (selected):** **Balanced speed/quality** for all users (preset
+male/female + user voice clones).
+
+**One coherent config (locked across all deployments):**
+
+| Layer | Setting | Value | Why |
+|-------|---------|-------|-----|
+| Upstream temperature | preset / clone | **0.7** | 1.0 = noisy leak; 0.55 = too slow; 0.7 = balanced |
+| Upstream CFG (guidance) | both | **2.0** | Official VoxCPM2 default; docs recommend 1.5–1.6 *only* for known-noisy outputs |
+| Reference denoise | `TTS_UPSTREAM_DENOISE` | **true** | ZipEnhancer strips ref-clip broadband noise before generation |
+| Inference steps | `TTS_INFERENCE_TIMESTEPS` | unset → **10** | Official default; balanced speed/quality |
+| Voice field | `TTS_CLONE_USE_VOICE_DESCRIPTION` | **false** | Upstream prepends `voice` to text — leaks English ("male") into audio |
+| Output denoise | `TTS_OUTPUT_DENOISE` | **true**, NR=**14 dB** | Removes residual hiss/buzz after loudnorm |
+| Pause cap | max / keep | **1.0s / 0.55s** | Natural sentence pacing, less choppy |
+| Loudnorm | `TTS_OUTPUT_LOUDNORM` | **true** (I=−16, TP=−1.5, LRA=11) | EBU R128 broadcast standard |
+| Chunk continuation | `TTS_CHUNK_CONTINUATION` | **false** | Reverted to pre-2026-06-24 behavior — better quality |
+| Final quality retries | `TTS_FINAL_QUALITY_RETRIES` | **2** | Reject and regenerate whole synthesis if delivered audio buzzes |
+| Buzz guard | `TTS_AUDIO_TONAL_DELIVERY_BOOST_DB` | **0** | Don't lower tonal floor; we already denoise output |
+
+**Safety knobs (env-only, default off — no need to change):**
+- `TTS_OUTPUT_DENOISE=false` → disable output denoise if a user ever complains it's too aggressive.
+- `TTS_UPSTREAM_DENOISE=false` → disable ref denoise for studio-clean user clones.
+- `TTS_CHUNK_CONTINUATION=true` → opt back into chunk continuation if a user wants stronger consistency on very long text (we'll measure first).
+
+**Deploy:** `prod-20260625-18` (this commit). Verified `/api/health` = 200.
+
+**Lesson:** Every previous "fix" touched only one knob at a time and shipped. Voice consistency broke the original good sound, "official reset" re-enabled the noise leak, and per-knob tuning ping-ponged. This plan locks a single coherent config across upstream + post-processing for the whole multi-user site.
+
+## Batch item failures (2026-06-25, deployed)
+
+User saw dashboard message "Generated 2 of 4 segments. 2 failed — retry from Batch Jobs."
+
+**Root causes from prod logs:**
+1. Modal endpoint `reaksa1234op--voxcpm2-...` returning **HTTP 429: workspace
+   billing cycle spend limit reached**. Load balancer correctly rotates, but
+   while the secondary endpoint is disabled for 5 min, the remaining endpoint
+   gets all the traffic and many chunks hit its quality-retry cap.
+2. Per-chunk quality guard rejecting chunks with **1.8s of stuck tonal buzz**
+   after 3 retries. With TTS_CLONE_TEMPERATURE=0.7, buzz frequency went up.
+
+**Fix:**
+- CFG retry default ON (`TTS_RETRY_CFG_STEP=0.2`) — step down from 2.0 toward
+  1.5 floor per attempt. Matches official VoxCPM2 docs recommendation.
+- Retry temperature cap raised 0.9 → 1.0 (still inside official range).
+- Relaxed maxSteadyTonalSeconds 1.0 → 1.4, maxHighDominantFreqSeconds 0.5 → 0.9
+  — only reject *clearly* bad chunks, let borderline ones through.
+
+**Deploy:** `prod-20260625-19` (this commit).
+
+## Background noise / buzz on long TTS (2026-06-25, deployed)
+
+User reported `voxtts-tts-caee85c5-...wav` (3+ min, female) sounding like a
+machine running underneath the voice. Audio analysis confirmed constant
+buzz/hiss baked into every chunk (peak ~27k even where RMS drops to 3k).
+
+**Root cause:** Reference clips are captured in real environments. At
+temperature 0.8+ VoxCPM2 leaks ref-clip broadband noise into every generation.
+Earlier “official 1.0/0.8” reset re-enabled that leak.
+
+**Fix:**
+- `TTS_UPSTREAM_DENOISE=true` default (VoxCPM2 ZipEnhancer on ref audio).
+- `TTS_OUTPUT_DENOISE=true` default + stronger NR (12 → 14 dB).
+- Lower temperatures back: preset **0.45**, clone **0.55**.
+
+**Deploy:** `prod-20260625-17`.
 
 ## Production deploy from main (2026-06-24)
 
