@@ -11,7 +11,7 @@ import { getUsagePolicy } from "@/lib/server-usage-policy";
 import { PUBLIC_AUDIO_OUTPUT_FORMAT, isUnsupportedPublicAudioOutputFormat } from "@/lib/audio-api";
 import { isJsonRequestError, jsonRequestErrorBody, readJsonRequest } from "@/lib/request-json";
 import { MAX_MODEL_CHARS, MAX_TEXT_CHARS, MAX_VOICE_CHARS } from "@/lib/usage-policy";
-import { DEFAULT_TTS_VOICE_PROMPT } from "@/lib/voice-defaults";
+import { DEFAULT_TTS_VOICE_PROMPT, VOICE_STYLE_IDS } from "@/lib/voice-defaults";
 
 export const runtime = "nodejs";
 
@@ -34,6 +34,7 @@ const speechSchema = z.object({
   voice: z.string().min(1).max(MAX_VOICE_CHARS).optional(),
   model: z.string().min(1).max(MAX_MODEL_CHARS).optional(),
   output_format: z.string().max(16).optional(),
+  voice_style: z.enum(VOICE_STYLE_IDS).optional(),
 });
 
 export async function POST(request: Request) {
@@ -99,6 +100,7 @@ export async function POST(request: Request) {
       text: parsed.data.input,
       voice: parsed.data.voice ?? DEFAULT_TTS_VOICE_PROMPT,
       model: parsed.data.model,
+      voiceStyle: parsed.data.voice_style,
     });
 
     return new NextResponse(Buffer.from(result.audioBase64, "base64"), {

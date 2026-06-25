@@ -10,7 +10,11 @@ import { hasSpeakableText } from "@/lib/speech-text-sanitizer";
 import type { GenerationMode } from "@/lib/types";
 import {
   isBuiltinStyleVoiceDescription,
+  normalizeVoiceStyle,
   OFFICIAL_VOXCPM2_CLONE_VOICE,
+  resolveStyleCfg,
+  resolveStyleTemperature,
+  type VoiceStylePreset,
 } from "@/lib/voice-defaults";
 import {
   disableEndpoint,
@@ -2637,6 +2641,7 @@ async function synthesizeSingleChunk(
     cloneSample?: CloneSample;
     denoiseReference?: boolean;
     continuationPrompt?: ChunkContinuationPrompt;
+    voiceStyle?: VoiceStylePreset;
   },
   model: string,
   responseFormat: AudioResponseFormat,
@@ -2707,7 +2712,10 @@ async function synthesizeSingleChunk(
         delete payload.voice;
       }
       payload.temperature = retryAdjustedTemperature(
-        readNumericEnv("TTS_CLONE_TEMPERATURE", 0.7, 0.1, 2.0),
+        resolveStyleTemperature(
+          normalizeVoiceStyle(params.voiceStyle),
+          readNumericEnv("TTS_CLONE_TEMPERATURE", 0.7, 0.1, 2.0),
+        ),
         qualityRetryAttempt,
       );
       // CFG (guidance scale): official VoxCPM2 default is 2.0. The docs recommend
@@ -2715,7 +2723,10 @@ async function synthesizeSingleChunk(
       // standard for normal clone requests. On buzz/silence retries, CFG can be
       // stepped DOWN toward TTS_RETRY_CFG_MIN when TTS_RETRY_CFG_STEP is set.
       payload.cfg_value = retryAdjustedCfg(
-        readNumericEnv("TTS_CLONE_CFG_VALUE", 2.0, 0.1, 2.0),
+        resolveStyleCfg(
+          normalizeVoiceStyle(params.voiceStyle),
+          readNumericEnv("TTS_CLONE_CFG_VALUE", 2.0, 0.1, 2.0),
+        ),
         qualityRetryAttempt,
       );
     } else {
@@ -2724,13 +2735,19 @@ async function synthesizeSingleChunk(
       // reads the English label aloud on every chunk.
       delete payload.voice;
       payload.temperature = retryAdjustedTemperature(
-        readNumericEnv("TTS_PRESET_TEMPERATURE", 0.7, 0.1, 2.0),
+        resolveStyleTemperature(
+          normalizeVoiceStyle(params.voiceStyle),
+          readNumericEnv("TTS_PRESET_TEMPERATURE", 0.7, 0.1, 2.0),
+        ),
         qualityRetryAttempt,
       );
       // CFG (guidance scale): official VoxCPM2 default is 2.0.
       // Higher CFG = more faithful to reference audio = more consistent voice.
       payload.cfg_value = retryAdjustedCfg(
-        readNumericEnv("TTS_PRESET_CFG_VALUE", 2.0, 0.1, 2.0),
+        resolveStyleCfg(
+          normalizeVoiceStyle(params.voiceStyle),
+          readNumericEnv("TTS_PRESET_CFG_VALUE", 2.0, 0.1, 2.0),
+        ),
         qualityRetryAttempt,
       );
     }
@@ -2986,6 +3003,7 @@ async function synthesizeChunkWithSilenceRetry(
     cloneSample?: CloneSample;
     denoiseReference?: boolean;
     continuationPrompt?: ChunkContinuationPrompt;
+    voiceStyle?: VoiceStylePreset;
   },
   model: string,
   responseFormat: AudioResponseFormat,
@@ -3158,6 +3176,7 @@ async function synthesizeMergedAudio(params: {
   model?: string;
   cloneSample?: CloneSample;
   denoiseReference?: boolean;
+  voiceStyle?: VoiceStylePreset;
 }): Promise<TtsSynthesisResult> {
   const model = (
     params.model ??
@@ -3261,6 +3280,7 @@ export async function synthesizeWithUpstream(params: {
   model?: string;
   cloneSample?: CloneSample;
   denoiseReference?: boolean;
+  voiceStyle?: VoiceStylePreset;
 }): Promise<TtsSynthesisResult> {
   // Bounded final-quality retry. The per-chunk gate analyzes raw (quiet)
   // upstream audio, so a buzz that only becomes audible after the delivery-

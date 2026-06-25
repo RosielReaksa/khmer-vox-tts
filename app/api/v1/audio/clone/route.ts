@@ -17,7 +17,7 @@ import {
   MAX_VOICE_CHARS,
 } from "@/lib/usage-policy";
 import { isVoiceCloneConsentAccepted } from "@/lib/voice-consent";
-import { DEFAULT_CLONE_VOICE_INSTRUCTION } from "@/lib/voice-defaults";
+import { DEFAULT_CLONE_VOICE_INSTRUCTION, VOICE_STYLE_IDS, type VoiceStylePreset } from "@/lib/voice-defaults";
 
 export const runtime = "nodejs";
 
@@ -45,6 +45,7 @@ const cloneJsonSchema = z.object({
   reference_audio_mime_type: z.string().optional(),
   voice_consent: z.union([z.boolean(), z.string()]).optional(),
   output_format: z.string().max(16).optional(),
+  voice_style: z.enum(VOICE_STYLE_IDS).optional(),
 });
 
 export async function POST(request: Request) {
@@ -65,6 +66,7 @@ export async function POST(request: Request) {
     let fileName = "sample.wav";
     let voiceConsentAccepted = false;
 
+    let voiceStyle: VoiceStylePreset | undefined;
     if (contentType.includes("multipart/form-data")) {
       const formData = await request.formData();
       const sample = formData.get("sample") ?? formData.get("reference_audio") ?? formData.get("reference");
@@ -110,6 +112,7 @@ export async function POST(request: Request) {
       voice = parsed.data.voice ?? DEFAULT_CLONE_VOICE_INSTRUCTION;
       model = parsed.data.model;
       voiceConsentAccepted = isVoiceCloneConsentAccepted(parsed.data.voice_consent);
+      voiceStyle = parsed.data.voice_style;
       if (isUnsupportedPublicAudioOutputFormat(parsed.data.output_format)) {
         return jsonWithCors(
           { error: "Only MP3 output is supported.", code: "OUTPUT_FORMAT_UNSUPPORTED" },
@@ -191,6 +194,7 @@ export async function POST(request: Request) {
         mimeType: sampleMimeType,
         fileName,
       },
+      voiceStyle,
     });
 
     return new NextResponse(Buffer.from(result.audioBase64, "base64"), {

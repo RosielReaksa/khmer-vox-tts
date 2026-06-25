@@ -168,6 +168,33 @@ into both the dashboard single-synthesis and the multi-segment batch merge
 
 **Deploy:** `prod-20260626-23` (this commit).
 
+## Step 2: Voice style / prosody presets (2026-06-26, deployed)
+
+User wanted per-request control over speaking style (normal vs anxious).
+VoxCPM2's `voice` field is unsafe (gets prepended to speakable text), so
+style is delivered via **temperature + CFG only** — no spoken-English risk.
+
+**Presets (lib/voice-defaults.ts `VOICE_STYLE_PRESETS`):**
+
+| Style | Temperature | CFG | Feel |
+|-------|-------------|-----|------|
+| `normal` (default) | 0.70 | 2.0 | Balanced |
+| `calm` | 0.55 | 2.0 | Steadier, slower, narration |
+| `urgent` | 0.85 | 2.0 | Brisker, announcements |
+| `excited` | 0.90 | 1.7 | Higher energy, looser guidance |
+
+**API surface:**
+- v1 speech: `voice_style` optional body field (`"normal" | "calm" | "urgent" | "excited"`)
+- v1 clone: same, only in JSON body path (multipart path comes in Step 3 UI)
+- runGenerationForUser / synthesizeWithUpstream: optional `voiceStyle`
+  parameter, validated with `normalizeVoiceStyle()` and resolved via
+  `resolveStyleTemperature()` / `resolveStyleCfg()`.
+
+**Defaults preserved:** callers that don't pass `voice_style` get the
+existing 0.7 / 2.0 behavior. No regression for current users.
+
+**Deploy:** `prod-20260626-24` (this commit).
+
 ## Background noise / buzz on long TTS (2026-06-25, deployed)
 
 User reported `voxtts-tts-caee85c5-...wav` (3+ min, female) sounding like a

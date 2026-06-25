@@ -28,6 +28,8 @@ import { MAX_TEXT_CHARS } from "@/lib/usage-policy";
 import {
   DEFAULT_CLONE_VOICE_INSTRUCTION,
   mapVoiceSafely,
+  normalizeVoiceStyle,
+  type VoiceStylePreset,
 } from "@/lib/voice-defaults";
 
 export class GenerationServiceError extends Error {
@@ -130,6 +132,7 @@ export async function runGenerationForUser(params: {
   cloneCreditsPerSecond?: number;
   segmentOfJobId?: string | null;
   denoiseReference?: boolean;
+  voiceStyle?: VoiceStylePreset;
 }): Promise<{
   generationId: string;
   audioBase64: string;
@@ -324,6 +327,7 @@ export async function runGenerationForUser(params: {
       model: params.model,
       cloneSample: cloneSample,
       denoiseReference: params.denoiseReference === true,
+      voiceStyle: normalizeVoiceStyle(params.voiceStyle),
     });
     const latencyMs = Date.now() - startedAtMs;
     const outputSeconds = Math.max(
