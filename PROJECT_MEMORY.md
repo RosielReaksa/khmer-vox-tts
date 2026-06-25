@@ -1,6 +1,45 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-06-24
+Last updated: 2026-06-25
+
+## Official VoxCPM2 reset (2026-06-25)
+
+Aligned app + production with upstream VoxCPM2 defaults (`modal/modal_voxcpm_api.py`):
+temperature **1.0**, cfg **2.0**, upstream inference_timesteps **10** when unset.
+
+**Code (`lib/tts-provider.ts`, `lib/voice-defaults.ts`, `.env.example`):**
+- Default preset/clone temperature → **1.0** (was 0.45 / 0.55 in code).
+- `TTS_CLONE_USE_VOICE_DESCRIPTION` default → **false** (ref_audio only; no spoken English tags).
+- `TTS_INFERENCE_TIMESTEPS` only sent when ≥4; default **0** = omit → upstream 10.
+- Removed `PRESET_TTS_VOICE_INSTRUCTION`; preset male/female never send `voice` with ref_audio.
+
+**Production env (kubectl, both web + worker):**
+- Removed: `TTS_PRESET_TEMPERATURE`, `TTS_CLONE_TEMPERATURE`, `TTS_INFERENCE_TIMESTEPS`, `TTS_FINAL_QUALITY_RETRIES`.
+- Set: `TTS_CLONE_USE_VOICE_DESCRIPTION=false`.
+- No `TTS_OUTPUT_*` tempo overrides (normal speed 1.0).
+- Chunk continuation (`TTS_CHUNK_CONTINUATION`, default on) kept — official `prompt_wav` path.
+
+**Deploy:** pending image tag after commit (fixes long-text English tags read aloud).
+
+## Normal voice speed only on production (2026-06-25)
+
+Removed prod overrides that slowed clone output:
+
+- **Before:** `TTS_OUTPUT_CLONE_TEMPO=0.92` on `khmer-vox-web` + `khmer-vox-worker` (~8% slower clone speech).
+- **After:** no `TTS_OUTPUT_TEMPO` / `TTS_OUTPUT_CLONE_TEMPO` env vars — code defaults to **1.0** (no speed change) for preset male/female and clone.
+- Rollout completed on both deployments; verified web pods have no `TTS_OUTPUT_*` tempo vars.
+- **Note:** Small pace differences between separate batch lines are still normal model behavior (not global fast/slow processing).
+
+## Fix: style tags read aloud on long TTS (2026-06-25, deployed with official reset)
+
+**Root cause:** Upstream VoxCPM2 prepends the `voice` field to speakable text as
+`(description)Khmer text…`. We sent long English style instructions on every chunk →
+model spoke the tags + garbled English at chunk boundaries → voice drift on long audio.
+
+**Fix:** Omit `voice` when `ref_audio` is present; `TTS_CLONE_USE_VOICE_DESCRIPTION=false`
+by default. Consistency from ref_audio + chunk continuation + official temps.
+
+**User report:** generation `30a05450-286a-4cb9-bb07-b4f648f19b1b` (~222s WAV).
 
 ## Production deploy from main (2026-06-24)
 
@@ -26,12 +65,74 @@ set image on both web and worker with `prod-YYYYMMDD-<run>` tags.
 **Staging VPS** (`178.128.103.120`) unchanged; still has its own stack for
 testing. Use GitHub Environments with per-env `VPS_HOST` if both need CI/CD.
 
-## PWA / touch icons (2026-06-24, local until deployed)
+## PWA / touch icons (2026-06-24, deployed)
 
 Added `public/apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, and
 `app/apple-icon.png` (generated from `app/icon.svg`). Fixes bot/crawler 404s on
 `/apple-touch-icon.png` and improves Add-to-Home-Screen. Regenerate after logo
-changes: `npm run icons:generate`.
+changes: `npm run icons:generate`. Deployed as `prod-20260624-7`; verified
+200 on production for all icon URLs.
+
+## Saved Voices — record option (2026-06-24, deployed)
+
+Added Upload / Record tabs on `/app/dashboard/voices`, matching the Voice Clone
+workspace. `voices-panel.tsx` uses `VoiceRecorder`; `POST /api/dashboard/voices`
+accepts WebM and MP4 recordings in addition to MP3/WAV.
+
+- Commit: `562e312` on `main`
+- CI: passed (run `28084594563`)
+- Deployed as `prod-20260624-8` via GitHub Actions run `28084696450`
+- Verified: `/api/health` → 200; `/app/dashboard/voices` → 200 (auth required
+  for full UI — confirm Upload/Record tabs while logged in)
+
+## Audio seek scrubber fix (2026-06-24, deployed)
+
+Fixed dashboard Audio Result player: dragging the progress bar no longer snaps
+back to 00:00. Large generated WAVs were served as `data:` URIs; browsers cannot
+seek those reliably. `LineAudioPlayer` now converts data URIs to blob URLs,
+accepts `durationHint` from `result.outputSeconds`, and pauses during drag.
+
+- Commit: `26424b4` on `main`
+- CI: passed (run `28107811717`)
+- Deployed as `prod-20260624-9` via GitHub Actions run `28107949582`
+- Verified: `/api/health` → 200
+
+## Audio seek scrubber v2 — Web Audio API (2026-06-24, deployed)
+
+First fix (blob URL + durationHint, `prod-20260624-9`) showed correct duration
+(05:39) but HTML `<audio>.currentTime` still could not seek long generated WAVs;
+dragging snapped playback back to the start.
+
+**Root cause:** browser media element seeking is unreliable for large in-memory
+WAV payloads even as blob URLs.
+
+**Fix:** `LineAudioPlayer` decodes audio with Web Audio API (`AudioBuffer`) and
+restarts `AudioBufferSourceNode` at the dragged offset. Scrub pauses playback,
+updates position, then resumes from that sample.
+
+- Commit: `41ab0ad` on `main`
+- Deployed as `prod-20260624-10` via run `28109020443`
+- Verified: `/api/health` → 200
+
+## VoxCPM2 voice consistency across segments (2026-06-24, deployed)
+
+Users reported long TTS/clone audio where timbre was roughly correct but
+prosody drifted between segments (happy/sad/deep/fast/slow) without style tags.
+
+**Root cause (VoxCPM2 docs + our pipeline):**
+- VoxCPM2 is *context-aware*: it infers speaking style from each text chunk.
+- Long text is split into ~1-minute upstream chunks; we previously sent only
+  `ref_audio` (timbre) with no `prompt_wav` continuation between chunks.
+- Clone temperature default was 0.8 (more variation than preset 0.45).
+
+**Fix (`lib/tts-provider.ts`, `lib/voice-defaults.ts`):**
+- Neutral style instructions on all preset/clone requests (no emotion drift).
+- Default `TTS_CLONE_TEMPERATURE` lowered 0.8 → 0.55.
+- **Chunk continuation** (default on): segment 2+ gets last ~6s of previous
+  audio as `prompt_wav` + matching tail text; sequential generation when enabled.
+  Disable: `TTS_CHUNK_CONTINUATION=false`. Tune tail: `TTS_CONTINUATION_PROMPT_SECONDS`.
+
+- Commit: `e1d6ed8`; deployed `prod-20260624-11` (run `28113679304`).
 
 ## Purpose
 

@@ -8,7 +8,10 @@ import {
 } from "@/lib/audio-api";
 import { hasSpeakableText } from "@/lib/speech-text-sanitizer";
 import type { GenerationMode } from "@/lib/types";
-import { DEFAULT_CLONE_VOICE_INSTRUCTION, PRESET_TTS_VOICE_INSTRUCTION } from "@/lib/voice-defaults";
+import {
+  isBuiltinStyleVoiceDescription,
+  OFFICIAL_VOXCPM2_CLONE_VOICE,
+} from "@/lib/voice-defaults";
 import {
   disableEndpoint,
   getUpstreamEndpoints,
@@ -237,10 +240,22 @@ function normalizeCloneVoiceDescription(voice: string): string {
   const oldDashboardPresetNames = new Set(["maly", "sokha", "piseth", "dara"]);
 
   if (!trimmed || oldDashboardPresetNames.has(lower)) {
-    return DEFAULT_CLONE_VOICE_INSTRUCTION;
+    return OFFICIAL_VOXCPM2_CLONE_VOICE;
   }
 
   return trimmed;
+}
+
+/** Official VoxCPM2: ref_audio pins timbre; voice description is optional and off by default. */
+function upstreamVoiceDescriptionForClone(voice: string): string | null {
+  if (!readBooleanEnv("TTS_CLONE_USE_VOICE_DESCRIPTION", false)) {
+    return null;
+  }
+  const description = normalizeCloneVoiceDescription(voice);
+  if (isBuiltinStyleVoiceDescription(description)) {
+    return OFFICIAL_VOXCPM2_CLONE_VOICE;
+  }
+  return description.trim() || null;
 }
 
 function isPresetReferenceSample(
@@ -2616,24 +2631,15 @@ async function synthesizeSingleChunk(
       if (params.denoiseReference === true) {
         payload.denoise = true;
       }
-      // OFFICIAL VoxCPM2: clone mode uses a parenthetical voice description
-      // prepended to the text (e.g. "(same speaker, clear speech)text...").
-      // This guides the model on how to interpret the reference audio.
-      // Disable with TTS_CLONE_USE_VOICE_DESCRIPTION=false if needed.
-      if (
-        process.env.TTS_CLONE_USE_VOICE_DESCRIPTION?.trim().toLowerCase() !==
-        "false"
-      ) {
-        payload.voice = normalizeCloneVoiceDescription(params.voice);
-      } else {
-        delete payload.voice;
+      // Optional voice description (off by default). Official ref-clone uses
+      // ref_audio_wav_base64; voice is only sent when TTS_CLONE_USE_VOICE_DESCRIPTION=true.
+      const voiceDescription = upstreamVoiceDescriptionForClone(params.voice);
+      if (voiceDescription) {
+        payload.voice = voiceDescription;
       }
-      // OFFICIAL VoxCPM2 default temperature is 1.0 (see nanovllm_voxcpm source).
-      // Lower values (0.45-0.55) make output deterministic but can cause the
-      // model to get stuck on patterns, producing more buzz/noise artifacts.
-      // For clone mode, use a lower temperature for more consistent delivery.
+      // Official VoxCPM2 defaults: temperature 1.0, cfg 2.0.
       payload.temperature = retryAdjustedTemperature(
-        readNumericEnv("TTS_CLONE_TEMPERATURE", 0.55, 0.1, 2.0),
+        readNumericEnv("TTS_CLONE_TEMPERATURE", 1.0, 0.1, 2.0),
         qualityRetryAttempt,
       );
       // CFG (guidance scale): official VoxCPM2 default is 2.0. The docs recommend
@@ -2645,19 +2651,10 @@ async function synthesizeSingleChunk(
         qualityRetryAttempt,
       );
     } else {
-      // Standard preset TTS keeps the fixed speaker hint so the model stays on
-      // the same intended voice while still using the preset reference sample.
-      // Add consistent voice description for preset voices to ensure consistency.
-      payload.voice =
-        params.voice === "male" || params.voice === "female"
-          ? PRESET_TTS_VOICE_INSTRUCTION
-          : params.voice;
-      // OFFICIAL VoxCPM2 default temperature is 1.0 (see nanovllm_voxcpm source).
-      // Lower values (0.45-0.55) make output deterministic but can cause the
-      // model to get stuck on patterns, producing more buzz/noise artifacts.
-      // For preset voices, use 0.45 for maximum consistency.
+      // Preset male/female: ref_audio only (official). Do not prepend voice text.
+      // Official VoxCPM2 defaults: temperature 1.0, cfg 2.0.
       payload.temperature = retryAdjustedTemperature(
-        readNumericEnv("TTS_PRESET_TEMPERATURE", 0.45, 0.1, 2.0),
+        readNumericEnv("TTS_PRESET_TEMPERATURE", 1.0, 0.1, 2.0),
         qualityRetryAttempt,
       );
       // CFG (guidance scale): official VoxCPM2 default is 2.0.
