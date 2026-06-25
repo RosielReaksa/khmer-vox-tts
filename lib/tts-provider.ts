@@ -1678,6 +1678,10 @@ async function normalizeSegmentVolumes(
 ): Promise<Uint8Array[]> {
   if (segments.length <= 1) return segments;
 
+  if (!readBooleanEnv("TTS_OUTPUT_VOLUME_MATCH", true)) {
+    return segments;
+  }
+
   try {
     // Measure RMS of each segment
     const rmsValues: number[] = [];
@@ -1686,9 +1690,32 @@ async function normalizeSegmentVolumes(
       rmsValues.push(rms);
     }
 
-    // Calculate target RMS (median of all segments)
+    // Target strategy:
+    // - Default: median RMS across segments (good when most segments are
+    //   well-produced and we just need to fix outliers).
+    // - "fixed" mode: target a known LUFS-equivalent so volume matches across
+    //   *batches*, not just within a batch. Set TTS_OUTPUT_VOLUME_TARGET_LUFS
+    //   to a negative dBFS number (e.g. -16) and it will be used as the
+    //   reference instead of the median.
     const sortedRms = [...rmsValues].sort((a, b) => a - b);
-    const targetRms = sortedRms[Math.floor(sortedRms.length / 2)];
+    const medianRms = sortedRms[Math.floor(sortedRms.length / 2)];
+    const targetLufs = readNumericEnv(
+      "TTS_OUTPUT_VOLUME_TARGET_LUFS",
+      0,
+      -36,
+      -8,
+    );
+    const targetRms =
+      targetLufs < -8
+        ? Math.pow(10, targetLufs / 20) // linear RMS equivalent
+        : medianRms;
+
+    const maxGainDb = readNumericEnv(
+      "TTS_OUTPUT_VOLUME_MAX_GAIN_DB",
+      6,
+      0,
+      18,
+    );
 
     // Adjust each segment to match target RMS
     const normalizedSegments: Uint8Array[] = [];
@@ -1700,10 +1727,12 @@ async function normalizeSegmentVolumes(
       }
 
       const gainDb = 20 * Math.log10(targetRms / currentRms);
-      // Limit gain adjustment to ±6dB to prevent extreme changes
-      const clampedGainDb = Math.max(-6, Math.min(6, gainDb));
+      const clampedGainDb = Math.max(
+        -maxGainDb,
+        Math.min(maxGainDb, gainDb),
+      );
 
-      if (Math.abs(clampedGainDb) < 0.5) {
+      if (Math.abs(clampedGainDb) < 0.25) {
         // Gain change is too small, skip processing
         normalizedSegments.push(segments[i]);
         continue;

@@ -148,6 +148,26 @@ User saw dashboard message "Generated 2 of 4 segments. 2 failed — retry from B
 
 **Deploy:** `prod-20260625-19` (this commit).
 
+## Step 1: Global volume matching (2026-06-26, deployed)
+
+User reported batch-generated audio had uneven volume across segments —
+fixed loudness drift across an entire batch (or any merge of separately-
+generated segments), not just within one synthesis.
+
+**Fix:** `lib/tts-provider.ts::normalizeSegmentVolumes()` was already wired
+into both the dashboard single-synthesis and the multi-segment batch merge
+(`mergePublicMp3SegmentsForDelivery`). Improvements:
+- New env knob `TTS_OUTPUT_VOLUME_TARGET_LUFS` (default `0` = keep median
+  behavior; set to e.g. `-16` to lock all segments to a known reference).
+- New env knob `TTS_OUTPUT_VOLUME_MAX_GAIN_DB` (default `6`) replaces the
+  hard-coded cap. Range 0–18 dB. Prevents amplifying a quiet segment into
+  noise.
+- New kill-switch `TTS_OUTPUT_VOLUME_MATCH=false` if anything goes wrong.
+- Default deadband 0.5 → 0.25 dB so more borderline cases actually get
+  corrected.
+
+**Deploy:** `prod-20260626-23` (this commit).
+
 ## Background noise / buzz on long TTS (2026-06-25, deployed)
 
 User reported `voxtts-tts-caee85c5-...wav` (3+ min, female) sounding like a
