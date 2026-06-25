@@ -1002,7 +1002,9 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
   const cloneSample = job.mode === "clone" ? (storedCloneSample(job) ?? undefined) : undefined;
   const mergeJob = isDashboardMergeJob(job);
   // Opt-in reference denoise flag persisted on the dashboard-merge job metadata.
-  const denoiseReference = readDashboardMergeOptions(job).denoiseReference === true;
+  const mergeOptions = readDashboardMergeOptions(job);
+  const denoiseReference = mergeOptions.denoiseReference === true;
+  const jobVoiceStyle = mergeOptions.voiceStyle ?? "normal";
   if (job.mode === "clone" && !cloneSample) {
     await failRemainingItems(
       job.id,
@@ -1082,6 +1084,7 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
             // record is saved once when the job completes.
             segmentOfJobId: mergeJob ? job.id : null,
             denoiseReference,
+            voiceStyle: jobVoiceStyle,
           });
 
           await updateBatchJobItem({

@@ -8,17 +8,25 @@
 
 export const DASHBOARD_MERGE_JOB_KIND = "dashboard_merge";
 
+import { normalizeVoiceStyle, type VoiceStylePreset } from "@/lib/voice-defaults";
+
 // Optional flags carried alongside the dashboard-merge marker. Kept additive so
 // older jobs (marker only, no flags) keep parsing correctly.
 export type DashboardMergeOptions = {
   // Opt-in ZipEnhancer reference-audio denoise for clone jobs (default off).
   denoiseReference?: boolean;
+  // Per-job voice style preset (prosody). Default off = "normal".
+  voiceStyle?: VoiceStylePreset;
 };
 
 export function dashboardMergeMetadataJson(options?: DashboardMergeOptions): string {
   const payload: Record<string, unknown> = { kind: DASHBOARD_MERGE_JOB_KIND };
   if (options?.denoiseReference === true) {
     payload.denoiseReference = true;
+  }
+  const style = normalizeVoiceStyle(options?.voiceStyle);
+  if (style !== "normal") {
+    payload.voiceStyle = style;
   }
   return JSON.stringify(payload);
 }
@@ -38,9 +46,16 @@ export function isDashboardMergeJob(job: { metadataJson: string | null }): boole
 export function readDashboardMergeOptions(job: { metadataJson: string | null }): DashboardMergeOptions {
   if (!job.metadataJson) return {};
   try {
-    const parsed = JSON.parse(job.metadataJson) as { kind?: unknown; denoiseReference?: unknown };
+    const parsed = JSON.parse(job.metadataJson) as {
+      kind?: unknown;
+      denoiseReference?: unknown;
+      voiceStyle?: unknown;
+    };
     if (parsed?.kind !== DASHBOARD_MERGE_JOB_KIND) return {};
-    return { denoiseReference: parsed.denoiseReference === true };
+    return {
+      denoiseReference: parsed.denoiseReference === true,
+      voiceStyle: normalizeVoiceStyle(parsed.voiceStyle),
+    };
   } catch {
     return {};
   }

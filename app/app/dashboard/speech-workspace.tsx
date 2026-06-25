@@ -13,6 +13,8 @@ import { MAX_DASHBOARD_TTS_CHARS } from "@/lib/usage-policy";
 import {
   DASHBOARD_TTS_VOICE_PRESETS,
   DEFAULT_CLONE_VOICE_INSTRUCTION,
+  VOICE_STYLE_PRESETS,
+  type VoiceStylePreset,
 } from "@/lib/voice-defaults";
 import {
   STANDARD_CLONE_CREDITS_PER_SECOND,
@@ -51,6 +53,7 @@ type GenerationResponse = {
 type WorkspaceSnapshot = {
   text: string;
   voice: string;
+  voiceStyle: VoiceStylePreset;
   model: string;
   runMode: string;
   sampleFile: File | null;
@@ -68,6 +71,7 @@ function createWorkspaceSnapshot(mode: "tts" | "clone"): WorkspaceSnapshot {
   return {
     text: "",
     voice: mode === "clone" ? DEFAULT_CLONE_VOICE_INSTRUCTION : DASHBOARD_TTS_VOICE_PRESETS[0],
+    voiceStyle: "normal",
     model: "voxcpm2",
     runMode: "RunSync",
     sampleFile: null,
@@ -133,6 +137,13 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
     }
     return snapshot.voice;
   });
+  const [voiceStyle, setVoiceStyleState] = useState<VoiceStylePreset>(
+    snapshot.voiceStyle || "normal",
+  );
+  const setVoiceStyle = useCallback((next: VoiceStylePreset) => {
+    setVoiceStyleState(next);
+    commitWorkspaceSnapshot(mode, { voiceStyle: next });
+  }, [mode]);
   const [model, setModel] = useState(snapshot.model);
   const [runMode, setRunMode] = useState(snapshot.runMode);
   const [sampleFile, setSampleFile] = useState<File | null>(snapshot.sampleFile);
@@ -490,6 +501,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
           formData.set("voice_consent", voiceConsent ? "true" : "false");
         }
         formData.set("denoise_reference", denoiseReference ? "true" : "false");
+        formData.set("voice_style", voiceStyle);
         response = await fetch("/api/generate-clone", {
           method: "POST",
           body: formData,
@@ -502,6 +514,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
             text,
             voice: voice.trim() || DASHBOARD_TTS_VOICE_PRESETS[0],
             model,
+            voiceStyle,
           }),
         });
       }
@@ -978,6 +991,28 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                 onChange={(event) => setModel(event.target.value)}
                 className="h-11 w-full border-4 border-primary bg-white px-4 text-xs font-headline font-bold uppercase text-primary outline-none focus:bg-[#faf7f2] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]"
               />
+            </label>
+            <label className="grid min-w-0 gap-2 self-start text-xs font-headline uppercase font-black text-primary">
+              Voice Style
+              <select
+                value={voiceStyle}
+                aria-label="Voice style"
+                onChange={(event) => {
+                  const next = event.target.value as VoiceStylePreset;
+                  if (next in VOICE_STYLE_PRESETS) setVoiceStyle(next);
+                  setError("");
+                }}
+                className="h-11 w-full border-4 border-primary bg-white px-4 text-xs font-headline font-bold uppercase text-primary outline-none focus:bg-[#faf7f2] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] cursor-pointer"
+              >
+                {Object.entries(VOICE_STYLE_PRESETS).map(([id, preset]) => (
+                  <option key={id} value={id} title={preset.description}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+              <span className="font-body normal-case font-medium text-[10px] text-[#4a4a4a]">
+                {VOICE_STYLE_PRESETS[voiceStyle]?.description ?? ""}
+              </span>
             </label>
           </div>
 

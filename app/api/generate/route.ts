@@ -8,7 +8,7 @@ import { isJsonRequestError, jsonRequestErrorBody, readJsonRequest } from "@/lib
 import { getUsagePolicy } from "@/lib/server-usage-policy";
 import { readSessionFromCookie } from "@/lib/session";
 import { MAX_DASHBOARD_TTS_CHARS, MAX_MODEL_CHARS, MAX_VOICE_CHARS } from "@/lib/usage-policy";
-import { DEFAULT_TTS_VOICE_PROMPT } from "@/lib/voice-defaults";
+import { DEFAULT_TTS_VOICE_PROMPT, VOICE_STYLE_IDS } from "@/lib/voice-defaults";
 
 export const runtime = "nodejs";
 
@@ -16,6 +16,7 @@ const generateSchema = z.object({
   text: z.string().min(1).max(MAX_DASHBOARD_TTS_CHARS),
   voice: z.string().min(1).max(MAX_VOICE_CHARS).optional(),
   model: z.string().min(1).max(MAX_MODEL_CHARS).optional(),
+  voiceStyle: z.enum(VOICE_STYLE_IDS).optional(),
 });
 
 export async function POST(request: Request) {
@@ -63,6 +64,7 @@ export async function POST(request: Request) {
       text: parsed.data.text,
       voice: parsed.data.voice ?? DEFAULT_TTS_VOICE_PROMPT,
       model: parsed.data.model,
+      voiceStyle: parsed.data.voiceStyle,
     });
 
     return NextResponse.json({

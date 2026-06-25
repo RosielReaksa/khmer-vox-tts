@@ -14,7 +14,7 @@ import {
   MAX_VOICE_CHARS,
 } from "@/lib/usage-policy";
 import { isVoiceCloneConsentAccepted } from "@/lib/voice-consent";
-import { DEFAULT_CLONE_VOICE_INSTRUCTION } from "@/lib/voice-defaults";
+import { DEFAULT_CLONE_VOICE_INSTRUCTION, normalizeVoiceStyle, type VoiceStylePreset } from "@/lib/voice-defaults";
 
 export const runtime = "nodejs";
 
@@ -37,6 +37,7 @@ export async function POST(request: Request) {
     const modelValue = formData.get("model");
     const sampleValue = formData.get("sample");
     const consentValue = formData.get("voice_consent");
+    const voiceStyleValue = formData.get("voice_style");
 
     const textParsed = textSchema.safeParse(typeof textValue === "string" ? textValue : "");
     if (!textParsed.success) {
@@ -125,6 +126,7 @@ export async function POST(request: Request) {
       },
       cloneConsentAccepted,
       denoiseReference,
+      voiceStyle: normalizeVoiceStyle(voiceStyleValue) as VoiceStylePreset,
     });
 
     return NextResponse.json({

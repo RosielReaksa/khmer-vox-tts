@@ -13,6 +13,7 @@ import { prepareTextForSpeech } from "@/lib/speech-text-sanitizer";
 import { splitTextIntoChunks, type CloneSample } from "@/lib/tts-provider";
 import type { BatchJobRecord, GenerationMode, GenerationSource } from "@/lib/types";
 import { MAX_TEXT_CHARS } from "@/lib/usage-policy";
+import { normalizeVoiceStyle } from "@/lib/voice-defaults";
 
 const DEFAULT_DASHBOARD_JOB_CHUNK_TARGET_SECONDS = 60;
 
@@ -61,10 +62,12 @@ export async function createQueuedDashboardGeneration(params: {
   cloneSample?: CloneSample;
   cloneConsentAccepted?: boolean;
   denoiseReference?: boolean;
+  voiceStyle?: unknown;
 }): Promise<{ job: BatchJobRecord }> {
   const chunks = splitDashboardTextForJob(params.text, params.mode);
   const lines: BatchLineInput[] = chunks.map((text) => ({ text }));
   const totalChars = lines.reduce((sum, line) => sum + countChars(line.text), 0);
+  const voiceStyle = normalizeVoiceStyle(params.voiceStyle);
 
   const { job } = await createQueuedBatchJob({
     userId: params.userId,
@@ -78,9 +81,11 @@ export async function createQueuedDashboardGeneration(params: {
     cloneConsentAccepted: params.cloneConsentAccepted,
     // Tag as a dashboard auto-chunked generation so the worker hides the
     // per-chunk segment records and saves one merged full-audio history entry.
-    // Carries the opt-in reference-denoise flag so the worker can forward it.
+    // Carries the opt-in reference-denoise flag and the voice-style preset so
+    // the worker can forward them.
     metadataJson: dashboardMergeMetadataJson({
       denoiseReference: params.denoiseReference === true,
+      voiceStyle,
     }),
   });
 

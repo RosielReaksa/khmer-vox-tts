@@ -195,6 +195,21 @@ existing 0.7 / 2.0 behavior. No regression for current users.
 
 **Deploy:** `prod-20260626-24` (this commit).
 
+## Step 3: Voice Style dropdown on dashboard (2026-06-26, deployed)
+
+The Voice Style picker (Normal / Calm / Urgent / Excited) sits next to
+the existing Voice (Sokha/Piseth) and Model selectors on /app/dashboard.
+Default is Normal so existing users see no behavior change.
+
+**Plumbing:**
+- /api/generate (TTS) and /api/generate-clone (clone) accept the style.
+- /v1/audio/speech and /v1/audio/clone (API) accept voice_style in JSON.
+- createQueuedDashboardGeneration stores it in dashboard-merge metadata.
+- batch-service worker reads it off metadata and forwards to each item.
+- Voice UI is persisted across reloads via the workspace snapshot.
+
+**Deploy:** `prod-20260626-25` (this commit).
+
 ## Background noise / buzz on long TTS (2026-06-25, deployed)
 
 User reported `voxtts-tts-caee85c5-...wav` (3+ min, female) sounding like a
