@@ -68,7 +68,11 @@ export const VOICE_STYLE_PRESETS: Record<
     description: "Steadier, even, slightly slower — good for narration.",
   },
   urgent: {
-    temperature: 0.85,
+    // 2026-06-26: bumped 0.85 -> 0.95 after Step 4 A/B test showed urgent was
+    // only 3% faster than normal — not distinguishable. 0.95 puts it on the
+    // right side of the diffusion noise curve so the model actually picks up
+    // the pace, while staying below the official 1.0 ceiling.
+    temperature: 0.95,
     cfgValue: 2.0,
     label: "Urgent",
     description: "Brisker, more drive — good for announcements.",
