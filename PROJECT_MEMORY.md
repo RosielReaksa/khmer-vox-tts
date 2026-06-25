@@ -2,7 +2,21 @@
 
 Last updated: 2026-06-25
 
-## Long-audio join + machine-buzz fix (2026-06-25)
+## Revert voice-consistency experiment (2026-06-25)
+
+User confirmed audio was better **before** the 2026-06-24 voice-consistency deploy
+(`prod-20260624-11`: chunk continuation + lower clone temp + spoken style tags).
+Reverted to pre-experiment pipeline while **keeping** ref-audio-only upstream
+(no `male`/`female`/English tags spoken):
+
+- `TTS_CHUNK_CONTINUATION=false` (parallel ref-clone chunks, not sequential prompt_wav)
+- `TTS_CLONE_TEMPERATURE=0.8` (was lowered to 0.55 in the experiment)
+- Join/buzz/pause defaults restored to pre-2026-06-25 join-tuning values
+- Still: `delete payload.voice` for preset ref, `TTS_CLONE_USE_VOICE_DESCRIPTION=false`
+
+**Deploy:** pending.
+
+## Long-audio join + machine-buzz fix (2026-06-25) — partially reverted
 
 User reported long audio voice OK but **machine crash buzz** and **cut-cut**
 chunk seams. Analysis found large sample discontinuities at chunk joins (~39s,
@@ -16,7 +30,7 @@ chunk seams. Analysis found large sample discontinuities at chunk joins (~39s,
 - Stricter buzz gate: steady tonal 1.0 s, high-freq tone 0.5 s → chunk retry
 - CFG steps down on retry (`TTS_RETRY_CFG_STEP=0.15`) for buzz regeneration
 
-**Deploy:** pending.
+**Deploy:** `prod-20260625-15` (commit `d2ea65d`, run `28162411696`).
 
 ## Restore proven VoxCPM2 ref-clone quality (2026-06-25)
 

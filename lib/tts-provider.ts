@@ -633,10 +633,10 @@ async function capLongPauses(bytes: Uint8Array): Promise<Uint8Array> {
   if (!readBooleanEnv("TTS_OUTPUT_PAUSE_CAP", true)) {
     return bytes;
   }
-  const maxPause = readNumericEnv("TTS_OUTPUT_MAX_PAUSE_SECONDS", 1.0, 0.3, 3);
+  const maxPause = readNumericEnv("TTS_OUTPUT_MAX_PAUSE_SECONDS", 0.7, 0.3, 3);
   const keepPause = Math.min(
     maxPause,
-    readNumericEnv("TTS_OUTPUT_KEEP_PAUSE_SECONDS", 0.55, 0.1, 2),
+    readNumericEnv("TTS_OUTPUT_KEEP_PAUSE_SECONDS", 0.4, 0.1, 2),
   );
   const thresholdDb = readNumericEnv(
     "TTS_OUTPUT_PAUSE_THRESHOLD_DB",
@@ -1382,7 +1382,7 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
   // regenerate the chunk instead of delivering buzzing audio.
   const maxSteadyTonalSeconds = readNumericEnv(
     "TTS_AUDIO_MAX_STEADY_TONAL_SECONDS",
-    1.0,
+    1.5,
     0.75,
     10,
   );
@@ -1425,7 +1425,7 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
   // so the silence-retry path regenerates the chunk.
   const maxHighDominantFreqSeconds = readNumericEnv(
     "TTS_AUDIO_MAX_HIGH_DOMINANT_FREQ_SECONDS",
-    0.5,
+    0.75,
     0.25,
     5,
   );
@@ -2232,8 +2232,8 @@ function concatPcm16WavBuffers(buffers: Uint8Array[]): Uint8Array {
   // Long-form chunks may split either at a real sentence pause or in the middle
   // of a long Khmer phrase. Quiet boundaries get a short pause; audible
   // boundaries are crossfaded so they do not sound like a hard cut.
-  const crossfadeMs = readNumericEnv("TTS_CHUNK_CROSSFADE_MS", 100, 0, 250);
-  const joinSilenceMs = readNumericEnv("TTS_CHUNK_JOIN_SILENCE_MS", 130, 0, 500);
+  const crossfadeMs = readNumericEnv("TTS_CHUNK_CROSSFADE_MS", 45, 0, 250);
+  const joinSilenceMs = readNumericEnv("TTS_CHUNK_JOIN_SILENCE_MS", 70, 0, 500);
   const joinEdgeWindowMs = readNumericEnv(
     "TTS_CHUNK_JOIN_EDGE_WINDOW_MS",
     60,
@@ -2266,7 +2266,7 @@ function concatPcm16WavBuffers(buffers: Uint8Array[]): Uint8Array {
   // Align each segment's RMS to the median segment level (gain capped) before
   // joining, so the final loudnorm pass gets consistent input.
   if (
-    readBooleanEnv("TTS_CHUNK_LOUDNESS_MATCH", false) &&
+    readBooleanEnv("TTS_CHUNK_LOUDNESS_MATCH", true) &&
     rawSegments.length > 1
   ) {
     const rmsValues = rawSegments.map((segment) => {
@@ -2354,7 +2354,7 @@ function concatPcm16WavBuffers(buffers: Uint8Array[]): Uint8Array {
     segment: Buffer,
     options: { fadeIn?: boolean; fadeOut?: boolean },
   ): Buffer {
-    const declickMs = readNumericEnv("TTS_CHUNK_JOIN_DECLICK_MS", 18, 0, 40);
+    const declickMs = readNumericEnv("TTS_CHUNK_JOIN_DECLICK_MS", 10, 0, 40);
     const declickFrames = Math.min(
       Math.round((first.sampleRate * declickMs) / 1000),
       Math.floor(Math.floor(segment.length / bytesPerFrame) / 4),
@@ -2482,7 +2482,7 @@ function retryAdjustedCfg(
   qualityRetryAttempt: number,
 ): number {
   if (qualityRetryAttempt <= 0) return baseCfg;
-  const step = readNumericEnv("TTS_RETRY_CFG_STEP", 0.15, 0, 1);
+  const step = readNumericEnv("TTS_RETRY_CFG_STEP", 0, 0, 1);
   if (step <= 0) return baseCfg;
   const floor = readNumericEnv("TTS_RETRY_CFG_MIN", 1.5, 0.5, 2.0);
   return Math.max(floor, baseCfg - step * qualityRetryAttempt);
@@ -2544,7 +2544,10 @@ type ChunkContinuationPrompt = {
 };
 
 function chunkContinuationEnabled(): boolean {
-  return readBooleanEnv("TTS_CHUNK_CONTINUATION", true);
+  // Off by default: the 2026-06-24 continuation experiment (prompt_wav between
+  // chunks) caused cut/buzz regressions vs parallel ref-clone chunks. Opt in
+  // with TTS_CHUNK_CONTINUATION=true when testing long-form style carry-over.
+  return readBooleanEnv("TTS_CHUNK_CONTINUATION", false);
 }
 
 function continuationPromptSeconds(): number {
@@ -2663,10 +2666,8 @@ async function synthesizeSingleChunk(
       } else {
         delete payload.voice;
       }
-      // Proven production tuning: lower temperature = steadier Khmer delivery.
-      // Official VoxCPM2 default is 1.0; 0.45–0.55 sounded better in prod A/B.
       payload.temperature = retryAdjustedTemperature(
-        readNumericEnv("TTS_CLONE_TEMPERATURE", 0.55, 0.1, 2.0),
+        readNumericEnv("TTS_CLONE_TEMPERATURE", 0.8, 0.1, 2.0),
         qualityRetryAttempt,
       );
       // CFG (guidance scale): official VoxCPM2 default is 2.0. The docs recommend

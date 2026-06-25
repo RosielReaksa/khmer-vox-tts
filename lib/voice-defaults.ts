@@ -1,7 +1,7 @@
 export const DEFAULT_TTS_VOICE_PROMPT = "female";
 
-/** Dashboard/API label when the user leaves clone voice blank. Not sent upstream. */
-export const DEFAULT_CLONE_VOICE_INSTRUCTION = "clear Khmer speech";
+export const DEFAULT_CLONE_VOICE_INSTRUCTION =
+  "same speaker as the reference audio, natural clear speech, consistent tone, smooth pace";
 
 /**
  * Modal VoxCPM2 clone_example voice string. Only used when the operator explicitly
