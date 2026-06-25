@@ -210,6 +210,31 @@ Default is Normal so existing users see no behavior change.
 
 **Deploy:** `prod-20260626-25` (this commit).
 
+## Step 4: A/B test results (2026-06-26)
+
+Test: same 177-char Khmer sentence, female voice, all 4 presets.
+Script: `scripts/test-voice-styles-batch-production.mts` (uses batch API to
+avoid Cloudflare 524 on long sync requests).
+
+**Prosody (Step 2) PASS:**
+
+| Style | cps | Δ vs normal |
+|-------|----:|------------:|
+| normal | 13.8 | baseline |
+| calm | 13.3 | −4.0% |
+| urgent | 13.4 | −3.0% (too close — see tuning below) |
+| excited | 16.8 | **+21.7%** |
+
+**Volume (Step 1) PARTIAL:** RMS CV 17.5% across styles. Peak CV 0.5%.
+Cause: higher-temperature styles (`excited`) have wider dynamic range, so
+RMS drops even when peak stays at 0 dBFS. User chose to keep the dynamic
+range instead of flattening it.
+
+**Tuning deployed:** urgent 0.85 → **0.95** so it's clearly audible vs
+normal. Step 4 rerun pending.
+
+**Deploy:** `prod-20260626-26` (urgent tuning).
+
 ## Background noise / buzz on long TTS (2026-06-25, deployed)
 
 User reported `voxtts-tts-caee85c5-...wav` (3+ min, female) sounding like a
