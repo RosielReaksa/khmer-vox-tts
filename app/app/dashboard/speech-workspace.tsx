@@ -278,6 +278,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
     workspaceSnapshots[mode] = {
       text,
       voice,
+      voiceStyle,
       model,
       runMode,
       sampleFile,
