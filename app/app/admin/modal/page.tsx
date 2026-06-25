@@ -357,6 +357,29 @@ export default function AdminModalPage() {
     void pollDeployStatus(); // Check if there is already a running deployment
   }, [loadData, pollDeployStatus]);
 
+  // Live endpoint-pool snapshot (round-robin position + per-account cooldown).
+  // Refreshes every 5s so the operator can see which Modal account is
+  // currently serving traffic and which are temporarily disabled (quota
+  // exhausted vs 5xx cooldown).
+  type PoolSnapshot = Awaited<
+    ReturnType<typeof import("@/lib/tts-endpoints").getEndpointPoolSnapshot>
+  >;
+  const [poolHealth, setPoolHealth] = useState<PoolSnapshot | null>(null);
+  const loadPoolHealth = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/modal/health", { cache: "no-store" });
+      const data = await res.json();
+      if (data?.ok && data.snapshot) setPoolHealth(data.snapshot);
+    } catch (err) {
+      console.warn("[admin/modal/health] poll failed:", err);
+    }
+  }, []);
+  useEffect(() => {
+    void loadPoolHealth();
+    const timer = setInterval(loadPoolHealth, 5000);
+    return () => clearInterval(timer);
+  }, [loadPoolHealth]);
+
   // Health checks run individually per endpoint
   async function runHealthCheck(account: ModalAccountDetail) {
     const label = account.label;
@@ -546,6 +569,111 @@ export default function AdminModalPage() {
             </button>
           </div>
         )}
+
+      {/* Live round-robin / failover status */}
+      {poolHealth && (
+        <div className="border-3 border-primary bg-white p-5 shadow-[4px_4px_0px_0px_rgba(26,26,26,1)]">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <div>
+              <p className="text-[10px] font-headline font-bold uppercase text-primary/60">
+                Live Round-Robin
+              </p>
+              <h3 className="text-lg font-headline font-black uppercase text-primary">
+                Auto-Failover Status
+              </h3>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="bg-[#def3e5] border border-[#128342] text-[#128342] font-headline font-bold uppercase px-2 py-1">
+                {poolHealth.endpoints.filter(
+                  (e) => e.status === "available",
+                ). length}
+                /{poolHealth.poolSize} available
+              </span>
+              <span className="bg-[#fff8db] border border-primary/40 text-primary font-headline font-bold uppercase px-2 py-1">
+                Next: {(() => {
+                  const next = poolHealth.nextEndpointUrl;
+                  if (!next) return "—";
+                  try {
+                    return new URL(next).hostname.split("--")[0];
+                  } catch {
+                    return next.slice(0, 28);
+                  }
+                })()}
+              </span>
+            </div>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {poolHealth.endpoints.map((ep) => {
+              const tone =
+                ep.status === "available"
+                  ? "bg-[#def3e5] border-[#128342] text-[#128342]"
+                  : ep.status === "disabled-quota"
+                    ? "bg-[#fff0f0] border-red-800 text-red-800"
+                    : ep.status === "disabled-default"
+                      ? "bg-[#fff8db] border-primary/55 text-primary"
+                      : "bg-[#f2ede5] border-primary/30 text-primary/70";
+              const label =
+                ep.status === "available"
+                  ? "READY"
+                  : ep.status === "disabled-quota"
+                    ? "QUOTA"
+                    : ep.status === "disabled-default"
+                      ? "COOLDOWN"
+                      : "NO CREDITS";
+              const subLabel = (() => {
+                try {
+                  return new URL(ep.url).hostname.split("--")[0];
+                } catch {
+                  return ep.url.slice(0, 28);
+                }
+              })();
+              const isNext =
+                poolHealth.nextEndpointUrl === ep.url &&
+                ep.status === "available";
+              return (
+                <div
+                  key={ep.url}
+                  className={`border-2 p-3 ${tone} ${
+                    isNext ? "ring-2 ring-primary ring-offset-2" : ""
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-headline font-black text-[10px] uppercase truncate">
+                      {subLabel}
+                    </span>
+                    <span className="font-mono text-[10px] font-bold">
+                      {label}
+                    </span>
+                  </div>
+                  <p
+                    className="mt-1 font-mono text-[10px] truncate"
+                    title={ep.label}
+                  >
+                    {ep.label}
+                  </p>
+                  {ep.status === "disabled-quota" ||
+                  ep.status === "disabled-default" ? (
+                    <p className="mt-1 text-[10px] font-mono opacity-80">
+                      retry in {Math.round(ep.cooldownRemainingSeconds / 60)}m
+                      {ep.cooldownRemainingSeconds % 60}s
+                    </p>
+                  ) : ep.remainingCredits != null ? (
+                    <p className="mt-1 text-[10px] font-mono opacity-80">
+                      ${ep.remainingCredits.toFixed(2)} left
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-3 text-[10px] font-body text-primary/60">
+            When an account hits the Modal billing cycle limit, the round-robin
+            pauses it for 30 minutes and cycles the remaining accounts. The
+            card turns red (<b>QUOTA</b>); generic 5xx failures turn yellow
+            (<b>COOLDOWN</b>) for 5 minutes.
+          </p>
+        </div>
+      )}
 
       {/* Overview Cards */}
       <div className="grid gap-5 sm:grid-cols-3">

@@ -181,9 +181,13 @@ export function resetEndpointPool(): void {
 
 export function getBlockedEndpoints(): Array<{ url: string; reason: string; expiresAt: string }> {
   const now = Date.now();
+  const referenceDuration = Math.max(
+    DEFAULT_DISABLE_DURATION_MS,
+    QUOTA_DISABLE_DURATION_MS,
+  );
   const list: Array<{ url: string; reason: string; expiresAt: string }> = [];
   for (const [url, data] of disabledEndpoints.entries()) {
-    const expires = data.disabledAt + DISABLE_DURATION_MS;
+    const expires = data.disabledAt + referenceDuration;
     if (now < expires) {
       list.push({
         url,
@@ -195,4 +199,79 @@ export function getBlockedEndpoints(): Array<{ url: string; reason: string; expi
     }
   }
   return list;
+}
+
+/**
+ * Live snapshot of every endpoint in the pool: per-account cooldown state,
+ * round-robin position, and remaining credits. Used by the admin
+ * /api/admin/modal/health endpoint so the dashboard can show *which* account
+ * the round-robin is on right now and which are temporarily disabled.
+ */
+export function getEndpointPoolSnapshot(): {
+  poolSize: number;
+  nextEndpointUrl: string | null;
+  endpoints: Array<{
+    label: string;
+    url: string;
+    status: "available" | "disabled-quota" | "disabled-default" | "available-no-credits";
+    reason: string | null;
+    cooldownRemainingSeconds: number;
+    remainingCredits: number | null;
+  }>;
+} {
+  const pool = getUpstreamEndpoints();
+  const now = Date.now();
+  const referenceDuration = Math.max(
+    DEFAULT_DISABLE_DURATION_MS,
+    QUOTA_DISABLE_DURATION_MS,
+  );
+  const isQuotaReason = (reason: string): boolean => quotaPattern.test(reason);
+
+  const endpoints = pool.map((ep) => {
+    const disabled = disabledEndpoints.get(ep.url);
+    const credits = getEndpointCredits(ep.url);
+    if (disabled) {
+      const remainingMs = Math.max(
+        0,
+        disabled.disabledAt + referenceDuration - now,
+      );
+      if (remainingMs > 0) {
+        return {
+          label: ep.label || "(unlabeled)",
+          url: ep.url,
+          status: isQuotaReason(disabled.reason)
+            ? ("disabled-quota" as const)
+            : ("disabled-default" as const),
+          reason: disabled.reason,
+          cooldownRemainingSeconds: Math.ceil(remainingMs / 1000),
+          remainingCredits: credits ?? null,
+        };
+      }
+      disabledEndpoints.delete(ep.url);
+    }
+    return {
+      label: ep.label || "(unlabeled)",
+      url: ep.url,
+      status:
+        credits !== undefined && credits <= 5.0
+          ? ("available-no-credits" as const)
+          : ("available" as const),
+      reason: null,
+      cooldownRemainingSeconds: 0,
+      remainingCredits: credits ?? null,
+    };
+  });
+
+  // Next endpoint the round-robin would pick right now.
+  const candidates = endpoints.filter((e) => e.status === "available");
+  const nextUrl =
+    candidates.length > 0
+      ? candidates[roundRobinCounter % candidates.length].url
+      : null;
+
+  return {
+    poolSize: pool.length,
+    nextEndpointUrl: nextUrl,
+    endpoints,
+  };
 }
