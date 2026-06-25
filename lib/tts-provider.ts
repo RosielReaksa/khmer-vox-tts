@@ -2579,7 +2579,6 @@ async function synthesizeSingleChunk(
   const payload: Record<string, unknown> = {
     model,
     input: params.text,
-    voice: params.voice,
     response_format: responseFormat,
     max_generate_length: estimateMaxGenerateLength(params.text, params.mode),
   };
@@ -2636,6 +2635,8 @@ async function synthesizeSingleChunk(
       const voiceDescription = upstreamVoiceDescriptionForClone(params.voice);
       if (voiceDescription) {
         payload.voice = voiceDescription;
+      } else {
+        delete payload.voice;
       }
       // Official VoxCPM2 defaults: temperature 1.0, cfg 2.0.
       payload.temperature = retryAdjustedTemperature(
@@ -2651,7 +2652,10 @@ async function synthesizeSingleChunk(
         qualityRetryAttempt,
       );
     } else {
-      // Preset male/female: ref_audio only (official). Do not prepend voice text.
+      // Preset male/female: ref_audio only (official). Never send voice — upstream
+      // prepends it to speakable text as "(male)…" / "(female)…" and the model
+      // reads the English label aloud on every chunk.
+      delete payload.voice;
       // Official VoxCPM2 defaults: temperature 1.0, cfg 2.0.
       payload.temperature = retryAdjustedTemperature(
         readNumericEnv("TTS_PRESET_TEMPERATURE", 1.0, 0.1, 2.0),

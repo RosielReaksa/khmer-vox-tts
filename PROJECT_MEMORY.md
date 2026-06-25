@@ -19,7 +19,12 @@ temperature **1.0**, cfg **2.0**, upstream inference_timesteps **10** when unset
 - No `TTS_OUTPUT_*` tempo overrides (normal speed 1.0).
 - Chunk continuation (`TTS_CHUNK_CONTINUATION`, default on) kept — official `prompt_wav` path.
 
-**Deploy:** pending image tag after commit (fixes long-text English tags read aloud).
+**Deploy:** `prod-20260625-12` (commit `c38c50d`, run `28156956624`). Health 200.
+
+**Follow-up bug (2026-06-25):** `synthesizeSingleChunk` still initialized
+`payload.voice` with `params.voice` (`male`/`female`). Upstream prepended
+`(female)…` on every chunk → English spoken at boundaries. Fix: omit `voice`
+from default payload; `delete payload.voice` for preset ref. Deploy pending.
 
 ## Normal voice speed only on production (2026-06-25)
 
