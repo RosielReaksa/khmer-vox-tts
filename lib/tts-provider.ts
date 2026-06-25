@@ -2576,25 +2576,19 @@ async function synthesizeSingleChunk(
   durationSeconds: number | null;
   endpointUrl: string;
 }> {
+  // Official VoxCPM2 ref-clone contract (modal/modal_voxcpm_api.py):
+  // - input: Khmer text only (no English voice tags prepended)
+  // - ref_audio_wav_base64: timbre from reference WAV (preset male/female or clone)
+  // - optional prompt_wav_base64 + prompt_text: chunk continuation (long text)
+  // - temperature, cfg_value, max_generate_length
+  // Never send `voice` with ref_audio unless TTS_CLONE_USE_VOICE_DESCRIPTION=true
+  // on a user-uploaded clone (upstream prepends voice to speakable text).
   const payload: Record<string, unknown> = {
     model,
     input: params.text,
     response_format: responseFormat,
     max_generate_length: estimateMaxGenerateLength(params.text, params.mode),
   };
-
-  // Optional VoxCPM2 diffusion-step count. Lower = faster (fewer steps), higher
-  // = more detail. Only sent when explicitly configured so the upstream default
-  // (10) is preserved otherwise. Docs recommend 4-30.
-  const inferenceTimesteps = readIntegerEnv(
-    "TTS_INFERENCE_TIMESTEPS",
-    0,
-    0,
-    30,
-  );
-  if (inferenceTimesteps >= 4) {
-    payload.inference_timesteps = inferenceTimesteps;
-  }
 
   // Optional upstream text normalization (expands numbers, dates, etc. so they
   // are spoken as words instead of digit-by-digit). Off by default because the
@@ -2638,9 +2632,10 @@ async function synthesizeSingleChunk(
       } else {
         delete payload.voice;
       }
-      // Official VoxCPM2 defaults: temperature 1.0, cfg 2.0.
+      // Proven production tuning: lower temperature = steadier Khmer delivery.
+      // Official VoxCPM2 default is 1.0; 0.45–0.55 sounded better in prod A/B.
       payload.temperature = retryAdjustedTemperature(
-        readNumericEnv("TTS_CLONE_TEMPERATURE", 1.0, 0.1, 2.0),
+        readNumericEnv("TTS_CLONE_TEMPERATURE", 0.55, 0.1, 2.0),
         qualityRetryAttempt,
       );
       // CFG (guidance scale): official VoxCPM2 default is 2.0. The docs recommend
@@ -2656,9 +2651,8 @@ async function synthesizeSingleChunk(
       // prepends it to speakable text as "(male)…" / "(female)…" and the model
       // reads the English label aloud on every chunk.
       delete payload.voice;
-      // Official VoxCPM2 defaults: temperature 1.0, cfg 2.0.
       payload.temperature = retryAdjustedTemperature(
-        readNumericEnv("TTS_PRESET_TEMPERATURE", 1.0, 0.1, 2.0),
+        readNumericEnv("TTS_PRESET_TEMPERATURE", 0.45, 0.1, 2.0),
         qualityRetryAttempt,
       );
       // CFG (guidance scale): official VoxCPM2 default is 2.0.
@@ -3197,7 +3191,7 @@ export async function synthesizeWithUpstream(params: {
   // exhaustion we deliver the least-buzzy attempt rather than failing a
   // request that is otherwise fine. Disabled with TTS_FINAL_QUALITY_RETRIES=0.
   const maxAttempts =
-    Math.round(readNumericEnv("TTS_FINAL_QUALITY_RETRIES", 1, 0, 3)) + 1;
+    Math.round(readNumericEnv("TTS_FINAL_QUALITY_RETRIES", 2, 0, 3)) + 1;
   let best: { result: TtsSynthesisResult; tonalSeconds: number } | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {

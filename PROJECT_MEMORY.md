@@ -2,7 +2,22 @@
 
 Last updated: 2026-06-25
 
-## Official VoxCPM2 reset (2026-06-25)
+## Restore proven VoxCPM2 ref-clone quality (2026-06-25)
+
+User reported audio quality regressed after the 2026-06-25 “official reset”
+(temperature 1.0). Reverted to **proven production tuning** while keeping the
+**clean official ref-clone API** (no `voice` field / no English tags):
+
+**Upstream (ref_audio only):**
+- `TTS_CLONE_USE_VOICE_DESCRIPTION=false` — never prepend spoken style text
+- `TTS_PRESET_TEMPERATURE=0.45`, `TTS_CLONE_TEMPERATURE=0.55` (code + prod env)
+- `TTS_FINAL_QUALITY_RETRIES=2`
+- Chunk continuation (`prompt_wav`) kept — official VoxCPM2 long-text path
+- Removed unused `inference_timesteps` request field (Modal API ignores it)
+
+**Deploy:** pending after commit.
+
+## Official VoxCPM2 reset (2026-06-25) — superseded for temperature
 
 Aligned app + production with upstream VoxCPM2 defaults (`modal/modal_voxcpm_api.py`):
 temperature **1.0**, cfg **2.0**, upstream inference_timesteps **10** when unset.
@@ -23,8 +38,8 @@ temperature **1.0**, cfg **2.0**, upstream inference_timesteps **10** when unset
 
 **Follow-up bug (2026-06-25):** `synthesizeSingleChunk` still initialized
 `payload.voice` with `params.voice` (`male`/`female`). Upstream prepended
-`(female)…` on every chunk → English spoken at boundaries. Fix: omit `voice`
-from default payload; `delete payload.voice` for preset ref. Deploy pending.
+`(female)…` on every chunk → English spoken at boundaries. Fix deployed
+`prod-20260625-13` (commit `674263c`, run `28159218568`).
 
 ## Normal voice speed only on production (2026-06-25)
 
