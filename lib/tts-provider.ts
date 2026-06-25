@@ -633,10 +633,10 @@ async function capLongPauses(bytes: Uint8Array): Promise<Uint8Array> {
   if (!readBooleanEnv("TTS_OUTPUT_PAUSE_CAP", true)) {
     return bytes;
   }
-  const maxPause = readNumericEnv("TTS_OUTPUT_MAX_PAUSE_SECONDS", 0.7, 0.3, 3);
+  const maxPause = readNumericEnv("TTS_OUTPUT_MAX_PAUSE_SECONDS", 1.0, 0.3, 3);
   const keepPause = Math.min(
     maxPause,
-    readNumericEnv("TTS_OUTPUT_KEEP_PAUSE_SECONDS", 0.4, 0.1, 2),
+    readNumericEnv("TTS_OUTPUT_KEEP_PAUSE_SECONDS", 0.55, 0.1, 2),
   );
   const thresholdDb = readNumericEnv(
     "TTS_OUTPUT_PAUSE_THRESHOLD_DB",
@@ -1382,7 +1382,7 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
   // regenerate the chunk instead of delivering buzzing audio.
   const maxSteadyTonalSeconds = readNumericEnv(
     "TTS_AUDIO_MAX_STEADY_TONAL_SECONDS",
-    1.5,
+    1.0,
     0.75,
     10,
   );
@@ -1425,7 +1425,7 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
   // so the silence-retry path regenerates the chunk.
   const maxHighDominantFreqSeconds = readNumericEnv(
     "TTS_AUDIO_MAX_HIGH_DOMINANT_FREQ_SECONDS",
-    0.75,
+    0.5,
     0.25,
     5,
   );
@@ -2083,6 +2083,37 @@ function finalizeDeliveredWav(bytes: Uint8Array): Uint8Array {
   return createPcm16Wav(data, info.channels, info.sampleRate);
 }
 
+/** Soft fade-in at chunk heads after continuation prompts to avoid hard cuts. */
+function applyWavHeadFadeIn(bytes: Uint8Array, fadeMs: number): Uint8Array {
+  if (fadeMs <= 0) return bytes;
+  let info: Pcm16WavInfo;
+  try {
+    info = readPcm16Wav(bytes);
+  } catch {
+    return bytes;
+  }
+  const bytesPerFrame = info.channels * 2;
+  const totalFrames = Math.floor(info.dataSize / bytesPerFrame);
+  const fadeFrames = Math.min(
+    Math.round((info.sampleRate * fadeMs) / 1000),
+    Math.floor(totalFrames / 4),
+  );
+  if (fadeFrames <= 0) return bytes;
+
+  const out = Buffer.from(bytes);
+  for (let frame = 0; frame < fadeFrames; frame++) {
+    const gain = (frame + 1) / fadeFrames;
+    const frameOffset = info.dataOffset + frame * bytesPerFrame;
+    for (let channel = 0; channel < info.channels; channel++) {
+      const sampleOffset = frameOffset + channel * 2;
+      if (sampleOffset + 1 >= out.length) continue;
+      const value = out.readInt16LE(sampleOffset);
+      out.writeInt16LE(Math.round(value * gain), sampleOffset);
+    }
+  }
+  return out;
+}
+
 // Concatenates multiple PCM-16 WAV buffers into one WAV by joining their raw
 // PCM payloads and writing a single fresh header. All inputs must share the
 // same sample rate and channel count (the canonical mono 24 kHz format the
@@ -2201,8 +2232,8 @@ function concatPcm16WavBuffers(buffers: Uint8Array[]): Uint8Array {
   // Long-form chunks may split either at a real sentence pause or in the middle
   // of a long Khmer phrase. Quiet boundaries get a short pause; audible
   // boundaries are crossfaded so they do not sound like a hard cut.
-  const crossfadeMs = readNumericEnv("TTS_CHUNK_CROSSFADE_MS", 45, 0, 250);
-  const joinSilenceMs = readNumericEnv("TTS_CHUNK_JOIN_SILENCE_MS", 70, 0, 500);
+  const crossfadeMs = readNumericEnv("TTS_CHUNK_CROSSFADE_MS", 100, 0, 250);
+  const joinSilenceMs = readNumericEnv("TTS_CHUNK_JOIN_SILENCE_MS", 130, 0, 500);
   const joinEdgeWindowMs = readNumericEnv(
     "TTS_CHUNK_JOIN_EDGE_WINDOW_MS",
     60,
@@ -2235,7 +2266,7 @@ function concatPcm16WavBuffers(buffers: Uint8Array[]): Uint8Array {
   // Align each segment's RMS to the median segment level (gain capped) before
   // joining, so the final loudnorm pass gets consistent input.
   if (
-    readBooleanEnv("TTS_CHUNK_LOUDNESS_MATCH", true) &&
+    readBooleanEnv("TTS_CHUNK_LOUDNESS_MATCH", false) &&
     rawSegments.length > 1
   ) {
     const rmsValues = rawSegments.map((segment) => {
@@ -2323,7 +2354,7 @@ function concatPcm16WavBuffers(buffers: Uint8Array[]): Uint8Array {
     segment: Buffer,
     options: { fadeIn?: boolean; fadeOut?: boolean },
   ): Buffer {
-    const declickMs = readNumericEnv("TTS_CHUNK_JOIN_DECLICK_MS", 10, 0, 40);
+    const declickMs = readNumericEnv("TTS_CHUNK_JOIN_DECLICK_MS", 18, 0, 40);
     const declickFrames = Math.min(
       Math.round((first.sampleRate * declickMs) / 1000),
       Math.floor(Math.floor(segment.length / bytesPerFrame) / 4),
@@ -2451,7 +2482,7 @@ function retryAdjustedCfg(
   qualityRetryAttempt: number,
 ): number {
   if (qualityRetryAttempt <= 0) return baseCfg;
-  const step = readNumericEnv("TTS_RETRY_CFG_STEP", 0, 0, 1);
+  const step = readNumericEnv("TTS_RETRY_CFG_STEP", 0.15, 0, 1);
   if (step <= 0) return baseCfg;
   const floor = readNumericEnv("TTS_RETRY_CFG_MIN", 1.5, 0.5, 2.0);
   return Math.max(floor, baseCfg - step * qualityRetryAttempt);
@@ -3127,7 +3158,13 @@ async function synthesizeMergedAudio(params: {
 
   for (let index = 0; index < chunkResults.length; index++) {
     const result = chunkResults[index];
-    const chunkBytes = leveledChunks[index] ?? result.audioBytes;
+    let chunkBytes = leveledChunks[index] ?? result.audioBytes;
+    if (index > 0 && chunkContinuationEnabled()) {
+      chunkBytes = applyWavHeadFadeIn(
+        chunkBytes,
+        readNumericEnv("TTS_CONTINUATION_HEAD_FADE_MS", 30, 0, 120),
+      );
+    }
     const resultSeconds =
       result.durationSeconds ??
       inferAudioDurationSeconds(chunkBytes, result.contentType);

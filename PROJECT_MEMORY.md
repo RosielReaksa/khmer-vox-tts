@@ -2,6 +2,22 @@
 
 Last updated: 2026-06-25
 
+## Long-audio join + machine-buzz fix (2026-06-25)
+
+User reported long audio voice OK but **machine crash buzz** and **cut-cut**
+chunk seams. Analysis found large sample discontinuities at chunk joins (~39s,
+~86s in a 196s file).
+
+**Fixes (`lib/tts-provider.ts`, prod env):**
+- Stronger joins: crossfade 100 ms, join silence 130 ms, declick 18 ms
+- Continuation head fade 30 ms on chunk 2+ (soften prompt_wav seam)
+- Disable duplicate `TTS_CHUNK_LOUDNESS_MATCH` in concat (pre-join leveling kept)
+- Gentler pause cap: max 1.0 s, keep 0.55 s (less aggressive than 0.7/0.4)
+- Stricter buzz gate: steady tonal 1.0 s, high-freq tone 0.5 s → chunk retry
+- CFG steps down on retry (`TTS_RETRY_CFG_STEP=0.15`) for buzz regeneration
+
+**Deploy:** pending.
+
 ## Restore proven VoxCPM2 ref-clone quality (2026-06-25)
 
 User reported audio quality regressed after the 2026-06-25 “official reset”
@@ -15,7 +31,7 @@ User reported audio quality regressed after the 2026-06-25 “official reset”
 - Chunk continuation (`prompt_wav`) kept — official VoxCPM2 long-text path
 - Removed unused `inference_timesteps` request field (Modal API ignores it)
 
-**Deploy:** pending after commit.
+**Deploy:** `prod-20260625-14` (commit `13f0022`, run `28160206379`).
 
 ## Official VoxCPM2 reset (2026-06-25) — superseded for temperature
 
