@@ -813,7 +813,12 @@ async function normalizeOutputLoudness(bytes: Uint8Array): Promise<Uint8Array> {
   }
   const targetI = readNumericEnv("TTS_OUTPUT_LOUDNORM_I", -16, -36, -8);
   const targetTp = readNumericEnv("TTS_OUTPUT_LOUDNORM_TP", -1.5, -9, -0.5);
-  const targetLra = readNumericEnv("TTS_OUTPUT_LOUDNORM_LRA", 11, 1, 20);
+  // 2026-06-26: lowered LRA 11 -> 7 to compress within-file dynamic range.
+  // Old default (11) lets loud passages be 8+ dB louder than quiet ones, even
+  // though the *average* loudness was on target. 7 matches EBU R128 broadcast
+  // standard and gives a much more consistent perceived volume across the
+  // whole file while still leaving room for natural sentence emphasis.
+  const targetLra = readNumericEnv("TTS_OUTPUT_LOUDNORM_LRA", 7, 1, 20);
   const base = `loudnorm=I=${targetI}:TP=${targetTp}:LRA=${targetLra}`;
 
   try {
