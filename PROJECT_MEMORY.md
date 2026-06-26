@@ -235,6 +235,19 @@ normal. Step 4 rerun pending.
 
 **Deploy:** `prod-20260626-26` (urgent tuning).
 
+## Quiet-tail fix (2026-06-26, deployed)
+
+User reported audio `bd4f7108-...wav` (213s female) had RMS drop from ~5500
+to ~2800 in the last 15 seconds — the trailing chunk was much quieter than
+the rest. Median-based matching let the quiet tail stay quiet.
+
+**Fix:** `normalizeSegmentVolumes` now defaults to **75th-percentile
+RMS** as the reference target instead of the median, so a single quiet
+segment gets amplified up to the louder rest of the file. Existing env
+knob: `TTS_OUTPUT_VOLUME_REFERENCE=median` to restore old behavior.
+
+**Deploy:** `prod-20260626-27` (this commit).
+
 ## Background noise / buzz on long TTS (2026-06-25, deployed)
 
 User reported `voxtts-tts-caee85c5-...wav` (3+ min, female) sounding like a

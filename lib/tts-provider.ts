@@ -1697,12 +1697,21 @@ async function normalizeSegmentVolumes(
     // Target strategy:
     // - Default: median RMS across segments (good when most segments are
     //   well-produced and we just need to fix outliers).
+    // - Default: the LOUDEST segment (75th-ish percentile via upper-mid of
+    //   sorted list) — this prevents a single quiet segment (often the last
+    //   one due to VoxCPM2 trailing silence) from pulling the whole file
+    //   down. The 6 dB gain cap keeps us from amplifying noise.
+    // - "median" mode: target the median. Set TTS_OUTPUT_VOLUME_REFERENCE=median
+    //   to restore the older behavior.
     // - "fixed" mode: target a known LUFS-equivalent so volume matches across
     //   *batches*, not just within a batch. Set TTS_OUTPUT_VOLUME_TARGET_LUFS
     //   to a negative dBFS number (e.g. -16) and it will be used as the
-    //   reference instead of the median.
+    //   reference instead.
     const sortedRms = [...rmsValues].sort((a, b) => a - b);
     const medianRms = sortedRms[Math.floor(sortedRms.length / 2)];
+    const upperMidRms =
+      sortedRms[Math.min(sortedRms.length - 1, Math.floor(sortedRms.length * 0.75))];
+    const referenceMode = (process.env.TTS_OUTPUT_VOLUME_REFERENCE ?? "loud").trim().toLowerCase();
     const targetLufs = readNumericEnv(
       "TTS_OUTPUT_VOLUME_TARGET_LUFS",
       0,
@@ -1712,7 +1721,9 @@ async function normalizeSegmentVolumes(
     const targetRms =
       targetLufs < -8
         ? Math.pow(10, targetLufs / 20) // linear RMS equivalent
-        : medianRms;
+        : referenceMode === "median"
+          ? medianRms
+          : upperMidRms;
 
     const maxGainDb = readNumericEnv(
       "TTS_OUTPUT_VOLUME_MAX_GAIN_DB",
