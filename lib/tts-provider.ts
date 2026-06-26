@@ -807,6 +807,53 @@ async function reduceOutputNoise(bytes: Uint8Array): Promise<Uint8Array> {
   }
 }
 
+// 2026-06-26: voice clarity / de-narrow filter. VoxCPM2 ref-clone output has a
+// resonant build-up around 300-1500 Hz (nasal / "honk" zone) and a low ceiling
+// above ~5.5 kHz, which makes the voice sound like the speaker is talking with
+// a pinched / closed nose. This filter:
+//   - highpass f=200 Hz: cuts sub-vocal rumble from clone refs
+//   - lowpass f=5500 Hz: drops pre-hissing noise floor above the speech band
+//   - volume +1.5 dB: compensates for the EQ headroom (loudnorm still hits -16)
+//   - acompressor threshold=-22 dB ratio=3: smooths the natural -22 to -8 dB
+//     spread VoxCPM2 leaves on individual syllables, without crushing
+// Disabled with TTS_OUTPUT_DE_NARROW=false. Strength is fixed because the
+// 300-1500 Hz resonance is a property of VoxCPM2's output, not the input.
+async function deNarrowVoice(bytes: Uint8Array): Promise<Uint8Array> {
+  if (!readBooleanEnv("TTS_OUTPUT_DE_NARROW", true)) {
+    return bytes;
+  }
+  try {
+    const sampleRate = readCanonicalGeneratedSampleRate();
+    const output = await runFfmpeg(
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-af",
+        "highpass=f=200,lowpass=f=5500,volume=1.5,acompressor=threshold=-22dB:ratio=3:attack=10:release=200",
+        "-ac",
+        "1",
+        "-ar",
+        String(sampleRate),
+        "-codec:a",
+        "pcm_s16le",
+        "-sample_fmt",
+        "s16",
+        "-f",
+        "wav",
+        "pipe:1",
+      ],
+      bytes,
+    );
+    return output.byteLength > 0 ? output : bytes;
+  } catch {
+    // De-narrowing is a finishing touch; never fail delivery over it.
+    return bytes;
+  }
+}
+
 async function normalizeOutputLoudness(bytes: Uint8Array): Promise<Uint8Array> {
   if (!readBooleanEnv("TTS_OUTPUT_LOUDNORM", true)) {
     return bytes;
@@ -3266,7 +3313,11 @@ async function synthesizeMergedAudio(params: {
   const mergedBytes = concatPcm16WavBuffers(publicSegments);
   const depausedBytes = await capLongPauses(mergedBytes);
   const denoisedBytes = await reduceOutputNoise(depausedBytes);
-  const normalizedBytes = await normalizeOutputLoudness(denoisedBytes);
+  // 2026-06-26: open up VoxCPM2's nasal / "closed-nose" coloration before
+  // loudnorm so the compressor + EQ see a natural spectrum. De-narrow runs
+  // between denoise (kills hiss) and loudnorm (matches integrated loudness).
+  const denarrowedBytes = await deNarrowVoice(denoisedBytes);
+  const normalizedBytes = await normalizeOutputLoudness(denarrowedBytes);
   const pacedBytes = await applyOutputTempo(normalizedBytes, params.mode);
   const deliverableBytes = finalizeDeliveredWav(pacedBytes);
   const deliveredSeconds = await measureDeliveredAudioDurationSeconds(
