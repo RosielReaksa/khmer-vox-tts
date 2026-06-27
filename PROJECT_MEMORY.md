@@ -37,7 +37,7 @@ better balance), and over-doubles ultra-high air (5.8% -> 4.9%).
 **Why I was wrong initially:** I assumed the issue was post-processing (filter chain) and
 built Option B EQ. But the upstream at temp=0.7 already produces nasal/closed-nose audio
 regardless of what we do downstream. The fix has to be UPSTREAM, not in the filter chain.
-The Option B filter changes I had prepared have been REVERTED "â€ they would mask but not
+The Option B filter changes I had prepared have been REVERTED "Ã¢â‚¬Â they would mask but not
 fix the real problem.
 
 **Surprise finding (E variant):** SENDING `voice="natural clear Khmer"` + `denoise=true` makes
@@ -93,6 +93,21 @@ All reference audios we ship are clean. The problem is purely in upstream sampli
 **Spectral analysis harness preserved:** `scripts/measure-spectral.mjs` for any future TTS EQ
 or upstream setting investigation. Runs in <30s for a 30s WAV.
 
+
+**Deployed:** `prod-20260627-30` (commit `d71018a`, GitHub Actions run `28276450010`).
+
+**Critical extra step:** The new code defaults were NOT taking effect because production had
+stale env vars from much older deploys: `TTS_PRESET_TEMPERATURE=0.45` and `TTS_CLONE_TEMPERATURE=0.8`.
+Removed with `kubectl set env deployment/X VAR-` then rolled out. After cleanup, web+worker
+env list no longer contains those vars, so the code default of 1.0 is in effect.
+
+**Production verification:** Modal endpoint (reaksaaaa4) accepted temp=1.0 and returned
+12.48s of audio in 8.5s. Spectral profile matches A-OFFICIAL (clarity 5.6%, fundamental 39.7%,
+ultra-high 4.2%). Health endpoint returns 200.
+
+**Lesson:** Always grep prod env after a default-change deploy. Code defaults only take
+effect if no env var overrides them. Future deploys should include a "kubectl set env X VAR-"
+step before changing a code default.
 ## Revert voice-consistency experiment (2026-06-25)
 
 User confirmed audio was better **before** the 2026-06-24 voice-consistency deploy
@@ -107,7 +122,7 @@ Reverted to pre-experiment pipeline while **keeping** ref-audio-only upstream
 
 **Deploy:** `prod-20260625-16` (commit `d8d9082`, run `28166809402`).
 
-## Long-audio join + machine-buzz fix (2026-06-25) ""Â partially reverted
+## Long-audio join + machine-buzz fix (2026-06-25) ""Ã‚Â partially reverted
 
 User reported long audio voice OK but **machine crash buzz** and **cut-cut**
 chunk seams. Analysis found large sample discontinuities at chunk joins (~39s,
@@ -118,48 +133,48 @@ chunk seams. Analysis found large sample discontinuities at chunk joins (~39s,
 - Continuation head fade 30 ms on chunk 2+ (soften prompt_wav seam)
 - Disable duplicate `TTS_CHUNK_LOUDNESS_MATCH` in concat (pre-join leveling kept)
 - Gentler pause cap: max 1.0 s, keep 0.55 s (less aggressive than 0.7/0.4)
-- Stricter buzz gate: steady tonal 1.0 s, high-freq tone 0.5 s ÃƒÆ’Â¢"Â ' chunk retry
+- Stricter buzz gate: steady tonal 1.0 s, high-freq tone 0.5 s ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' chunk retry
 - CFG steps down on retry (`TTS_RETRY_CFG_STEP=0.15`) for buzz regeneration
 
 **Deploy:** `prod-20260625-15` (commit `d2ea65d`, run `28162411696`).
 
 ## Restore proven VoxCPM2 ref-clone quality (2026-06-25)
 
-User reported audio quality regressed after the 2026-06-25 "official reset"Ãƒâ€šÂ
+User reported audio quality regressed after the 2026-06-25 "official reset"ÃƒÆ’Ã¢â‚¬Å¡Ã‚Â
 (temperature 1.0). Reverted to **proven production tuning** while keeping the
 **clean official ref-clone API** (no `voice` field / no English tags):
 
 **Upstream (ref_audio only):**
-- `TTS_CLONE_USE_VOICE_DESCRIPTION=false` ""Â never prepend spoken style text
+- `TTS_CLONE_USE_VOICE_DESCRIPTION=false` ""Ã‚Â never prepend spoken style text
 - `TTS_PRESET_TEMPERATURE=0.45`, `TTS_CLONE_TEMPERATURE=0.55` (code + prod env)
 - `TTS_FINAL_QUALITY_RETRIES=2`
-- Chunk continuation (`prompt_wav`) kept ""Â official VoxCPM2 long-text path
+- Chunk continuation (`prompt_wav`) kept ""Ã‚Â official VoxCPM2 long-text path
 - Removed unused `inference_timesteps` request field (Modal API ignores it)
 
 **Deploy:** `prod-20260625-14` (commit `13f0022`, run `28160206379`).
 
-## Official VoxCPM2 reset (2026-06-25) ""Â superseded for temperature
+## Official VoxCPM2 reset (2026-06-25) ""Ã‚Â superseded for temperature
 
 Aligned app + production with upstream VoxCPM2 defaults (`modal/modal_voxcpm_api.py`):
 temperature **1.0**, cfg **2.0**, upstream inference_timesteps **10** when unset.
 
 **Code (`lib/tts-provider.ts`, `lib/voice-defaults.ts`, `.env.example`):**
-- Default preset/clone temperature ÃƒÆ’Â¢"Â ' **1.0** (was 0.45 / 0.55 in code).
-- `TTS_CLONE_USE_VOICE_DESCRIPTION` default ÃƒÆ’Â¢"Â ' **false** (ref_audio only; no spoken English tags).
-- `TTS_INFERENCE_TIMESTEPS` only sent when ÃƒÆ’Â¢"Â°Ãƒâ€šÂ¥4; default **0** = omit ÃƒÆ’Â¢"Â ' upstream 10.
+- Default preset/clone temperature ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' **1.0** (was 0.45 / 0.55 in code).
+- `TTS_CLONE_USE_VOICE_DESCRIPTION` default ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' **false** (ref_audio only; no spoken English tags).
+- `TTS_INFERENCE_TIMESTEPS` only sent when ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â°ÃƒÆ’Ã¢â‚¬Å¡Ã‚Â¥4; default **0** = omit ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' upstream 10.
 - Removed `PRESET_TTS_VOICE_INSTRUCTION`; preset male/female never send `voice` with ref_audio.
 
 **Production env (kubectl, both web + worker):**
 - Removed: `TTS_PRESET_TEMPERATURE`, `TTS_CLONE_TEMPERATURE`, `TTS_INFERENCE_TIMESTEPS`, `TTS_FINAL_QUALITY_RETRIES`.
 - Set: `TTS_CLONE_USE_VOICE_DESCRIPTION=false`.
 - No `TTS_OUTPUT_*` tempo overrides (normal speed 1.0).
-- Chunk continuation (`TTS_CHUNK_CONTINUATION`, default on) kept ""Â official `prompt_wav` path.
+- Chunk continuation (`TTS_CHUNK_CONTINUATION`, default on) kept ""Ã‚Â official `prompt_wav` path.
 
 **Deploy:** `prod-20260625-12` (commit `c38c50d`, run `28156956624`). Health 200.
 
 **Follow-up bug (2026-06-25):** `synthesizeSingleChunk` still initialized
 `payload.voice` with `params.voice` (`male`/`female`). Upstream prepended
-`(female)"Ãƒâ€šÂ¦` on every chunk ÃƒÆ’Â¢"Â ' English spoken at boundaries. Fix deployed
+`(female)"ÃƒÆ’Ã¢â‚¬Å¡Ã‚Â¦` on every chunk ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' English spoken at boundaries. Fix deployed
 `prod-20260625-13` (commit `674263c`, run `28159218568`).
 
 ## Normal voice speed only on production (2026-06-25)
@@ -167,15 +182,15 @@ temperature **1.0**, cfg **2.0**, upstream inference_timesteps **10** when unset
 Removed prod overrides that slowed clone output:
 
 - **Before:** `TTS_OUTPUT_CLONE_TEMPO=0.92` on `khmer-vox-web` + `khmer-vox-worker` (~8% slower clone speech).
-- **After:** no `TTS_OUTPUT_TEMPO` / `TTS_OUTPUT_CLONE_TEMPO` env vars ""Â code defaults to **1.0** (no speed change) for preset male/female and clone.
+- **After:** no `TTS_OUTPUT_TEMPO` / `TTS_OUTPUT_CLONE_TEMPO` env vars ""Ã‚Â code defaults to **1.0** (no speed change) for preset male/female and clone.
 - Rollout completed on both deployments; verified web pods have no `TTS_OUTPUT_*` tempo vars.
 - **Note:** Small pace differences between separate batch lines are still normal model behavior (not global fast/slow processing).
 
 ## Fix: style tags read aloud on long TTS (2026-06-25, deployed with official reset)
 
 **Root cause:** Upstream VoxCPM2 prepends the `voice` field to speakable text as
-`(description)Khmer text"Ãƒâ€šÂ¦`. We sent long English style instructions on every chunk ÃƒÆ’Â¢"Â '
-model spoke the tags + garbled English at chunk boundaries ÃƒÆ’Â¢"Â ' voice drift on long audio.
+`(description)Khmer text"ÃƒÆ’Ã¢â‚¬Å¡Ã‚Â¦`. We sent long English style instructions on every chunk ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â '
+model spoke the tags + garbled English at chunk boundaries ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' voice drift on long audio.
 
 **Fix:** Omit `voice` when `ref_audio` is present; `TTS_CLONE_USE_VOICE_DESCRIPTION=false`
 by default. Consistency from ref_audio + chunk continuation + official temps.
@@ -185,9 +200,9 @@ by default. Consistency from ref_audio + chunk continuation + official temps.
 ## Durable audio quality plan (2026-06-25, deployed)
 
 Stops the patch-cycle. Settled after reading VoxCPM2 official docs
-(voxcpm.readthedocs.io ""Â Usage Guide ÃƒÆ’"Å¡Ãƒâ€šÂ§CFG value, ÃƒÆ’"Å¡Ãƒâ€šÂ§Denoise) and measuring the
-user's `caee85c5-"Ãƒâ€šÂ¦wav` (~213s, female). Measured noise floor during speech
-was **ÃƒÆ’Â¢Ãƒâ€¹"Â '10 to ÃƒÆ’Â¢Ãƒâ€¹"Â '22 dB** (clean voice sits at **ÃƒÆ’Â¢Ãƒâ€¹"Â '40 dB** or lower) ""Â confirms
+(voxcpm.readthedocs.io ""Ã‚Â Usage Guide ÃƒÆ’Ã†â€™"Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ã‚Â§CFG value, ÃƒÆ’Ã†â€™"Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ã‚Â§Denoise) and measuring the
+user's `caee85c5-"ÃƒÆ’Ã¢â‚¬Å¡Ã‚Â¦wav` (~213s, female). Measured noise floor during speech
+was **ÃƒÆ’Ã†â€™Ã‚Â¢ÃƒÆ’Ã¢â‚¬Â¹"Ã‚Â '10 to ÃƒÆ’Ã†â€™Ã‚Â¢ÃƒÆ’Ã¢â‚¬Â¹"Ã‚Â '22 dB** (clean voice sits at **ÃƒÆ’Ã†â€™Ã‚Â¢ÃƒÆ’Ã¢â‚¬Â¹"Ã‚Â '40 dB** or lower) ""Ã‚Â confirms
 the ref-audio noise leak.
 
 **User decision (selected):** **Balanced speed/quality** for all users (preset
@@ -200,19 +215,19 @@ male/female + user voice clones).
 | Upstream temperature | preset / clone | **0.7** | 1.0 = noisy leak; 0.55 = too slow; 0.7 = balanced |
 | Upstream CFG (guidance) | both | **2.0** | Official VoxCPM2 default; docs recommend 1.5""1.6 *only* for known-noisy outputs |
 | Reference denoise | `TTS_UPSTREAM_DENOISE` | **true** | ZipEnhancer strips ref-clip broadband noise before generation |
-| Inference steps | `TTS_INFERENCE_TIMESTEPS` | unset ÃƒÆ’Â¢"Â ' **10** | Official default; balanced speed/quality |
-| Voice field | `TTS_CLONE_USE_VOICE_DESCRIPTION` | **false** | Upstream prepends `voice` to text ""Â leaks English ("male") into audio |
+| Inference steps | `TTS_INFERENCE_TIMESTEPS` | unset ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' **10** | Official default; balanced speed/quality |
+| Voice field | `TTS_CLONE_USE_VOICE_DESCRIPTION` | **false** | Upstream prepends `voice` to text ""Ã‚Â leaks English ("male") into audio |
 | Output denoise | `TTS_OUTPUT_DENOISE` | **true**, NR=**14 dB** | Removes residual hiss/buzz after loudnorm |
 | Pause cap | max / keep | **1.0s / 0.55s** | Natural sentence pacing, less choppy |
-| Loudnorm | `TTS_OUTPUT_LOUDNORM` | **true** (I=ÃƒÆ’Â¢Ãƒâ€¹"Â '16, TP=ÃƒÆ’Â¢Ãƒâ€¹"Â '1.5, LRA=11) | EBU R128 broadcast standard |
-| Chunk continuation | `TTS_CHUNK_CONTINUATION` | **false** | Reverted to pre-2026-06-24 behavior ""Â better quality |
+| Loudnorm | `TTS_OUTPUT_LOUDNORM` | **true** (I=ÃƒÆ’Ã†â€™Ã‚Â¢ÃƒÆ’Ã¢â‚¬Â¹"Ã‚Â '16, TP=ÃƒÆ’Ã†â€™Ã‚Â¢ÃƒÆ’Ã¢â‚¬Â¹"Ã‚Â '1.5, LRA=11) | EBU R128 broadcast standard |
+| Chunk continuation | `TTS_CHUNK_CONTINUATION` | **false** | Reverted to pre-2026-06-24 behavior ""Ã‚Â better quality |
 | Final quality retries | `TTS_FINAL_QUALITY_RETRIES` | **2** | Reject and regenerate whole synthesis if delivered audio buzzes |
 | Buzz guard | `TTS_AUDIO_TONAL_DELIVERY_BOOST_DB` | **0** | Don't lower tonal floor; we already denoise output |
 
-**Safety knobs (env-only, default off ""Â no need to change):**
-- `TTS_OUTPUT_DENOISE=false` ÃƒÆ’Â¢"Â ' disable output denoise if a user ever complains it's too aggressive.
-- `TTS_UPSTREAM_DENOISE=false` ÃƒÆ’Â¢"Â ' disable ref denoise for studio-clean user clones.
-- `TTS_CHUNK_CONTINUATION=true` ÃƒÆ’Â¢"Â ' opt back into chunk continuation if a user wants stronger consistency on very long text (we'll measure first).
+**Safety knobs (env-only, default off ""Ã‚Â no need to change):**
+- `TTS_OUTPUT_DENOISE=false` ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' disable output denoise if a user ever complains it's too aggressive.
+- `TTS_UPSTREAM_DENOISE=false` ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' disable ref denoise for studio-clean user clones.
+- `TTS_CHUNK_CONTINUATION=true` ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' opt back into chunk continuation if a user wants stronger consistency on very long text (we'll measure first).
 
 **Deploy:** `prod-20260625-18` (this commit). Verified `/api/health` = 200.
 
@@ -220,7 +235,7 @@ male/female + user voice clones).
 
 ## Batch item failures (2026-06-25, deployed)
 
-User saw dashboard message "Generated 2 of 4 segments. 2 failed ""Â retry from Batch Jobs."
+User saw dashboard message "Generated 2 of 4 segments. 2 failed ""Ã‚Â retry from Batch Jobs."
 
 **Root causes from prod logs:**
 1. Modal endpoint `reaksa1234op--voxcpm2-...` returning **HTTP 429: workspace
@@ -231,17 +246,17 @@ User saw dashboard message "Generated 2 of 4 segments. 2 failed ""Â retry fro
    after 3 retries. With TTS_CLONE_TEMPERATURE=0.7, buzz frequency went up.
 
 **Fix:**
-- CFG retry default ON (`TTS_RETRY_CFG_STEP=0.2`) ""Â step down from 2.0 toward
+- CFG retry default ON (`TTS_RETRY_CFG_STEP=0.2`) ""Ã‚Â step down from 2.0 toward
   1.5 floor per attempt. Matches official VoxCPM2 docs recommendation.
-- Retry temperature cap raised 0.9 ÃƒÆ’Â¢"Â ' 1.0 (still inside official range).
-- Relaxed maxSteadyTonalSeconds 1.0 ÃƒÆ’Â¢"Â ' 1.4, maxHighDominantFreqSeconds 0.5 ÃƒÆ’Â¢"Â ' 0.9
-  ""Â only reject *clearly* bad chunks, let borderline ones through.
+- Retry temperature cap raised 0.9 ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 1.0 (still inside official range).
+- Relaxed maxSteadyTonalSeconds 1.0 ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 1.4, maxHighDominantFreqSeconds 0.5 ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 0.9
+  ""Ã‚Â only reject *clearly* bad chunks, let borderline ones through.
 
 **Deploy:** `prod-20260625-19` (this commit).
 
 ## Step 1: Global volume matching (2026-06-26, deployed)
 
-User reported batch-generated audio had uneven volume across segments ""Â
+User reported batch-generated audio had uneven volume across segments ""Ã‚Â
 fixed loudness drift across an entire batch (or any merge of separately-
 generated segments), not just within one synthesis.
 
@@ -254,7 +269,7 @@ into both the dashboard single-synthesis and the multi-segment batch merge
   hard-coded cap. Range 0""18 dB. Prevents amplifying a quiet segment into
   noise.
 - New kill-switch `TTS_OUTPUT_VOLUME_MATCH=false` if anything goes wrong.
-- Default deadband 0.5 ÃƒÆ’Â¢"Â ' 0.25 dB so more borderline cases actually get
+- Default deadband 0.5 ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 0.25 dB so more borderline cases actually get
   corrected.
 
 **Deploy:** `prod-20260626-23` (this commit).
@@ -263,7 +278,7 @@ into both the dashboard single-synthesis and the multi-segment batch merge
 
 User wanted per-request control over speaking style (normal vs anxious).
 VoxCPM2's `voice` field is unsafe (gets prepended to speakable text), so
-style is delivered via **temperature + CFG only** ""Â no spoken-English risk.
+style is delivered via **temperature + CFG only** ""Ã‚Â no spoken-English risk.
 
 **Presets (lib/voice-defaults.ts `VOICE_STYLE_PRESETS`):**
 
@@ -309,11 +324,11 @@ avoid Cloudflare 524 on long sync requests).
 
 **Prosody (Step 2) PASS:**
 
-| Style | cps | ÃƒÆ’Ã…Â½"Â vs normal |
+| Style | cps | ÃƒÆ’Ã†â€™Ãƒâ€¦Ã‚Â½"Ã‚Â vs normal |
 |-------|----:|------------:|
 | normal | 13.8 | baseline |
-| calm | 13.3 | ÃƒÆ’Â¢Ãƒâ€¹"Â '4.0% |
-| urgent | 13.4 | ÃƒÆ’Â¢Ãƒâ€¹"Â '3.0% (too close ""Â see tuning below) |
+| calm | 13.3 | ÃƒÆ’Ã†â€™Ã‚Â¢ÃƒÆ’Ã¢â‚¬Â¹"Ã‚Â '4.0% |
+| urgent | 13.4 | ÃƒÆ’Ã†â€™Ã‚Â¢ÃƒÆ’Ã¢â‚¬Â¹"Ã‚Â '3.0% (too close ""Ã‚Â see tuning below) |
 | excited | 16.8 | **+21.7%** |
 
 **Volume (Step 1) PARTIAL:** RMS CV 17.5% across styles. Peak CV 0.5%.
@@ -321,7 +336,7 @@ Cause: higher-temperature styles (`excited`) have wider dynamic range, so
 RMS drops even when peak stays at 0 dBFS. User chose to keep the dynamic
 range instead of flattening it.
 
-**Tuning deployed:** urgent 0.85 ÃƒÆ’Â¢"Â ' **0.95** so it's clearly audible vs
+**Tuning deployed:** urgent 0.85 ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' **0.95** so it's clearly audible vs
 normal. Step 4 rerun pending.
 
 **Deploy:** `prod-20260626-26` (urgent tuning).
@@ -329,7 +344,7 @@ normal. Step 4 rerun pending.
 ## Quiet-tail fix (2026-06-26, deployed)
 
 User reported audio `bd4f7108-...wav` (213s female) had RMS drop from ~5500
-to ~2800 in the last 15 seconds ""Â the trailing chunk was much quieter than
+to ~2800 in the last 15 seconds ""Ã‚Â the trailing chunk was much quieter than
 the rest. Median-based matching let the quiet tail stay quiet.
 
 **Fix:** `normalizeSegmentVolumes` now defaults to **75th-percentile
@@ -347,11 +362,11 @@ buzz/hiss baked into every chunk (peak ~27k even where RMS drops to 3k).
 
 **Root cause:** Reference clips are captured in real environments. At
 temperature 0.8+ VoxCPM2 leaks ref-clip broadband noise into every generation.
-Earlier "official 1.0/0.8"Ãƒâ€šÂ reset re-enabled that leak.
+Earlier "official 1.0/0.8"ÃƒÆ’Ã¢â‚¬Å¡Ã‚Â reset re-enabled that leak.
 
 **Fix:**
 - `TTS_UPSTREAM_DENOISE=true` default (VoxCPM2 ZipEnhancer on ref audio).
-- `TTS_OUTPUT_DENOISE=true` default + stronger NR (12 ÃƒÆ’Â¢"Â ' 14 dB).
+- `TTS_OUTPUT_DENOISE=true` default + stronger NR (12 ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 14 dB).
 - Lower temperatures back: preset **0.45**, clone **0.55**.
 
 **Deploy:** `prod-20260625-17`.
@@ -365,13 +380,13 @@ GitHub Actions `Deploy` workflow (`workflow_dispatch`, environment=production).
 - **New image:** `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260623-6`
 - Both `khmer-vox-web` (2 replicas) and `khmer-vox-worker` rolled out
   successfully; zero-downtime rollout.
-- Verified: `https://voxtts.online/api/health` ÃƒÆ’Â¢"Â ' 200, `store: postgres`.
+- Verified: `https://voxtts.online/api/health` ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 200, `store: postgres`.
 - Cloudflare remains active in front of production.
 
 **Infrastructure also deployed to production (was staging-only before):**
 - `voxtts-db-backup` CronJob (daily 03:00 UTC, 14-day retention, 20Gi PVC)
 - Manual backup test completed (~419MB dump, checksums OK)
-- Monitoring namespace: Prometheus, Grafana, Node Exporter ""Â all Running
+- Monitoring namespace: Prometheus, Grafana, Node Exporter ""Ã‚Â all Running
 
 **GitHub Actions secrets:** `VPS_HOST` now points to production
 `152.42.203.77` (was staging `178.128.103.120`). Deploy workflow updated to
@@ -388,7 +403,7 @@ Added `public/apple-touch-icon.png`, `icon-192.png`, `icon-512.png`, and
 changes: `npm run icons:generate`. Deployed as `prod-20260624-7`; verified
 200 on production for all icon URLs.
 
-## Saved Voices ""Â record option (2026-06-24, deployed)
+## Saved Voices ""Ã‚Â record option (2026-06-24, deployed)
 
 Added Upload / Record tabs on `/app/dashboard/voices`, matching the Voice Clone
 workspace. `voices-panel.tsx` uses `VoiceRecorder`; `POST /api/dashboard/voices`
@@ -397,8 +412,8 @@ accepts WebM and MP4 recordings in addition to MP3/WAV.
 - Commit: `562e312` on `main`
 - CI: passed (run `28084594563`)
 - Deployed as `prod-20260624-8` via GitHub Actions run `28084696450`
-- Verified: `/api/health` ÃƒÆ’Â¢"Â ' 200; `/app/dashboard/voices` ÃƒÆ’Â¢"Â ' 200 (auth required
-  for full UI ""Â confirm Upload/Record tabs while logged in)
+- Verified: `/api/health` ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 200; `/app/dashboard/voices` ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 200 (auth required
+  for full UI ""Ã‚Â confirm Upload/Record tabs while logged in)
 
 ## Audio seek scrubber fix (2026-06-24, deployed)
 
@@ -410,9 +425,9 @@ accepts `durationHint` from `result.outputSeconds`, and pauses during drag.
 - Commit: `26424b4` on `main`
 - CI: passed (run `28107811717`)
 - Deployed as `prod-20260624-9` via GitHub Actions run `28107949582`
-- Verified: `/api/health` ÃƒÆ’Â¢"Â ' 200
+- Verified: `/api/health` ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 200
 
-## Audio seek scrubber v2 ""Â Web Audio API (2026-06-24, deployed)
+## Audio seek scrubber v2 ""Ã‚Â Web Audio API (2026-06-24, deployed)
 
 First fix (blob URL + durationHint, `prod-20260624-9`) showed correct duration
 (05:39) but HTML `<audio>.currentTime` still could not seek long generated WAVs;
@@ -427,7 +442,7 @@ updates position, then resumes from that sample.
 
 - Commit: `41ab0ad` on `main`
 - Deployed as `prod-20260624-10` via run `28109020443`
-- Verified: `/api/health` ÃƒÆ’Â¢"Â ' 200
+- Verified: `/api/health` ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 200
 
 ## VoxCPM2 voice consistency across segments (2026-06-24, deployed)
 
@@ -442,7 +457,7 @@ prosody drifted between segments (happy/sad/deep/fast/slow) without style tags.
 
 **Fix (`lib/tts-provider.ts`, `lib/voice-defaults.ts`):**
 - Neutral style instructions on all preset/clone requests (no emotion drift).
-- Default `TTS_CLONE_TEMPERATURE` lowered 0.8 ÃƒÆ’Â¢"Â ' 0.55.
+- Default `TTS_CLONE_TEMPERATURE` lowered 0.8 ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 0.55.
 - **Chunk continuation** (default on): segment 2+ gets last ~6s of previous
   audio as `prompt_wav` + matching tail text; sequential generation when enabled.
   Disable: `TTS_CHUNK_CONTINUATION=false`. Tune tail: `TTS_CONTINUATION_PROMPT_SECONDS`.
@@ -486,7 +501,7 @@ admin dashboard.
 
 `AUDIT_FINDINGS.md` holds a verified deep audit (dated 2026-06-10): open
 security/billing findings with file:line, what is already correct, and a fix
-order. Read it before re-auditing ""Â it saves a full re-check. Re-verify the
+order. Read it before re-auditing ""Ã‚Â it saves a full re-check. Re-verify the
 file:line references first because later code changes can move them.
 
 ## Source Of Truth
@@ -1006,7 +1021,7 @@ slept, prioritizing the speed problem we'd been diagnosing (Modal cold starts).
 - Nothing committed, pushed, or deployed. Full writeup in
   `website-v2/V2_UPGRADES.md`.
 
-## Website v2 ""Â Session 2 full improvement pass (2026-06-20 ÃƒÆ’Â¢"Â ' 06-21)
+## Website v2 ""Ã‚Â Session 2 full improvement pass (2026-06-20 ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 06-21)
 
 Follow-up to the v2 build. User asked to keep improving v2 with remaining
 budget. Mapped the codebase with parallel explore agents, then shipped 5 batches
@@ -1041,12 +1056,12 @@ Still deferred (need GPU budget / cost decision): per-chunk retry, ffmpeg merge,
 min_containers, batch concurrency, streaming. Full writeup appended to
 `website-v2/V2_UPGRADES.md` (Session 2 section). Nothing committed/pushed/deployed.
 
-## Website v2 ""Â Session 3 (2026-06-21): boundaries, PWA, structured data
+## Website v2 ""Ã‚Â Session 3 (2026-06-21): boundaries, PWA, structured data
 
 Continued v2 improvements (same discipline: useful, build-verified, low-risk;
-NO GPU/token spend). Checked existing files first ""Â error.tsx/not-found.tsx/
+NO GPU/token spend). Checked existing files first ""Ã‚Â error.tsx/not-found.tsx/
 loading.tsx already existed, did NOT duplicate. Ends clean: tsc 0 errors,
-`eslint .` 0 errors (warnings 67ÃƒÆ’Â¢"Â '65), `next build` exit 0.
+`eslint .` 0 errors (warnings 67ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â '65), `next build` exit 0.
 
 - Rebranded off-brand `app/not-found.tsx` + `app/error.tsx` from soft-rounded
   design to the site's neo-brutalist system (thick #1a1a1a borders, hard
@@ -1062,12 +1077,12 @@ loading.tsx already existed, did NOT duplicate. Ends clean: tsc 0 errors,
 - Conservative dead-code cleanup: removed BATCH_ITEM_DELAY_MS (batch-service.ts)
   + unused parseErr catch binding (modal-accounts.ts). LEFT `source` param of
   exported resolveGenerationCloneCreditRate (live billing call site) and
-  tokenOutput in modal-deployer.ts (sensitive deploy infra) ""Â risk > reward.
+  tokenOutput in modal-deployer.ts (sensitive deploy infra) ""Ã‚Â risk > reward.
 
 Session 3 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
 pushed/deployed.
 
-## Website v2 ""Â Session 9 (2026-06-21): skip-to-content link (WCAG 2.4.1)
+## Website v2 ""Ã‚Â Session 9 (2026-06-21): skip-to-content link (WCAG 2.4.1)
 
 Continued v2 (same discipline; NO GPU/token spend). tsc 0 errors, `eslint .`
 0 errors (64 warnings), `next build` exit 0.
@@ -1085,14 +1100,14 @@ Continued v2 (same discipline; NO GPU/token spend). tsc 0 errors, `eslint .`
 Session 9 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
 pushed/deployed.
 
-## Website v2 ""Â Session 8 (2026-06-21): finish public-page a11y pass
+## Website v2 ""Ã‚Â Session 8 (2026-06-21): finish public-page a11y pass
 
 Continued v2 (same discipline; NO GPU/token spend). tsc 0 errors, `eslint .`
 0 errors (64 warnings), `next build` exit 0.
 
 - Completed public decorative-icon pass: aria-hidden on 6 icons across
   page.tsx (arrow_forward, description), docs/page.tsx (arrow_forward, info),
-  payments + payment-guide (qr_code_2). All paired with visible text ÃƒÆ’Â¢"Â ' truly
+  payments + payment-guide (qr_code_2). All paired with visible text ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' truly
   decorative. Read each context before marking.
 - Now every PUBLIC surface (home, header, docs, payments, payment-guide + 4
   auth forms) has clean icon semantics. Authenticated dashboard still
@@ -1101,7 +1116,7 @@ Continued v2 (same discipline; NO GPU/token spend). tsc 0 errors, `eslint .`
 Session 8 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
 pushed/deployed.
 
-## Website v2 ""Â Session 7 (2026-06-21): a11y in high-traffic public components
+## Website v2 ""Ã‚Â Session 7 (2026-06-21): a11y in high-traffic public components
 
 Continued v2 (same discipline; NO GPU/token spend). tsc 0 errors, `eslint .`
 0 errors (64 warnings, down from 65), `next build` exit 0.
@@ -1111,16 +1126,16 @@ Continued v2 (same discipline; NO GPU/token spend). tsc 0 errors, `eslint .`
 - Real defect: icon-only play/pause button in home-playground.tsx had no
   accessible name. Added state-aware aria-label + aria-hidden on glyph. Marked
   other decorative icons in that file aria-hidden. Removed unused `e` catch
-  binding (65 ÃƒÆ’Â¢"Â ' 64 warnings).
+  binding (65 ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 64 warnings).
 - public-header.tsx: added aria-label to icon-only open/close menu buttons +
   aria-hidden on glyphs.
 - Deliberately did NOT sweep authenticated dashboard components (billing,
-  checkout, analytics) ""Â behind login, lower traffic, need per-icon judgment.
+  checkout, analytics) ""Ã‚Â behind login, lower traffic, need per-icon judgment.
 
 Session 7 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
 pushed/deployed.
 
-## Website v2 ""Â Session 6 (2026-06-21): security headers review
+## Website v2 ""Ã‚Â Session 6 (2026-06-21): security headers review
 
 Continued v2 (same discipline; NO GPU/token spend). tsc 0 errors, `eslint .`
 0 errors (65 pre-existing warnings), `next build` exit 0.
@@ -1135,7 +1150,7 @@ Continued v2 (same discipline; NO GPU/token spend). tsc 0 errors, `eslint .`
 Session 6 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
 pushed/deployed.
 
-## Website v2 ""Â Session 5 (2026-06-21): sitemap audit + payment-proof noindex
+## Website v2 ""Ã‚Â Session 5 (2026-06-21): sitemap audit + payment-proof noindex
 
 Continued v2 (same discipline: useful, build-verified, low-risk; NO GPU/token
 spend). Ends clean: tsc 0 errors, `eslint .` 0 errors (65 pre-existing warnings),
@@ -1143,7 +1158,7 @@ spend). Ends clean: tsc 0 errors, `eslint .` 0 errors (65 pre-existing warnings)
 
 - Audited `app/sitemap.ts` against the actual filesystem (globbed every
   page.tsx). Already lists all 10 public marketing routes; `app/app/*` +
-  `/payment-proof` correctly excluded. Made NO change ""Â no busywork.
+  `/payment-proof` correctly excluded. Made NO change ""Ã‚Â no busywork.
 - Real finding: `/payment-proof` is disallowed in robots.txt (crawl), but that
   doesn't prevent indexing if the signed-token URL leaks externally. Added
   `export const metadata: Metadata = { robots: { index: false, follow: false } }`
@@ -1152,7 +1167,7 @@ spend). Ends clean: tsc 0 errors, `eslint .` 0 errors (65 pre-existing warnings)
 Session 5 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
 pushed/deployed.
 
-## Website v2 ""Â Session 4 (2026-06-21): auth a11y + SEO consistency
+## Website v2 ""Ã‚Â Session 4 (2026-06-21): auth a11y + SEO consistency
 
 Continued v2 improvements (same discipline: useful, build-verified, low-risk;
 NO GPU/token spend). Read all 4 auth forms first to find real gaps. Ends clean:
@@ -1171,7 +1186,7 @@ tsc 0 errors, `eslint .` 0 errors (65 warnings, pre-existing), `next build` exit
 Session 4 writeup appended to website-v2/V2_UPGRADES.md. Nothing committed/
 pushed/deployed.
 
-## Website v2 MERGED into main (2026-06-21) ""Â single source of truth
+## Website v2 MERGED into main (2026-06-21) ""Ã‚Â single source of truth
 
 The `website-v2/` sibling worktree (a robocopy snapshot of `4d68aed` plus all
 the uncommitted Session 1-12 improvements on top) has been merged back into the
@@ -1180,7 +1195,7 @@ main tree and the v2 folder deleted. There is now ONE source of truth. The
 files now live at the parent paths (e.g. `lib/prewarm.ts`, `app/sitemap.ts`).
 
 - Commit: `59657c7` "feat: merge v2 improvements into main (prewarm, SEO,
-  a11y, PWA, structured data, hardening)" ""Â 67 files changed, +6657 / -4575.
+  a11y, PWA, structured data, hardening)" ""Ã‚Â 67 files changed, +6657 / -4575.
 - What shipped in the merge (all previously v2-only, now in main):
   - 8 NEW files: `lib/prewarm.ts`, `lib/site-url.ts`, `app/api/prewarm/route.ts`,
     `app/sitemap.ts`, `app/robots.ts`, `app/manifest.ts`, `app/global-error.tsx`,
@@ -1199,7 +1214,7 @@ files now live at the parent paths (e.g. `lib/prewarm.ts`, `app/sitemap.ts`).
   v2 folder deleted after verification (~732 MB reclaimed).
 - Pre-merge verification of v1's dead symbols (safe to delete, confirmed via
   grep): `audioSpeed`/`audioPitch`/`audioVolume` state, `GenerationErrorResponse`
-  type, `BATCH_ITEM_DELAY_MS`, `CodeBlock` `dark` param ""Â all declared but never
+  type, `BATCH_ITEM_DELAY_MS`, `CodeBlock` `dark` param ""Ã‚Â all declared but never
   referenced in v1.
 - Post-merge verification: `npx tsc --noEmit` 0 errors; source-only
   `npx eslint app lib scripts` 0 errors / 0 warnings; `npm run build` exit 0,
@@ -1215,7 +1230,7 @@ files now live at the parent paths (e.g. `lib/prewarm.ts`, `app/sitemap.ts`).
 - PREWARM IS ON BY DEFAULT but only takes effect once deployed AND a user opens
   the dashboard. To keep it OFF in prod until validated, set
   `TTS_PREWARM_ENABLED=false` on the deployment env at deploy time. No env change
-  is needed to keep current prod behavior ""Â prod only changes when you deploy.
+  is needed to keep current prod behavior ""Ã‚Â prod only changes when you deploy.
 - Personal disk-utility scripts (`scripts/scan-*.ps1`, `check-vhdx.ps1`,
   `delete-vhdx.ps1`) were intentionally left untracked and are NOT in the commit.
 
@@ -1227,7 +1242,7 @@ live test of the merged code.
 - Image: `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260621-v2merge-1`
   (digest `sha256:e00f5ad1...`, pushed to GHCR).
 - Built locally via the standard multi-stage Dockerfile (standalone output,
-  `scripts/sanitize-standalone.mjs` ran ""Â the `pg-*` alias copies confirm it).
+  `scripts/sanitize-standalone.mjs` ran ""Ã‚Â the `pg-*` alias copies confirm it).
   `.dockerignore` correctly excluded `.env`/secrets/`data/store.json`.
 - Staging VPS runtime = k3s (single node, Ubuntu 24.04, containerd), NOT plain
   docker. Cluster: 1 web replica + 1 worker + 1 postgres + a `fixer-http-proxy`
@@ -1236,7 +1251,7 @@ live test of the merged code.
   (000); use `http://localhost:30080` on-box to reach the app.
 - Deploy method: built locally, `docker push` to GHCR, then
   `kubectl -n khmer-vox set image deployment/khmer-vox-{web,worker}`.
-  `imagePullPolicy: Always` pulled the new tag from GHCR. Zero downtime ""Â old
+  `imagePullPolicy: Always` pulled the new tag from GHCR. Zero downtime ""Ã‚Â old
   pod stayed Running/Terminating until the new one was Ready 1/1.
 - Previous staging image was `staging-20260619-mp3-direct-1` (June 19, MP3 era,
   pre-WAV-switch, pre-v2-merge). That tag is the ROLLBACK tag.
@@ -1244,14 +1259,14 @@ live test of the merged code.
   `khmer-vox-web-5b85d49b6b-kbk7b` and `khmer-vox-worker-c78665dff-6nr67`,
   Running 1/1, image confirmed = `staging-20260621-v2merge-1`.
 - Verified on-box via `http://localhost:30080`:
-  - `/api/health` 200 ÃƒÆ’Â¢"Â ' `{"status":"ok","store":"postgres","checks":{"server":{"status":"ok"}}}` (DB connectivity OK).
-  - `/sitemap.xml` 200, `/robots.txt` 200 (correct allow/disallow), `/manifest.webmanifest` 200 ""Â all three NEW routes that did NOT exist on the previous staging image, confirming the v2 merge landed.
+  - `/api/health` 200 ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' `{"status":"ok","store":"postgres","checks":{"server":{"status":"ok"}}}` (DB connectivity OK).
+  - `/sitemap.xml` 200, `/robots.txt` 200 (correct allow/disallow), `/manifest.webmanifest` 200 ""Ã‚Â all three NEW routes that did NOT exist on the previous staging image, confirming the v2 merge landed.
   - `/` 200, `/docs` 200.
 - PREWARM status on staging: code is in the image and defaults to enabled, but
   only fires when a user opens the dashboard. No env change was made, so it is
   active. If it misbehaves, disable with
   `kubectl -n khmer-vox set env deployment/khmer-vox-web TTS_PREWARM_ENABLED=false` (and same for worker) + rollout.
-- PROD (voxtts.online, 152.42.203.77) is UNCHANGED ""Â still on
+- PROD (voxtts.online, 152.42.203.77) is UNCHANGED ""Ã‚Â still on
   `prod-20260618-2`. This deploy was staging-only. Promoting to prod is a
   separate decision with its own `prod-*` tag.
 - SSH credentials for the staging VPS are NOT stored in this file or anywhere
@@ -1277,9 +1292,9 @@ reference voice) against the running dev server.
 - IMPORTANT FINDING (not a code bug): the first zip download returned HTTP 404
   with an HTML body (the app shell), meaning Next never reached the download
   route handler. ROOT CAUSE: the `.next` dev build state was corrupted because
-  earlier dev servers were force-killed (taskkill) mid-compile ""Â same cause as
+  earlier dev servers were force-killed (taskkill) mid-compile ""Ã‚Â same cause as
   the corrupted `.next/dev/types/routes.d.ts` tsc errors. FIX/verify: stopped
-  dev, deleted `.next`, restarted fresh ""Â the SAME job's download then returned
+  dev, deleted `.next`, restarted fresh ""Ã‚Â the SAME job's download then returned
   200 application/zip, 1,276,384 bytes, 10 files. All 10 WAVs valid RIFF/WAVE
   mono 24 kHz 16-bit. LESSON: prefer a graceful dev-server stop, or `rm -rf
   .next` after a force-kill, before trusting route 404s in dev.
@@ -1310,7 +1325,7 @@ Update on 2026-06-20 (evening, after commit 035b88e):
   backfill the size fields and writes placeholders. The app's own WAV readers
   clamp this (so in-app playback/duration worked), but EXTERNAL consumers (audio
   editors, browser duration readouts, ASR pipelines) trust the header and see a
-  malformed/wrongly-sized file ""Â which defeats the whole point of shipping clean
+  malformed/wrongly-sized file ""Ã‚Â which defeats the whole point of shipping clean
   WAV. Symptom in the test: local WAV parser reported a garbage 89478s duration.
 - FIX (`lib/tts-provider.ts`): added `finalizeDeliveredWav(bytes)` which, for a
   PCM-16 WAV, rebuilds a clean canonical 44-byte header with correct RIFF/data
@@ -1325,14 +1340,14 @@ Update on 2026-06-20 (evening, after commit 035b88e):
   `TTS_UPSTREAM_URL`. Loader now strips both quote styles (used `[\s\S]` not the
   `s` regex flag, since tsconfig targets ES2017). Harness-only; production env
   is not quoted, so this was never a prod issue.
-- VERIFIED after fix: re-ran the generation ""Â local WAV parser now reports
+- VERIFIED after fix: re-ran the generation ""Ã‚Â local WAV parser now reports
   11.94s, exactly matching the provider-reported duration. Direct byte check:
   RIFF size 573156 (= bytes-8) and data size 573120 (= bytes-44) both correct,
   fmt mono / 24000 Hz / 16-bit. `npx tsc --noEmit` clean, `npm run lint` 0
   errors / 82 pre-existing warnings, `npm run build` compiled (89 static pages).
 - STATUS: code fix is local-only, NOT yet committed and NOT deployed (commit
   035b88e was just before this). The delivered-WAV bug affects every generation
-  on the WAV path, so this should ship WITH the WAV switch ""Â do not deploy
+  on the WAV path, so this should ship WITH the WAV switch ""Ã‚Â do not deploy
   035b88e without this fix on top.
 
 ### Real end-to-end website API verification (2026-06-20 evening)
@@ -1343,10 +1358,10 @@ layer (API-key auth, token billing, rate limit, generations row). Ran a TRUE
 end-to-end test through the running dev server's public API:
 
 - No `DATABASE_URL` in `.env.backup`, so local dev uses the JSON file store
-  (NOT production Postgres) ""Â safe to seed and test locally. Loaded the Modal
+  (NOT production Postgres) ""Ã‚Â safe to seed and test locally. Loaded the Modal
   upstream pool env into the shell session only (no secrets written to disk).
 - Added `scripts/seed-paid-api-user.mts`: creates a paid user (approved Creator
-  order ÃƒÆ’Â¢"Â ' `hasPaidApiAccess`), 10,100 tokens, and a fresh API key. The store
+  order ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' `hasPaidApiAccess`), 10,100 tokens, and a fresh API key. The store
   only keeps the key HASH, so the raw key is captured to
   `test-output/seed-key.txt` (gitignored).
 - Added `scripts/test-website-api-call.mts`: real HTTP `POST
@@ -1354,7 +1369,7 @@ end-to-end test through the running dev server's public API:
   Khmer text, then validates the response + WAV header.
 - RESULT (against `npm run dev` on localhost:3000): HTTP 200, `audio/wav`,
   559.7 KB, `X-Output-Format: wav`, `X-Credits-Charged: 18`,
-  `X-Remaining-Tokens: 10082` (billing worked: 10100ÃƒÆ’Â¢"Â '10082), generation id
+  `X-Remaining-Tokens: 10082` (billing worked: 10100ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â '10082), generation id
   returned, and the WAV header was CORRECT through the real route too
   (riffSize 573156 OK, dataSize 573120 OK, mono 24 kHz 16-bit, ~11.94s). This
   confirms the `finalizeDeliveredWav` fix holds on the actual delivery path,
@@ -1368,7 +1383,7 @@ end-to-end test through the running dev server's public API:
 Update on 2026-06-20 (evening):
 
 - Ran the full verification suite on the uncommitted WAV-switch worktree.
-  `next build` reported `ÃƒÆ’Â¢Ãƒâ€¦"" Compiled successfully` for the whole app/lib tree,
+  `next build` reported `ÃƒÆ’Ã†â€™Ã‚Â¢ÃƒÆ’Ã¢â‚¬Â¦"" Compiled successfully` for the whole app/lib tree,
   so the application code is clean. The only failures were `npx tsc --noEmit`
   (exit 2) and `npm run build` (TypeScript step) plus 1 lint error, all from a
   single untracked dev script left by the previous agent:
@@ -1392,7 +1407,7 @@ Update on 2026-06-20 (evening):
   WAV switch, password reset flow, batch merged-audio download, the verification
   fix, deploy helper scripts, and WAV test scripts. Intentionally EXCLUDED the
   user's personal disk-utility scripts (`scripts/scan-*.ps1`,
-  `scripts/check-vhdx.ps1`, `scripts/delete-vhdx.ps1`) ""Â they remain untracked.
+  `scripts/check-vhdx.ps1`, `scripts/delete-vhdx.ps1`) ""Ã‚Â they remain untracked.
 - NOT pushed and NOT deployed. Commit is local on `main` only.
 - HOUSEKEEPING (done 2026-06-20 evening):
   - Removed the stray `nul` file. It was a Windows reserved device name, so
@@ -1471,7 +1486,7 @@ Update on 2026-06-20:
   - `lib/audio-api.ts`: `PUBLIC_AUDIO_OUTPUT_FORMAT="wav"`,
     `PUBLIC_AUDIO_CONTENT_TYPE="audio/wav"`, and
     `isUnsupportedPublicAudioOutputFormat()` is now a no-op (the public output
-    format request field is accepted for compatibility and ignored ""Â the API
+    format request field is accepted for compatibility and ignored ""Ã‚Â the API
     always returns WAV regardless of what the caller sends).
   - `lib/tts-provider.ts`: renamed `normalizeToPublicMp3` ->
     `normalizeToPublicFormat` (WAV pass-through, MP3 decoded back to WAV);
@@ -1485,7 +1500,7 @@ Update on 2026-06-20:
   - `lib/business-webhook-test.ts`: webhook test fixture now references WAV.
   - UI/docs: `speech-workspace`, `batch-jobs-panel`, `app/docs/page.tsx`, and
     `app/page.tsx` were updated to advertise WAV public output. Voice library
-    upload still accepts MP3 and WAV reference samples (input only ""Â that path
+    upload still accepts MP3 and WAV reference samples (input only ""Ã‚Â that path
     is unaffected by the public output switch).
   - `.env.example`: comments updated. `TTS_UPSTREAM_RESPONSE_FORMAT` defaults
     to `wav`. `TTS_OUTPUT_REWRITE_MP3_HEADER`, `TTS_PUBLIC_MP3_BITRATE`, and
@@ -1499,7 +1514,7 @@ Update on 2026-06-20:
 - The `voice` reference upload path still accepts MP3 inputs (saved voice
   library and clone reference samples). Only the public OUTPUT format changed.
 - Verification (local, on this branch): `npx tsc --noEmit` clean,
-  `npm run lint` 0 errors (existing warnings only ""Â including a few new
+  `npm run lint` 0 errors (existing warnings only ""Ã‚Â including a few new
   unused-symbol warnings on now-dormant MP3 helpers in `lib/tts-provider.ts`
   like `concatMp3Buffers`, `publicMp3RoundTripQualityIssue`,
   `rewriteMp3WithSeekableHeader`, and `concatPcm16WavBuffers` until the WAV
@@ -1557,12 +1572,12 @@ Update on 2026-06-17:
   state including `rawKey`, so the reveal panel (meant to last 5 min) vanished
   within ~1s. The 5-minute timer never got a chance.
 - FIX (3 files, web-only):
-  1. app/app/dashboard/api/api-dashboard-client.tsx ""Â removed the destructive
+  1. app/app/dashboard/api/api-dashboard-client.tsx ""Ã‚Â removed the destructive
      `key={...}` prop from <ApiTabs>.
-  2. app/app/dashboard/api/api-tabs.tsx ""Â added `useEffect(() =>
+  2. app/app/dashboard/api/api-tabs.tsx ""Ã‚Â added `useEffect(() =>
      setApiKeys(initialKeys), [initialKeys])` to sync server data without a
      remount.
-  3. app/app/dashboard/key-manager.tsx ""Â added matching
+  3. app/app/dashboard/key-manager.tsx ""Ã‚Â added matching
      `useEffect(() => setKeys(initialKeys), [initialKeys])` so the key list
      still updates on polls/invalidation while the separate `rawKey` reveal
      state (and its timer) survive.
@@ -1584,7 +1599,7 @@ Update on 2026-06-17:
   the reference noise/instability.
 - Attempted a local "best config" pipeline test (denoise + buzz-gate) but the
   local tsx harness kept crashing with ENVIRONMENTAL Windows errors
-  (0xC0000409 stack overflow, 0xC0000142 DLL init, write EOF) ""Â NOT code bugs
+  (0xC0000409 stack overflow, 0xC0000142 DLL init, write EOF) ""Ã‚Â NOT code bugs
   (same harness succeeded earlier today at 176s). Likely antivirus/OS
   interference with node spawning ffmpeg repeatedly. Also learned denoise is a
   per-request flag (cannot be forced via env), so it is not a deployable config.
@@ -1599,7 +1614,7 @@ Update on 2026-06-17:
   TTS_AUDIO_TONAL_DELIVERY_BOOST_DB-` (or set to 0).
 - NEXT: user to generate a clone through the live site; measure result. If buzz
   drops, keep; else revert. HONEST CAVEAT: a clean reference clip remains the
-  single biggest lever ""Â no gate can make a noisy reference produce clean audio.
+  single biggest lever ""Ã‚Â no gate can make a noisy reference produce clean audio.
 
 ## prod-20260617-3 Deploy (voice library lookup fix + buzz-aware gate code)
 
@@ -1611,7 +1626,7 @@ Update on 2026-06-17:
   `voice` field (e.g. `male_800e`) alongside a reference audio to
   `/api/v1/audio/clone`. The generation-service treated unrecognized voice
   strings as user voice library IDs and tried a DB lookup, which failed 404.
-- Fix: one-line change in `lib/generation-service.ts` ""Â skip the library lookup
+- Fix: one-line change in `lib/generation-service.ts` ""Ã‚Â skip the library lookup
   if `cloneSample` is already provided in the request. The `voice` field becomes
   a display name only. Backward compatible, no caller changes needed.
 - Also includes the dormant buzz-aware chunk gate code (env-gated off by default
@@ -1754,7 +1769,7 @@ Update on 2026-06-17:
   (it lives on the deployment spec, confirmed via printenv = 20).
 - IMPORTANT: the new denoise stage ships OFF by default (`TTS_OUTPUT_DENOISE`
   unset). Real A/B testing showed it does not help at default settings, so this
-  deploy is inert for audio output ""Â it only gets the code into prod. The live
+  deploy is inert for audio output ""Ã‚Â it only gets the code into prod. The live
   audio-quality improvement is still driven by `TTS_INFERENCE_TIMESTEPS=20`.
 
 ## TTS_INFERENCE_TIMESTEPS=20 in prod (real A/B-proven noise fix)
@@ -2375,7 +2390,7 @@ Follow-up on 2026-06-12:
 - Investigated repeated staging history failures showing
   `Upstream generated near-silent audio`. The latest failed `generations`
   rows were not real text failures: they had `input_chars = 1` and
-  `input_preview = "ÃƒÆ’Â¡Ãƒâ€¦Â¸"Â"`, so the dashboard splitter had created standalone
+  `input_preview = "ÃƒÆ’Ã†â€™Ã‚Â¡ÃƒÆ’Ã¢â‚¬Â¦Ã‚Â¸"Ã‚Â"`, so the dashboard splitter had created standalone
   punctuation-only TTS items. VoxCPM2 returned no speech for those items.
 - Added `hasSpeakableText()` in `lib/speech-text-sanitizer.ts`; text that
   contains only punctuation/symbols now normalizes to empty text before
@@ -3131,7 +3146,7 @@ cluster, not in the manifest template). Persisted it into
 both `image:` tags in that file from `:latest` to `:prod-20260614-17` so a
 future apply does NOT revert the running image. Backups on host:
 `voxtts-populated.yaml.bak-20260614` and `.bak2-20260614`. Edits were done with
-a small remote python script (NOT a PowerShell `>` redirect ""Â that corrupted the
+a small remote python script (NOT a PowerShell `>` redirect ""Ã‚Â that corrupted the
 file with UTF-16 control chars on the first attempt; caught via
 `kubectl apply --dry-run=client` and restored from backup). Manifest now passes
 dry-run. NOTE: manifest was NOT applied; live cluster already correct. The
@@ -3172,7 +3187,7 @@ spoofed XFF):
   / argon2 / worker-thread hashing and/or more CPU + web replicas.
 
 Staging fully cleaned up (NodePort removed, image tar deleted local+remote).
-NOT deployed to production yet ""Â awaiting user decision. Prod still on
+NOT deployed to production yet ""Ã‚Â awaiting user decision. Prod still on
 prod-20260614-16. `lib/security.ts` change is uncommitted in git with the rest
 of the day's work. New helper scripts: scripts/loadtest.js, smoke-staging.sh,
 verify-auth.sh.
@@ -3204,7 +3219,7 @@ Results:
 - ROOT CAUSE: `lib/security.ts` `hashPassword` uses `bcryptjs` (pure-JS,
   event-loop-blocking) at cost factor 12 (~300-500ms CPU/hash on this box).
   Concurrent signups serialize on 2 cores and blow past the 60s request
-  timeout. NOT a crash ""Â 0 pod restarts, memory steady ~170Mi, node CPU was
+  timeout. NOT a crash ""Ã‚Â 0 pod restarts, memory steady ~170Mi, node CPU was
   not even maxed in the snapshot (work was bursty/serialized in-process).
 - e2e generation: of 100 jobs, enqueue was 100% ok (queue accepts work fine),
   but only 10 completed within the ~6m window; 76 failed/timed out. job_e2e
@@ -3217,14 +3232,14 @@ Recommendations (not yet implemented):
 1. Replace `bcryptjs` with native `bcrypt` OR `argon2`, and/or lower cost to
    10, and/or run hashing in a worker thread. Biggest single win for signup.
 2. Add HorizontalPodAutoscaler / more web replicas; current prod is 2 web
-   replicas on a 2-core node ""Â CPU-bound auth will serialize.
+   replicas on a 2-core node ""Ã‚Â CPU-bound auth will serialize.
 3. Scale the worker + Modal capacity (more warm containers / keep_warm) if real
    concurrent generation demand approaches dozens; current realistic
    throughput is a few concurrent generations, others queue 2-5 min.
 4. Consider raising the 60s request timeout for /api/auth/signup or making
    signup hashing non-blocking.
 
-NOTE: This is local/ops testing only ""Â no app code changed yet. Staging fully
+NOTE: This is local/ops testing only ""Ã‚Â no app code changed yet. Staging fully
 reverted (NodePort removed, TTS pool back to placeholder, 0 restarts). Prod
 untouched throughout. Earlier UI/OG/favicon prod deploys this day remain
 uncommitted in git.
@@ -3287,13 +3302,13 @@ returns 200 `image/svg+xml`, all 3 app pods on new tag. Still uncommitted in git
 
 Fixed the broken/doubled-border look in the Audio Result panel at the narrow
 (~300px) sidebar width. Cause: deeply nested neo-brutalist hard-shadow boxes all
-casting the same down-right offset shadow competed with each other ""Â outer
+casting the same down-right offset shadow competed with each other ""Ã‚Â outer
 `aside` (border-4 + 6px shadow) > green result box (border-4 + 4px shadow) >
 `WaveformPlayer` (border-4 + 4px shadow) > download button (border-4). The
 stacked offsets collided, producing the detached bottom line + double-border
 artifacts at bottom/right.
 
-Fix (`app/app/dashboard/speech-workspace.tsx`) ""Â establish a clear shadow
+Fix (`app/app/dashboard/speech-workspace.tsx`) ""Ã‚Â establish a clear shadow
 hierarchy so only the outer card has the heavy shadow and inner boxes step down:
 - Green result container: padding `p-5`->`p-4`, shadow `4px`->`2px`.
 - `WaveformPlayer`: border `4`->`2`, padding `p-3 sm:p-4`->`p-3`, shadow
@@ -3873,7 +3888,7 @@ sha256:5057986eb524f94e498c73d5c9a885c21dd73ae49c16624c0bcd868c1c4e8b90),
 typecheck + build clean, pushed to GHCR, rolled out to web + worker
 (zero downtime, 0 restarts). Rollback target = `prod-20260615-5`.
 
-Note: confirmed the merged-history feature itself works on prod ""Â a completed
+Note: confirmed the merged-history feature itself works on prod ""Ã‚Â a completed
 5-chunk dashboard_merge job had its merged record (id = job id, has audio,
 segment_of_job_id null) plus 5 hidden segment rows. The earlier screenshot was
 taken mid-run before completion.
@@ -3887,11 +3902,11 @@ Rollback target = `prod-20260615-4`.
 
 Changes shipped:
 
-1. **Merged dashboard history** ""Â long multi-chunk TTS/clone generations now
+1. **Merged dashboard history** ""Ã‚Â long multi-chunk TTS/clone generations now
    save one full merged audio row in History (play + download). Per-chunk rows
    are tagged with `segment_of_job_id` and hidden from history/list/stats.
    Runtime migration adds `generations.segment_of_job_id` + index on startup.
-2. **Refresh persistence** ""Â Generate Speech and Voice Cloning panels restore
+2. **Refresh persistence** ""Ã‚Â Generate Speech and Voice Cloning panels restore
    completed audio (or reconnect to an in-flight job) after page reload via
    `workspace-persistence.ts`.
 
@@ -3954,8 +3969,8 @@ responses, rate limits). The retry mechanism was too conservative.
 ### Changes Made
 
 **`lib/batch-service.ts`:**
-- Increased `BATCH_ITEM_MAX_ATTEMPTS` default: 3 ÃƒÆ’Â¢"Â ' 5 (more retry chances)
-- Decreased `BATCH_ITEM_RETRY_BASE_MS` default: 30,000ms ÃƒÆ’Â¢"Â ' 10,000ms (faster retries)
+- Increased `BATCH_ITEM_MAX_ATTEMPTS` default: 3 ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 5 (more retry chances)
+- Decreased `BATCH_ITEM_RETRY_BASE_MS` default: 30,000ms ÃƒÆ’Ã†â€™Ã‚Â¢"Ã‚Â ' 10,000ms (faster retries)
   - New backoff: 10s, 20s, 40s, 80s, 160s (was 30s, 60s, 120s, 240s, 300s)
 - Added `isTransientBatchError()` function for smart error classification:
   - **Transient** (retry up to 5x): timeout, empty audio, near-silent, upstream/Modal errors, network issues, HTTP 502/503/504, rate limits
@@ -3965,7 +3980,7 @@ responses, rate limits). The retry mechanism was too conservative.
 **`app/app/dashboard/speech-workspace.tsx`:**
 - Improved partial job error message: shows count of failed segments
 - Before: `"Generated 4 of 5 segments. Retry failed lines from Batch Jobs."`
-- After: `"Generated 4 of 5 segments. 1 failed ""Â retry from Batch Jobs."`
+- After: `"Generated 4 of 5 segments. 1 failed ""Ã‚Â retry from Batch Jobs."`
 
 **`.env.example`:**
 - Updated default values for `BATCH_ITEM_MAX_ATTEMPTS` and `BATCH_ITEM_RETRY_BASE_MS`
@@ -4007,7 +4022,7 @@ making the merged audio sound unnatural.
 3. Added volume normalization across segments before merging:
    - Measures RMS (loudness) of each segment
    - Calculates target level (median of all segments)
-   - Adjusts each segment to match target (ÃƒÆ’"Å¡Ãƒâ€šÂ±6dB limit)
+   - Adjusts each segment to match target (ÃƒÆ’Ã†â€™"Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ã‚Â±6dB limit)
 
 **Files Changed**:
 - `lib/tts-provider.ts`: Added `normalizeSegmentVolumes()`, `measureMp3Rms()`, `applyMp3Gain()`
