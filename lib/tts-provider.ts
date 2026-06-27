@@ -417,7 +417,7 @@ function isEmptyOrHeaderOnlyWav(bytes: Uint8Array): boolean {
     if (chunkDataOffset + declaredSize > buffer.length) break;
     offset = chunkDataOffset + declaredSize + (declaredSize % 2);
   }
-  // No data chunk at all → also empty.
+  // No data chunk at all â†’ also empty.
   return true;
 }
 
@@ -1436,7 +1436,7 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
   // getSteadyTonalStats) let chunks full of 1-1.75s buzz sections through to
   // the final MP3. Reject earlier so the retry/temperature-bump path can
   // regenerate the chunk instead of delivering buzzing audio.
-  // 2026-06-25: relaxed 1.0 → 1.4 because retried chunks at 0.7 temperature
+  // 2026-06-25: relaxed 1.0 â†’ 1.4 because retried chunks at 0.7 temperature
   // produce ~1.2s stuck-tonal runs that pass the audio but get rejected on
   // the first attempt, cascading into batch-item failures ("2 of 4 failed").
   const maxSteadyTonalSeconds = readNumericEnv(
@@ -1482,8 +1482,8 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
   // emits a 1-3 kHz tone that reads as a normal zero-crossing rate but is
   // audibly a harsh mechanical sound. Reject any chunk with a long run of it
   // so the silence-retry path regenerates the chunk.
-  // 2026-06-25: relaxed 0.5 → 0.9 to match the same root-cause fix as
-  // maxSteadyTonalSeconds — high-frequency buzz often co-occurs with stuck
+  // 2026-06-25: relaxed 0.5 â†’ 0.9 to match the same root-cause fix as
+  // maxSteadyTonalSeconds â€” high-frequency buzz often co-occurs with stuck
   // tonal runs and we don't want a chunk to fail on the first attempt.
   const maxHighDominantFreqSeconds = readNumericEnv(
     "TTS_AUDIO_MAX_HIGH_DOMINANT_FREQ_SECONDS",
@@ -1750,7 +1750,7 @@ async function normalizeSegmentVolumes(
     // - Default: median RMS across segments (good when most segments are
     //   well-produced and we just need to fix outliers).
     // - Default: the LOUDEST segment (75th-ish percentile via upper-mid of
-    //   sorted list) — this prevents a single quiet segment (often the last
+    //   sorted list) â€” this prevents a single quiet segment (often the last
     //   one due to VoxCPM2 trailing silence) from pulling the whole file
     //   down. The 6 dB gain cap keeps us from amplifying noise.
     // - "median" mode: target the median. Set TTS_OUTPUT_VOLUME_REFERENCE=median
@@ -2219,7 +2219,7 @@ function applyWavHeadFadeIn(bytes: Uint8Array, fadeMs: number): Uint8Array {
 // Concatenates multiple PCM-16 WAV buffers into one WAV by joining their raw
 // PCM payloads and writing a single fresh header. All inputs must share the
 // same sample rate and channel count (the canonical mono 24 kHz format the
-// generated-audio cleanup produces), otherwise the merge is rejected — the
+// generated-audio cleanup produces), otherwise the merge is rejected â€” the
 // same guarantee the old MP3 path gave via concatMp3Buffers' "different
 // formats" guard. Non-WAV inputs are decoded to canonical WAV first.
 function estimateWavSpeechRms(bytes: Uint8Array): number | null {
@@ -2585,8 +2585,8 @@ function retryAdjustedCfg(
   qualityRetryAttempt: number,
 ): number {
   if (qualityRetryAttempt <= 0) return baseCfg;
-  // Default 0.2 so each retry steps CFG down toward the 1.5 floor — official
-  // VoxCPM2 docs recommend lowering CFG to 1.5–1.6 when long-form output turns
+  // Default 0.2 so each retry steps CFG down toward the 1.5 floor â€” official
+  // VoxCPM2 docs recommend lowering CFG to 1.5â€“1.6 when long-form output turns
   // buzzy. step=0 keeps the old "don't change CFG on retry" behavior.
   const step = readNumericEnv("TTS_RETRY_CFG_STEP", 0.2, 0, 1);
   if (step <= 0) return baseCfg;
@@ -2759,7 +2759,7 @@ async function synthesizeSingleChunk(
       !isPresetReferenceSample(params.cloneSample)
     ) {
       // VoxCPM2 ZipEnhancer reference denoise. On by default for preset ref
-      // clips and user clone samples — the reference tracks used here are
+      // clips and user clone samples â€” the reference tracks used here are
       // captured in real environments and contain broadband background noise
       // that leaks into every generation. opt-out with
       // TTS_UPSTREAM_DENOISE=false if you ever feed a studio-clean ref.
@@ -2777,7 +2777,7 @@ async function synthesizeSingleChunk(
       payload.temperature = retryAdjustedTemperature(
         resolveStyleTemperature(
           normalizeVoiceStyle(params.voiceStyle),
-          readNumericEnv("TTS_CLONE_TEMPERATURE", 0.7, 0.1, 2.0),
+          readNumericEnv("TTS_CLONE_TEMPERATURE", 1.0, 0.1, 2.0),
         ),
         qualityRetryAttempt,
       );
@@ -2793,14 +2793,14 @@ async function synthesizeSingleChunk(
         qualityRetryAttempt,
       );
     } else {
-      // Preset male/female: ref_audio only (official). Never send voice — upstream
-      // prepends it to speakable text as "(male)…" / "(female)…" and the model
+      // Preset male/female: ref_audio only (official). Never send voice â€” upstream
+      // prepends it to speakable text as "(male)â€¦" / "(female)â€¦" and the model
       // reads the English label aloud on every chunk.
       delete payload.voice;
       payload.temperature = retryAdjustedTemperature(
         resolveStyleTemperature(
           normalizeVoiceStyle(params.voiceStyle),
-          readNumericEnv("TTS_PRESET_TEMPERATURE", 0.7, 0.1, 2.0),
+          readNumericEnv("TTS_PRESET_TEMPERATURE", 1.0, 0.1, 2.0),
         ),
         qualityRetryAttempt,
       );
