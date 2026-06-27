@@ -106,3 +106,67 @@ export function readResult(mode: WorkspaceMode): PersistedResult | null {
     return null;
   }
 }
+
+
+// --- clone sample (recorded voice reference) ---------------------------------
+// The clone sample is a File object that lives in JS memory only. Without
+// persistence it is lost the moment the user navigates away from the clone
+// workspace (DashboardSpa unmounts SpeechWorkspace, dropping module state on
+// hard refresh). We store the audio bytes as base64 + a few metadata fields
+// so the file can be rehydrated on remount.
+//
+// localStorage caps at ~5MB; a 30-second voice clip is ~300KB at opus/webm, so
+// this is safe. We wrap every operation in try/catch because quota / private
+// mode failures are non-fatal - the user just loses cross-nav restore.
+export const cloneSampleStorageKey = (mode: WorkspaceMode) =>
+  `voxtts:cloneSample:${mode}`;
+
+export type PersistedCloneSample = {
+  name: string;
+  type: string;
+  base64: string;
+  recordedAt: number;
+};
+
+export function persistCloneSample(
+  mode: WorkspaceMode,
+  payload: PersistedCloneSample,
+) {
+  try {
+    getStore()?.setItem(
+      cloneSampleStorageKey(mode),
+      JSON.stringify(payload),
+    );
+  } catch {
+    // localStorage unavailable or over quota (rare for short clips).
+    // Non-fatal; user can simply re-record on next visit.
+  }
+}
+
+export function clearCloneSample(mode: WorkspaceMode) {
+  try {
+    getStore()?.removeItem(cloneSampleStorageKey(mode));
+  } catch {
+    /* non-fatal */
+  }
+}
+
+export function readCloneSample(mode: WorkspaceMode): PersistedCloneSample | null {
+  try {
+    const raw = getStore()?.getItem(cloneSampleStorageKey(mode));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PersistedCloneSample;
+    if (
+      !parsed ||
+      typeof parsed.base64 !== "string" ||
+      typeof parsed.name !== "string" ||
+      typeof parsed.type !== "string" ||
+      parsed.base64.length === 0
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}

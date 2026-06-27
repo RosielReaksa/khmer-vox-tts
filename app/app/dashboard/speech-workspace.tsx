@@ -22,10 +22,13 @@ import {
 } from "@/lib/credit-rates";
 import {
   clearActiveJob,
+  clearCloneSample,
   clearResult,
   persistActiveJob,
+  persistCloneSample,
   persistResult,
   readActiveJob,
+  readCloneSample,
   readResult,
 } from "@/app/app/dashboard/workspace-persistence";
 
@@ -193,6 +196,81 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
     }, 0);
     return () => clearTimeout(timer);
   }, [isCloneMode]);
+
+  // Persist the clone reference sample so it survives navigation away from the
+  // workspace. The previous behavior kept the File object only in module-level
+  // state, which works for SPA navigation but breaks if SpeechWorkspace is
+  // remounted from scratch (browser refresh, hard route change, or a quick
+  // back/forward). localStorage with base64-encoded audio is small enough
+  // for a typical 30s voice clip (~300KB opus/webm) and rehydrates on mount.
+  // Only the clone workspace persists; TTS has no equivalent sample.
+  const restoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!isCloneMode) return;
+    // Defer to next tick so we do not race with the snapshot listener which
+    // also pushes state on mount.
+    restoreTimerRef.current = setTimeout(() => {
+      const persisted = readCloneSample("clone");
+      if (persisted && !sampleFile) {
+        try {
+          const bytes = Uint8Array.from(
+            atob(persisted.base64),
+            (c) => c.charCodeAt(0),
+          );
+          const file = new File([bytes], persisted.name, {
+            type: persisted.type,
+            lastModified: persisted.recordedAt,
+          });
+          setSampleFile(file);
+        } catch {
+          // Corrupted entry - clear it so we do not retry every mount.
+          clearCloneSample("clone");
+        }
+      }
+    }, 0);
+    return () => {
+      if (restoreTimerRef.current) {
+        clearTimeout(restoreTimerRef.current);
+        restoreTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCloneMode]);
+
+  // Mirror sampleFile to localStorage whenever it changes. Async via FileReader
+  // so the main thread is not blocked by base64 encoding. File objects cannot
+  // be synchronously converted to base64 in the browser, hence the async path.
+  useEffect(() => {
+    if (!isCloneMode) return;
+    if (!sampleFile) {
+      clearCloneSample("clone");
+      return;
+    }
+    let cancelled = false;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (cancelled) return;
+      const result = reader.result;
+      if (typeof result !== "string") return;
+      // result is "data:<mime>;base64,<base64>" - strip the prefix.
+      const commaIdx = result.indexOf(",");
+      const base64 = commaIdx >= 0 ? result.slice(commaIdx + 1) : result;
+      persistCloneSample("clone", {
+        name: sampleFile.name,
+        type: sampleFile.type,
+        base64,
+        recordedAt: sampleFile.lastModified || Date.now(),
+      });
+    };
+    reader.onerror = () => {
+      // Non-fatal: user can simply re-record on next visit.
+    };
+    reader.readAsDataURL(sampleFile);
+    return () => {
+      cancelled = true;
+      reader.abort();
+    };
+  }, [isCloneMode, sampleFile]);
 
   // Pre-warm the Modal GPU on a cheap signal (workspace mount / text-box focus)
   // so the real generation a few seconds later hits a warm container instead of
@@ -362,7 +440,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
               busy: false,
               progress: "",
               error: job.status === "partial"
-                ? `Generated ${job.completedItems} of ${job.totalItems} segments. ${job.failedItems} failed — retry from Batch Jobs.`
+                ? `Generated ${job.completedItems} of ${job.totalItems} segments. ${job.failedItems} failed â€” retry from Batch Jobs.`
                 : "",
               result: mergedData,
               audioUrl: url,
@@ -392,7 +470,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
           const err = pollErr as Error;
           const msg = err.message || "";
           // Transient network/server errors during polling should NOT stop the
-          // spinner — the job may still be running. Only stop on fatal errors
+          // spinner â€” the job may still be running. Only stop on fatal errors
           // (job explicitly failed/needs_review already throws above, and
           // non-retryable HTTP status codes throw above too).
           const isTransient =
@@ -641,8 +719,8 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
   function addSampleText() {
     setText(
       isCloneMode
-        ? "សួស្តី នេះគឺជាការសាកល្បងសំឡេងក្លូនសម្រាប់ប្រព័ន្ធ Khmer Vox TTS។"
-        : "សួស្តី នេះគឺជាការសាកល្បងបង្កើតសំឡេងខ្មែរជា WAV។",
+        ? "ážŸáž½ážŸáŸ’ážáž¸ áž“áŸáŸ‡áž‚ážºáž‡áž¶áž€áž¶ážšážŸáž¶áž€áž›áŸ’áž”áž„ážŸáŸ†áž¡áŸáž„áž€áŸ’áž›áž¼áž“ážŸáž˜áŸ’ážšáž¶áž”áŸ‹áž”áŸ’ážšáž–áŸáž“áŸ’áž’ Khmer Vox TTSáŸ”"
+        : "ážŸáž½ážŸáŸ’ážáž¸ áž“áŸáŸ‡áž‚ážºáž‡áž¶áž€áž¶ážšážŸáž¶áž€áž›áŸ’áž”áž„áž”áž„áŸ’áž€áž¾ážážŸáŸ†áž¡áŸáž„ážáŸ’áž˜áŸ‚ážšáž‡áž¶ WAVáŸ”",
     );
     setError("");
   }
@@ -771,7 +849,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                         </span>
                         <div className="min-w-0 flex-1">
                           <p className="font-headline text-xs font-bold uppercase text-primary truncate">{sampleFile.name}</p>
-                          <p className="font-body text-[10px] text-gray-500">{(sampleFile.size / 1024).toFixed(0)} KB · {sampleFile.type || "audio"}</p>
+                          <p className="font-body text-[10px] text-gray-500">{(sampleFile.size / 1024).toFixed(0)} KB Â· {sampleFile.type || "audio"}</p>
                         </div>
                         <button
                           type="button"
@@ -1514,7 +1592,7 @@ function StatusStep({ done, label, value }: { done: boolean; label: string; valu
           done ? "bg-[#10b981] text-white" : "bg-white text-primary"
         }`}
       >
-        {done ? "✓" : "✗"}
+        {done ? "âœ“" : "âœ—"}
       </span>
       <span className="font-headline font-bold uppercase text-xs">
         <span className="block text-[#1a1a1a] font-black">{label}</span>

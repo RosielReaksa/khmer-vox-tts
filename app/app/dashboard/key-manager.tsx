@@ -2,6 +2,54 @@
 
 import { useEffect, useState } from "react";
 
+// Persist the one-time raw API key across tab refreshes / accidental navigation.
+// Using sessionStorage (cleared on tab close) so the secret does not linger
+// across browser sessions. Storage failures are non-fatal.
+const RAW_KEY_STORAGE_KEY = "voxtts:revealedRawKey";
+
+type RevealedKeySnapshot = {
+  rawKey: string;
+  expiresAt: number;
+};
+
+function readRevealedKey(): RevealedKeySnapshot | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const raw = window.sessionStorage?.getItem(RAW_KEY_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as RevealedKeySnapshot;
+    if (
+      !parsed ||
+      typeof parsed.rawKey !== "string" ||
+      typeof parsed.expiresAt !== "number" ||
+      parsed.rawKey.length === 0 ||
+      parsed.expiresAt <= Date.now()
+    ) {
+      window.sessionStorage?.removeItem(RAW_KEY_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeRevealedKey(snapshot: RevealedKeySnapshot) {
+  try {
+    window.sessionStorage?.setItem(RAW_KEY_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {
+    /* sessionStorage unavailable or quota: non-fatal */
+  }
+}
+
+function clearRevealedKey() {
+  try {
+    window.sessionStorage?.removeItem(RAW_KEY_STORAGE_KEY);
+  } catch {
+    /* non-fatal */
+  }
+}
+
 import { clearDashboardCache } from "@/app/app/dashboard/dashboard-data-cache";
 import { Portal } from "@/app/components/portal";
 
@@ -61,8 +109,20 @@ export function KeyManager({
   }, [initialKeys]);
 
   const [monthlyLimit, setMonthlyLimit] = useState("");
-  const [rawKey, setRawKey] = useState("");
-  const [rawKeyExpiresAt, setRawKeyExpiresAt] = useState<number | null>(null);
+
+  // Restore the just-revealed key on mount if the user navigated away during
+  // the 5-minute reveal window and came back. The lazy useState initializer reads
+  // from sessionStorage on every mount, so any unmount/remount cycle (or tab
+  // refresh) picks up the key reveal state without needing a useEffect.
+  const [rawKey, setRawKey] = useState(() => {
+    const persisted = readRevealedKey();
+    return persisted?.rawKey ?? "";
+  });
+  const [rawKeyExpiresAt, setRawKeyExpiresAt] = useState<number | null>(() => {
+    const persisted = readRevealedKey();
+    return persisted?.expiresAt ?? null;
+  });
+
   const [countdownNow, setCountdownNow] = useState(0);
   const [copyStatus, setCopyStatus] = useState("");
   const [message, setMessage] = useState("");
@@ -77,6 +137,9 @@ export function KeyManager({
     if (!rawKey || !rawKeyExpiresAt) {
       return;
     }
+    // Mirror the active reveal window to sessionStorage so a quick navigation
+    // away + back (or a tab refresh) does not destroy the only copy of the key.
+    writeRevealedKey({ rawKey, expiresAt: rawKeyExpiresAt });
     const expiresAt = rawKeyExpiresAt;
 
     const intervalId = window.setInterval(() => {
@@ -89,6 +152,7 @@ export function KeyManager({
         setCopyStatus("");
         setMessage("API key hidden after 5 minutes. Create a new key if you did not copy it.");
         window.clearInterval(intervalId);
+        clearRevealedKey();
       }
     }, 1000);
     return () => window.clearInterval(intervalId);
@@ -293,7 +357,7 @@ export function KeyManager({
             <div className="flex flex-wrap items-start justify-between gap-4 border-b-2 border-primary pb-3 mb-3">
               <div>
                 <p className="text-xs font-headline font-black uppercase tracking-wider text-[#e63b2e]">
-                  ⚠️ Copy this API key now
+                  ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â Copy this API key now
                 </p>
                 <p className="mt-1 text-xs text-[#4a4a4a] font-body">
                   Shown for <strong>{formatKeyRevealTime(rawKeySecondsRemaining)}</strong> only. It will not be shown again.
@@ -344,22 +408,22 @@ export function KeyManager({
                     </span>
                   </div>
                   <p className="font-mono text-xs text-primary bg-[#f5f0e8] px-2 py-1 w-fit border border-primary font-semibold">
-                    {item.keyPrefix}••••••••••••••••••••
+                    {item.keyPrefix}ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1 pt-2 text-xs font-body text-[#4a4a4a]">
-                    <p>🗓️ <strong>Created:</strong> {new Date(item.createdAt).toLocaleDateString()}</p>
-                    <p>⚡ <strong>Last Used:</strong> {item.lastUsedAt ? new Date(item.lastUsedAt).toLocaleDateString() : "never"}</p>
-                    <p>📊 <strong>Total Requests:</strong> {item.requestCount.toLocaleString()}</p>
+                    <p>ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â <strong>Created:</strong> {new Date(item.createdAt).toLocaleDateString()}</p>
+                    <p>ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ <strong>Last Used:</strong> {item.lastUsedAt ? new Date(item.lastUsedAt).toLocaleDateString() : "never"}</p>
+                    <p>ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â  <strong>Total Requests:</strong> {item.requestCount.toLocaleString()}</p>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 pt-2 border-t border-[#e5e5e5] text-xs font-body text-[#4a4a4a]">
-                    <p>💸 <strong>Daily Limit:</strong> {formatLimit(item.dailyTokenLimit)}</p>
-                    <p>📅 <strong>Monthly Limit:</strong> {formatLimit(item.monthlyTokenLimit)}</p>
+                    <p>ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ <strong>Daily Limit:</strong> {formatLimit(item.dailyTokenLimit)}</p>
+                    <p>ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ <strong>Monthly Limit:</strong> {formatLimit(item.monthlyTokenLimit)}</p>
                   </div>
                   {(item.maxConcurrentRequests !== null || item.maxConcurrentJobs !== null || item.maxQueuedJobs !== null) && (
                     <div className="pt-2 border-t border-[#e5e5e5] text-xs font-headline font-bold text-[#0055ff] flex flex-wrap gap-x-4">
-                      <span>🚀 Requests Concurrency: {formatBusinessLimit(item.maxConcurrentRequests)}</span>
-                      <span>📦 Active Jobs: {formatBusinessLimit(item.maxConcurrentJobs)}</span>
-                      <span>📥 Queue limit: {formatBusinessLimit(item.maxQueuedJobs)}</span>
+                      <span>ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ Requests Concurrency: {formatBusinessLimit(item.maxConcurrentRequests)}</span>
+                      <span>ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ Active Jobs: {formatBusinessLimit(item.maxConcurrentJobs)}</span>
+                      <span>ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¥ Queue limit: {formatBusinessLimit(item.maxQueuedJobs)}</span>
                     </div>
                   )}
                 </div>

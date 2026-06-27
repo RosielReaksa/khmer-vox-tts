@@ -177,3 +177,95 @@ test("quota error on persist is non-fatal and skips restore", () => {
 test("no stored state restores nothing", () => {
   assert.equal(decideMountRestore("tts", false).kind, "none");
 });
+
+
+// --- clone sample persistence -----------------------------------------------
+import {
+  cloneSampleStorageKey,
+  persistCloneSample,
+  readCloneSample,
+  clearCloneSample,
+  type PersistedCloneSample,
+} from "./workspace-persistence.ts";
+
+test("clone sample storage key is namespaced per mode", () => {
+  assert.equal(cloneSampleStorageKey("tts"), "voxtts:cloneSample:tts");
+  assert.equal(cloneSampleStorageKey("clone"), "voxtts:cloneSample:clone");
+});
+
+test("persist then read returns the stored clone sample", () => {
+  const payload: PersistedCloneSample = {
+    name: "recording.webm",
+    type: "audio/webm;codecs=opus",
+    base64: "GkXfowEAAAAAAAAfQoaBAJL3",
+    recordedAt: 1700000000000,
+  };
+  persistCloneSample("clone", payload);
+  const read = readCloneSample("clone");
+  assert.ok(read, "should return a persisted sample");
+  if (read) {
+    assert.equal(read.name, "recording.webm");
+    assert.equal(read.type, "audio/webm;codecs=opus");
+    assert.equal(read.base64, "GkXfowEAAAAAAAAfQoaBAJL3");
+    assert.equal(read.recordedAt, 1700000000000);
+  }
+});
+
+test("read returns null when no sample is persisted", () => {
+  assert.equal(readCloneSample("tts"), null);
+  assert.equal(readCloneSample("clone"), null);
+});
+
+test("tts and clone samples do not collide", () => {
+  persistCloneSample("tts", {
+    name: "tts-recording.webm",
+    type: "audio/webm",
+    base64: "VFNT",
+    recordedAt: 1,
+  });
+  persistCloneSample("clone", {
+    name: "clone-recording.webm",
+    type: "audio/webm",
+    base64: "Q0xPTkU=",
+    recordedAt: 2,
+  });
+  assert.equal(readCloneSample("tts")?.name, "tts-recording.webm");
+  assert.equal(readCloneSample("clone")?.name, "clone-recording.webm");
+});
+
+test("clearCloneSample removes the entry", () => {
+  persistCloneSample("clone", {
+    name: "x.webm",
+    type: "audio/webm",
+    base64: "WFk=",
+    recordedAt: 1,
+  });
+  clearCloneSample("clone");
+  assert.equal(readCloneSample("clone"), null);
+});
+
+test("corrupt stored clone sample is ignored", () => {
+  storage.setItem(cloneSampleStorageKey("clone"), "{not valid json");
+  assert.equal(readCloneSample("clone"), null);
+});
+
+test("stored clone sample with missing base64 is rejected", () => {
+  storage.setItem(
+    cloneSampleStorageKey("clone"),
+    JSON.stringify({ name: "x", type: "audio/webm" }),
+  );
+  assert.equal(readCloneSample("clone"), null);
+});
+
+test("quota error on clone persist is non-fatal", () => {
+  storage.throwOnSet = true;
+  assert.doesNotThrow(() =>
+    persistCloneSample("clone", {
+      name: "x.webm",
+      type: "audio/webm",
+      base64: "AAAA",
+      recordedAt: 1,
+    }),
+  );
+  assert.equal(readCloneSample("clone"), null);
+});
