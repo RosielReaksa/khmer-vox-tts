@@ -719,8 +719,8 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
   function addSampleText() {
     setText(
       isCloneMode
-        ? "្ស្ួសធ្តី ន្ខះគឺជាកាលសាកល្បងសឦឱងក្លូនសម្រាង៏ប្រព័ន្ធ Khmer Vox TTS្"
-        : "្ស្ួសធ្តី ន្ខះគឺជាកាលសាកល្បងបង្កើតសឦឱងខ្មគរជា WAV្",
+        ? "សូ៉ ស្តាប់ នេះគឺជាការសាកល្បងសំលេងក្លូនសម្រាប់ប្រព័ន្ធ Khmer Vox TTS។"
+        : "សូ៉ ស្តាប់ នេះគឺជាការសាកល្បងបង្កើតសំលេងខ្មែរជា WAV។",
     );
     setError("");
   }
