@@ -440,7 +440,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
               busy: false,
               progress: "",
               error: job.status === "partial"
-                ? `Generated ${job.completedItems} of ${job.totalItems} segments. ${job.failedItems} failed â€” retry from Batch Jobs.`
+                ? `Generated ${job.completedItems} of ${job.totalItems} segments. ${job.failedItems} failed — retry from Batch Jobs.`
                 : "",
               result: mergedData,
               audioUrl: url,
@@ -470,7 +470,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
           const err = pollErr as Error;
           const msg = err.message || "";
           // Transient network/server errors during polling should NOT stop the
-          // spinner â€” the job may still be running. Only stop on fatal errors
+          // spinner — the job may still be running. Only stop on fatal errors
           // (job explicitly failed/needs_review already throws above, and
           // non-retryable HTTP status codes throw above too).
           const isTransient =
@@ -726,7 +726,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
   }
 
   return (
-    <section className="dashboard-enter grid w-full min-w-0 gap-5 pb-4 text-[#1a1a1a]">
+    <section className="dashboard-enter grid w-full min-w-0 gap-5 pb-20 text-[#1a1a1a]">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <nav className="flex items-center gap-2 text-xs font-headline uppercase font-bold text-[#4a4a4a]">
@@ -734,7 +734,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
             <span className="text-primary">/</span>
             <span className="text-primary">{title}</span>
           </nav>
-          <h1 className="mt-4 font-headline font-black text-3xl md:text-4xl uppercase tracking-tight text-primary">{title}</h1>
+          <h1 className="mt-4 pb-2 font-headline font-black text-3xl md:text-4xl uppercase leading-[1.15] tracking-tight text-primary">{title}</h1>
           <p className="mt-1 font-body text-sm text-[#4a4a4a] border-l-4 border-primary pl-3">
             {isCloneMode
               ? "Upload a reference voice and generate speech that matches it."
@@ -797,7 +797,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
               </div>
             ) : (
               <div className="mt-5 grid gap-3">
-                <span className="text-sm font-headline font-black uppercase text-primary">Reference voice</span>
+                <span className="block text-sm font-headline font-black uppercase text-primary leading-relaxed tracking-tight break-words py-1">Reference voice</span>
 
                 {/* Tabs: Upload / Record */}
                 <div className="flex gap-0 border-b-4 border-primary">
@@ -849,7 +849,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
                         </span>
                         <div className="min-w-0 flex-1">
                           <p className="font-headline text-xs font-bold uppercase text-primary truncate">{sampleFile.name}</p>
-                          <p className="font-body text-[10px] text-gray-500">{(sampleFile.size / 1024).toFixed(0)} KB Â· {sampleFile.type || "audio"}</p>
+                          <p className="font-body text-[10px] text-gray-500">{(sampleFile.size / 1024).toFixed(0)} KB · {sampleFile.type || "audio"}</p>
                         </div>
                         <button
                           type="button"
@@ -1588,15 +1588,25 @@ function StatusStep({ done, label, value }: { done: boolean; label: string; valu
   return (
     <div className="flex items-start gap-3">
       <span
-        className={`mt-0.5 flex h-7 w-7 items-center justify-center border-2 border-primary text-xs font-black ${
+        aria-hidden="true"
+        className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center border-2 border-primary text-sm font-black leading-none ${
           done ? "bg-[#10b981] text-white" : "bg-white text-primary"
         }`}
       >
-        {done ? "âœ“" : "âœ—"}
+        {done ? (
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="5 12 10 17 19 7" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <line x1="6" y1="6" x2="18" y2="18" />
+            <line x1="6" y1="18" x2="18" y2="6" />
+          </svg>
+        )}
       </span>
-      <span className="font-headline font-bold uppercase text-xs">
+      <span className="font-headline font-bold uppercase text-xs min-w-0 flex-1">
         <span className="block text-[#1a1a1a] font-black">{label}</span>
-        <span className="text-[#4a4a4a] text-[10px] font-normal font-body normal-case">{value}</span>
+        <span className="block text-[#4a4a4a] text-[10px] font-normal font-body normal-case break-words">{value}</span>
       </span>
     </div>
   );
