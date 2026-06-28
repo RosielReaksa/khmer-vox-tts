@@ -30,6 +30,56 @@ PowerShell pipeline that does not set -Encoding. Always re-read the file
 after writing to confirm the bytes round-trip back to the expected
 code points before committing.
 
+## Sample-text button Khmer rewrite (2026-06-28, deployed prod-20260628-35)
+
+The previous prod-20260628-34 fix removed the double-encoding but the new
+Khmer literals still started with a bare U+17D2 coeng mark, so the
+textarea showed sequences like XXX instead of readable words.
+Rewrote both literal strings in addSampleText() with the correct Khmer code
+points so the textarea now drops real sentences.
+
+**Validation:** npx tsc --noEmit clean, npx eslint app/dashboard/speech-workspace.tsx
+clean (1 pre-existing warning), npm run build succeeds (95 routes).
+
+**Deploy:** prod-20260628-35 (commit bca38c7, GitHub Actions run 28321155016,
+image ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260628-35). Verified
+2026-06-28T11:50Z: 2 web pods + 1 worker pod Running on the new image,
+https://voxtts.online/api/health returns ok/postgres.
+
+**Lesson:** When re-encoding a Khmer literal that previously lived in the source
+as Latin-1-read UTF-8, always build the string from individual Unicode escape
+points in a helper script and pipe it through JSON.stringify so the
+resulting source bytes are guaranteed to be valid UTF-8. Spot-check the
+written file with a hex dump of the first few bytes before committing.
+
+## Sample-text button mojibake fix (2026-06-28, deployed prod-20260628-34)
+
+User clicked the Sample text toolbar button on both Standard Voice and
+Clone Voice pages and the textarea filled with mojibake. Root cause:
+addSampleText() in app/app/dashboard/speech-workspace.tsx had two Khmer
+sample strings double-encoded (UTF-8 bytes re-interpreted as Latin-1,
+then re-saved as UTF-8). When the browser read them back they became the
+four-byte sequences the user saw in the textarea.
+
+Fix: rewrote both literal strings using the correct Khmer code points
+(U+1780..U+17D2). The text now shows the intended sample paragraph in
+Khmer for both Standard Voice and Clone Voice modes.
+
+**Validation:** npx tsc --noEmit clean, npx eslint app/dashboard/speech-workspace.tsx
+clean (1 pre-existing warning), npm run build succeeds (95 routes).
+
+**Deploy:** prod-20260628-34 (commit 52de27f, GitHub Actions run 28320507573,
+image ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260628-34). Verified
+2026-06-28T11:37Z: 2 web pods + 1 worker pod Running on the new image,
+https://voxtts.online/api/health returns ok/postgres.
+
+**Lesson:** Any time a non-ASCII literal lives in a .tsx / .ts source
+file, write the file via a UTF-8-safe path (Node.js fs.writeFileSync with
+utf8, or Set-Content -Encoding utf8) and avoid pasting through a
+PowerShell pipeline that does not set -Encoding. Always re-read the file
+after writing to confirm the bytes round-trip back to the expected
+code points before committing.
+
 ## Voice-cloning UI rendering fixes (2026-06-28, deployed)
 
 User reported three UI bugs on /app/dashboard/voice-cloning (with screenshots in
