@@ -1,6 +1,25 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-28
+## Dashboard scroll smoothness while generating (2026-06-28, deployed prod-20260628-37)
+
+User reported the dashboard felt stuck when scrolling during a generation (both Standard Voice and Clone Voice pages). The button click triggered a 2s polling loop and each tick forced a full React re-render of GeneratingState, including a freshly-mounted inline <style>{...}</style> block for the equalizer keyframes. The DOM work landed on the main thread exactly while the user tried to scroll.
+
+Fix in app/app/dashboard/speech-workspace.tsx:
+
+- Move the @keyframes voxeq block out of GeneratingState into a tiny InjectVoxEqKeyframes effect that appends a single <style id=voxeq-keyframes> to document.head once. No more re-parsing the keyframes string on every poll tick.
+
+- Add will-change-[height] to the equalizer bars so the browser promotes them to a compositor layer and the keyframe animation no longer triggers layout/paint.
+
+- commitWorkspaceSnapshot now skips listener fan-out when the patch values are all strictly equal to the current snapshot. Most 2s poll updates land on the same Segment N of M string; no listener fan-out, no React re-render.
+
+- Add a body.no-scroll guard that strips the class if any other code path (mobile menu, modal) leaves it on while busy. Now the user can always scroll past the Generating state.
+
+**Validation:** npx tsc --noEmit clean, npx eslint clean (1 pre-existing warning), npm run build succeeds (95 routes), workspace-persistence tests 19/19 pass.
+
+**Deploy:** prod-20260628-37 (commit d298855, GitHub Actions run 28323862062, image ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260628-37). Verified 2026-06-28T13:37Z: 2 web pods + 1 worker pod Running on the new image, https://voxtts.online/api/health returns ok/postgres.
+
+**Lesson:** Avoid re-rendering inline <style>{...}</style> blocks. Promote continuously-animating elements to a compositor layer with will-change. Skip React setState/listener fan-out when nothing changed (=== compare on every patch key).
 
 ## Sample-text greeting fix (2026-06-28, deployed prod-20260628-36)
 
