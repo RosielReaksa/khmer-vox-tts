@@ -391,6 +391,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
     mode,
     text,
     voice,
+    voiceStyle,
     model,
     runMode,
     sampleFile,

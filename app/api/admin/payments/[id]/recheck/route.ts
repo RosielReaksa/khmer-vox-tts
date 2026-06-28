@@ -52,9 +52,6 @@ export async function POST(
     });
   }
 
-  // Audit: a recheck was initiated
-  const recheckProvider = order.paymentProvider;
-
   if (order.paymentProvider === "payway") {
     const verification = await checkPaywayTransactionForOrder(order);
     if (verification.status !== "paid") {

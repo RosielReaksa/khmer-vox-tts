@@ -1,36 +1,10 @@
 import type { Metadata, Viewport } from "next";
-import { IBM_Plex_Mono, Inter, Noto_Sans_Khmer, Space_Grotesk } from "next/font/google";
 
 import { LocaleProvider } from "@/app/components/locale-provider";
 import { NavigationShell } from "@/app/components/navigation-shell";
 import { getLocale, messagesFor, ogLocaleFor, t } from "@/lib/i18n";
 import { SITE_URL } from "@/lib/site-url";
 import "./globals.css";
-
-const spaceGrotesk = Space_Grotesk({
-  variable: "--font-space-grotesk",
-  subsets: ["latin"],
-});
-
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-});
-
-const ibmPlexMono = IBM_Plex_Mono({
-  variable: "--font-ibm-plex-mono",
-  weight: ["400", "500"],
-  subsets: ["latin"],
-});
-
-// Khmer-capable font. Loaded with the `khmer` subset so it only ships the
-// Khmer glyphs (Latin glyphs come from Inter/Space Grotesk above). Used
-// automatically when <html lang="km"> via the globals.css swap rule.
-const notoSansKhmer = Noto_Sans_Khmer({
-  variable: "--font-khmer",
-  subsets: ["khmer"],
-  weight: ["400", "500", "700"],
-});
 
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await getLocale();
@@ -101,11 +75,12 @@ export default async function RootLayout({
 
   return (
     <html
-      lang="en"
-      className={`${spaceGrotesk.variable} ${inter.variable} ${ibmPlexMono.variable} ${notoSansKhmer.variable} h-full antialiased`}
+      lang={locale}
+      className="h-full antialiased"
       suppressHydrationWarning
     >
       <head>
+        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
         <link
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"

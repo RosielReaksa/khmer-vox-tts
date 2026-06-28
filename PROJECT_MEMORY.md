@@ -1,6 +1,57 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-06-28
+Last updated: 2026-06-29
+## Root layout locale + build stability cleanup (2026-06-29, local-only)
+
+User asked to "fix it step by step" after a project review found three concrete issues:
+
+1. Root layout always rendered `<html lang="en">` even though the app resolves locale from
+   cookies. This prevented the Khmer-specific CSS font swap (`html[lang="km"] ...`) from ever
+   activating and exposed the wrong document language to browsers / assistive tech.
+2. `npm run lint` was polluted by generated files under `app/.next/**`, plus scratch / one-off
+   maintenance scripts that are not part of the product runtime.
+3. `npm run build` could fail in restricted-network environments because `app/layout.tsx` used
+   `next/font/google` for Inter / Space Grotesk / IBM Plex Mono / Noto Sans Khmer, which still
+   requires a successful build-time Google fetch before self-hosting can happen.
+
+**Fixes applied:**
+- `app/layout.tsx`
+  - Removed `next/font/google` imports.
+  - Switched `<html lang="en">` to `<html lang={locale}>` so server-resolved locale now controls
+    document language correctly and Khmer font CSS activates when locale is `km`.
+  - Kept the existing CSS-variable-based typography by falling back to the declared CSS font stacks
+    in `globals.css`, which means builds no longer depend on live Google font downloads.
+  - Kept the runtime Material Symbols stylesheet link because the UI still uses
+    `material-symbols-outlined` icon glyphs throughout the dashboard and marketing pages.
+- `eslint.config.mjs`
+  - Added `app/.next/**` to ignores so generated route/type files do not fail lint.
+  - Added `scratch/**` and `scripts/**` to ignores so the product lint gate reflects app code
+    instead of local maintenance utilities and ad hoc repair scripts.
+- `tsconfig.json`
+  - Excluded `.next/types/validator.ts` from standalone TypeScript runs. Next 16 regenerates that
+    file during build and it imports `./routes.js` even though the generated artifact on disk is
+    `routes.d.ts`; excluding that one transient validator keeps `npx tsc --noEmit` stable while
+    preserving the useful generated declaration types in `.next/types`.
+- App warning cleanup so lint is fully green:
+  - `app/app/dashboard/speech-workspace.tsx`: add missing `voiceStyle` effect dependency.
+  - `app/components/voice-preview-card.tsx`: capture `audioRef.current` inside cleanup effects.
+  - `app/components/voice-recorder.tsx`: include `audioUrl` in the unmount cleanup dependency list.
+  - `app/app/dashboard/shell.tsx`: remove unused `useRouter` import/state.
+  - `app/api/admin/payments/[id]/recheck/route.ts`: remove unused `recheckProvider`.
+  - `app/review/page.tsx`: remove unused `Locale` import.
+
+**Validation:**
+- `npm run lint` passes clean.
+- `npx tsc --noEmit` passes clean.
+- `npm run build` passes clean (95 routes).
+
+**Deploy status:** LOCAL-ONLY. Not committed, not deployed.
+
+**Operational note:** This intentionally trades branded Google-hosted typography for deterministic
+local/system font stacks in the root layout so builds are reliable in offline / restricted CI
+environments. If brand fonts are required later, the correct path is to check in local font assets
+and load them through `next/font/local`, not to restore runtime/build-time dependence on Google.
+
 ## Dashboard scroll smoothness while generating (2026-06-28, deployed prod-20260628-37)
 
 User reported the dashboard felt stuck when scrolling during a generation (both Standard Voice and Clone Voice pages). The button click triggered a 2s polling loop and each tick forced a full React re-render of GeneratingState, including a freshly-mounted inline <style>{...}</style> block for the equalizer keyframes. The DOM work landed on the main thread exactly while the user tried to scroll.

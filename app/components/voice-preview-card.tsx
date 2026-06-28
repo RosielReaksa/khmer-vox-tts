@@ -40,8 +40,9 @@ export default function VoicePreviewCard({
   }, [disabled]);
 
   useEffect(() => {
+    const audio = audioRef.current;
     return () => {
-      audioRef.current?.pause();
+      audio?.pause();
     };
   }, []);
 
@@ -167,8 +168,9 @@ export function VoicePreviewButton({ voice }: { voice: "female" | "male" }) {
   const [playing, setPlaying] = useState(false);
 
   useEffect(() => {
+    const audio = audioRef.current;
     return () => {
-      audioRef.current?.pause();
+      audio?.pause();
     };
   }, []);
 

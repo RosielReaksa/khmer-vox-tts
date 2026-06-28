@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams, useRouter } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { DashboardUserProvider } from "@/app/app/dashboard/dashboard-user-context";
@@ -67,7 +67,6 @@ export function DashboardShell({
 }: DashboardShellProps) {
   const pathname = usePathname() ?? "/app/dashboard";
   const searchParams = useSearchParams();
-  const router = useRouter();
   const t = useT();
   const initialPath = useMemo(() => {
     const query = searchParams.toString();

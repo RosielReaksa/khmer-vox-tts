@@ -62,7 +62,7 @@ export default function VoiceRecorder({
       stopRaf();
       if (audioUrl) URL.revokeObjectURL(audioUrl);
     };
-  }, []);
+  }, [audioUrl]);
 
   // Check mic permission state on mount
   useEffect(() => {

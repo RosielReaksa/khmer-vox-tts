@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PublicHeader } from "@/app/components/public-header";
 import { getLocale, t } from "@/lib/i18n";
-import type { Locale } from "@/lib/locale";
 
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await getLocale();
