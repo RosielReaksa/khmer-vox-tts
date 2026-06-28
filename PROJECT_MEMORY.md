@@ -29,7 +29,7 @@ D:\website api seller\image screenshot fixer\):
 **Validation:** npx tsc --noEmit passes, npm run lint -- speech-workspace.tsx passes,
 npm run build succeeds (95 routes). Source has zero mojibake patterns.
 
-**Deploy:** prod-20260627-33 (this commit, GitHub Actions run TBD).
+**Deploy:** prod-20260628-33 (commit f488393, run 28319964117, image ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260628-33). Verified 2026-06-28T11:04Z: 2 web pods + 1 worker pod Running on the new image, https://voxtts.online/api/health returns ok/postgres.
 
 **Lesson:** Any time JSX or template literal text contains a non-ASCII character, prefer
 inline SVG / CSS shapes for status icons. Reserve unicode characters for prose strings
