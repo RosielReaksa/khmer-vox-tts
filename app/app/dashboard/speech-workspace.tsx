@@ -109,7 +109,16 @@ function audioSourceFromResult(result: Pick<GenerationResponse, "audioBase64" | 
 }
 
 function commitWorkspaceSnapshot(mode: "tts" | "clone", patch: Partial<WorkspaceSnapshot>) {
-  workspaceSnapshots[mode] = { ...workspaceSnapshots[mode], ...patch };
+  const current = workspaceSnapshots[mode];
+  let changed = false;
+  for (const key of Object.keys(patch) as Array<keyof WorkspaceSnapshot>) {
+    if (current[key] !== patch[key]) {
+      changed = true;
+      break;
+    }
+  }
+  if (!changed) return;
+  workspaceSnapshots[mode] = { ...current, ...patch };
   for (const listener of workspaceListeners[mode]) {
     listener();
   }
@@ -289,6 +298,15 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
   useEffect(() => {
     triggerPrewarm();
   }, [triggerPrewarm]);
+
+  // Make sure generation never blocks the page scroll. If something else
+  //  on the page (mobile menu, etc.) added body.no-scroll while busy, drop
+  //  it so the user can scroll past the Generating state.
+  useEffect(() => {
+    if (!busy) return;
+    if (typeof document === "undefined") return;
+    document.body.classList.remove("no-scroll");
+  }, [busy]);
 
   // Close the saved-voice library modal on Escape for keyboard accessibility.
   useEffect(() => {
@@ -1441,7 +1459,10 @@ function AudioResultPanel({
         }`}
       >
         {busy ? (
-          <GeneratingState progress={progress} />
+          <>
+            <InjectVoxEqKeyframes />
+            <GeneratingState progress={progress} />
+          </>
         ) : error ? (
           <div className="grid gap-2 text-xs font-headline font-bold uppercase text-red-700">
             <p className="font-black text-sm">Needs attention</p>
@@ -1501,6 +1522,19 @@ function AudioResultPanel({
   );
 }
 
+function InjectVoxEqKeyframes() {
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const id = "voxeq-keyframes";
+    if (document.getElementById(id)) return;
+    const el = document.createElement("style");
+    el.id = id;
+    el.textContent = "@keyframes voxeq { 0%, 100% { height: 20%; } 50% { height: 100%; } }";
+    document.head.appendChild(el);
+  }, []);
+  return null;
+}
+
 function GeneratingState({ progress }: { progress: string }) {
   // progress looks like "Generating: Segment 2 of 5 completed..."
   const match = progress.match(/Segment\s+(\d+)\s+of\s+(\d+)/i);
@@ -1515,7 +1549,7 @@ function GeneratingState({ progress }: { progress: string }) {
         {Array.from({ length: 9 }).map((_, i) => (
           <span
             key={i}
-            className="w-2 flex-1 rounded-full bg-[#ffcc00]"
+            className="w-2 flex-1 rounded-full bg-[#ffcc00] will-change-[height]"
             style={{
               animation: "voxeq 1s ease-in-out infinite",
               animationDelay: `${i * 0.09}s`,
@@ -1544,12 +1578,6 @@ function GeneratingState({ progress }: { progress: string }) {
         ) : null}
       </div>
 
-      <style>{`
-        @keyframes voxeq {
-          0%, 100% { height: 20%; }
-          50% { height: 100%; }
-        }
-      `}</style>
     </div>
   );
 }
