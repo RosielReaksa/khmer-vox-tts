@@ -1,7 +1,7 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-29
-## Root layout locale + build stability cleanup (2026-06-29, local-only)
+## Root layout locale + build stability cleanup (2026-06-29, deployed prod-20260628-38)
 
 User asked to "fix it step by step" after a project review found three concrete issues:
 
@@ -45,7 +45,11 @@ User asked to "fix it step by step" after a project review found three concrete 
 - `npx tsc --noEmit` passes clean.
 - `npm run build` passes clean (95 routes).
 
-**Deploy status:** LOCAL-ONLY. Not committed, not deployed.
+**Deploy:** `prod-20260628-38` (commit `677a8af`, GitHub Actions run
+`28333562593`, image `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260628-38`).
+Workflow completed successfully: build/push in 2m57s, production rollout in 1m16s.
+Verified live health at 2026-06-28T19:39Z: `https://voxtts.online/api/health`
+returned `status: ok`, `store: postgres`.
 
 **Operational note:** This intentionally trades branded Google-hosted typography for deterministic
 local/system font stacks in the root layout so builds are reliable in offline / restricted CI
