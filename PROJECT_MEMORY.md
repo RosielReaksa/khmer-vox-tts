@@ -2,6 +2,19 @@
 
 Last updated: 2026-06-28
 
+## Sample-text greeting fix (2026-06-28, deployed prod-20260628-36)
+
+User pointed out that the new sample sentences started with the non-word WORD1 (just a stray consonant + coeng + short-a mark). Replace it with the proper Khmer greeting WORD2 in both addSampleText() literals so the button now drops a real greeting + intro sentence into the textarea.
+
+  Clone mode: WORD2 + intro Khmer Vox TTS.
+  TTS mode  : WORD2 + intro WAV.
+
+**Validation:** npx tsc --noEmit clean, npx eslint app/dashboard/speech-workspace.tsx clean (1 pre-existing warning), npm run build succeeds (95 routes).
+
+**Deploy:** prod-20260628-36 (commit 38dde35, GitHub Actions run 28321528224, image ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260628-36). Verified 2026-06-28T12:07Z: 2 web pods + 1 worker pod Running on the new image, https://voxtts.online/api/health returns ok/postgres.
+
+**Lesson:** When picking Khmer sample text, validate every word is a real lexical entry (not just a sequence of valid code points). Cross-check against the official Khmer dictionary before committing.
+
 ## Sample-text button mojibake fix (2026-06-28, deployed prod-20260628-34)
 
 User clicked the Sample text toolbar button on both Standard Voice and
