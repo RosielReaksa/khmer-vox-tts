@@ -53,6 +53,8 @@ export default function VoiceRecorder({
     Array.from({ length: BAR_COUNT }, () => 0)
   );
   const [permDenied, setPermDenied] = useState(false);
+  const [needsSecureContext, setNeedsSecureContext] = useState(false);
+  const [recordingUnsupported, setRecordingUnsupported] = useState(false);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -142,6 +144,28 @@ export default function VoiceRecorder({
     isStartingRef.current = true;
     setState("requesting");
     setErrorMsg("");
+    setNeedsSecureContext(false);
+    setRecordingUnsupported(false);
+
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      isStartingRef.current = false;
+      setState("error");
+      setNeedsSecureContext(true);
+      setErrorMsg(
+        "Microphone recording needs HTTPS or localhost. This fixer URL uses plain HTTP, so the browser will not show the microphone permission popup here.",
+      );
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      isStartingRef.current = false;
+      setState("error");
+      setRecordingUnsupported(true);
+      setErrorMsg(
+        "This browser does not expose microphone recording on the current page. Use a modern browser over HTTPS or localhost.",
+      );
+      return;
+    }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -241,6 +265,13 @@ export default function VoiceRecorder({
       } else if (err instanceof DOMException && err.name === "NotFoundError") {
         setErrorMsg("No microphone found. Please connect a microphone and try again.");
       } else {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          setRecordingUnsupported(true);
+          setErrorMsg(
+            "This browser does not expose microphone recording on the current page. Use a modern browser over HTTPS or localhost.",
+          );
+          return;
+        }
         setErrorMsg(
           err instanceof Error && err.message
             ? err.message
@@ -459,6 +490,25 @@ export default function VoiceRecorder({
               {errorMsg}
             </p>
           </div>
+          {needsSecureContext && (
+            <div className="border border-amber-400/30 bg-amber-950/20 rounded-lg px-3 py-2.5 grid gap-2">
+              <p className="font-headline text-[10px] font-bold uppercase text-amber-300">
+                To get the browser permission popup:
+              </p>
+              <ol className="list-decimal list-inside font-body text-[11px] leading-relaxed text-amber-100/80 space-y-1">
+                <li>Open this page on a real HTTPS hostname, not `http://IP:30080`</li>
+                <li>Or run the app on `localhost` during testing</li>
+                <li>Then click Record voice again and the browser can show the microphone alert</li>
+              </ol>
+            </div>
+          )}
+          {recordingUnsupported && !needsSecureContext && (
+            <div className="border border-amber-400/30 bg-amber-950/20 rounded-lg px-3 py-2.5 grid gap-2">
+              <p className="font-body text-[11px] leading-relaxed text-amber-100/80">
+                The current page context does not expose the microphone API. Try Chrome, Edge, or Brave on HTTPS.
+              </p>
+            </div>
+          )}
           {permDenied && (
             <div className="border border-red-400/30 bg-red-950/20 rounded-lg px-3 py-2.5 grid gap-2">
               <p className="font-headline text-[10px] font-bold uppercase text-red-400">

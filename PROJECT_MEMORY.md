@@ -26,7 +26,55 @@ Root cause found in `app/components/voice-recorder.tsx` + `lib/tts-provider.ts`:
 - `npx tsc --noEmit` passes clean.
 - `npm run lint -- lib/tts-provider.ts` passes clean.
 
-**Deployment status:** LOCAL-ONLY. Not built, not deployed yet.
+**Deployment status:** Deployed to fixer/staging VPS only.
+
+**Fixer VPS deploy (2026-06-29):**
+- Root cause of the earlier mismatch: the GitHub Actions `staging` deploy workflow completed successfully, but the fixer VPS itself was still serving `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260621-v2merge-10` on both `khmer-vox-web` and `khmer-vox-worker`. So the public staging site was an older frontend/backend than the current repo, which is why the user screenshot still showed the old clone UI with no Record Voice tab.
+- Directly verified on the fixer VPS (`178.128.103.120`) via `scripts/vps-ssh.py` that both deployments were still pinned to the old June 21 image.
+- Manually re-ran the staging rollout on the fixer VPS:
+  - `kubectl -n khmer-vox set image deployment/khmer-vox-web web=ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260629-39`
+  - `kubectl -n khmer-vox set image deployment/khmer-vox-worker worker=ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260629-39`
+  - waited for both rollouts to finish successfully.
+- Post-rollout verification on the fixer VPS:
+  - `khmer-vox-web` deployment now reports image `staging-20260629-39`
+  - `khmer-vox-worker` pod now reports image `staging-20260629-39`
+  - only the new web pod `khmer-vox-web-75c9875544-sf474` is running; the old June 21 replica set is scaled to 0.
+- Public fixer route `http://178.128.103.120:30080/app/dashboard/voice-cloning` returns HTTP 200 after the rollout.
+
+**Remaining user-facing note:**
+- If a browser still shows the old clone UI after this rollout, that is now a client-side cache issue, not a server image issue. Hard refresh (`Ctrl+F5`) or a new incognito window should pull the current frontend bundle from the new pod.
+
+## Voice recorder secure-context guard (2026-06-29, local-only)
+
+After the fixer VPS picked up the new Record Voice UI, user clicked the recorder on
+`http://178.128.103.120:30080/app/dashboard/voice-cloning` and the page showed:
+
+- `Cannot read properties of undefined (reading 'getUserMedia')`
+
+Root cause:
+
+- The fixer URL is served over plain HTTP on a raw IP + NodePort, not HTTPS.
+- Browsers only allow `navigator.mediaDevices.getUserMedia()` in a secure context
+  (`https://...`) or on `localhost`.
+- On this page, `navigator.mediaDevices` can be absent entirely, so the old
+  recorder code tried to read `navigator.mediaDevices.getUserMedia` and surfaced
+  a JavaScript error instead of explaining the real browser restriction.
+
+**Fix applied:**
+- `app/components/voice-recorder.tsx`
+  - Before calling `getUserMedia()`, detect `!window.isSecureContext` and show a
+    specific message: microphone recording needs HTTPS or localhost, so the browser
+    will not show the permission popup on the current fixer HTTP URL.
+  - Detect the case where `navigator.mediaDevices?.getUserMedia` is missing and
+    show a clear unsupported-context message instead of the raw undefined-property error.
+  - Added an explanatory UI block telling the user how to reach a context where the
+    browser is actually allowed to show the microphone permission alert.
+
+**Validation:**
+- `npx tsc --noEmit` passes clean.
+- `npm run lint -- app/components/voice-recorder.tsx` passes clean.
+
+**Deployment status:** LOCAL-ONLY at time of writing; redeploy fixer after commit.
 
 ## Root layout locale + build stability cleanup (2026-06-29, deployed prod-20260628-38)
 
