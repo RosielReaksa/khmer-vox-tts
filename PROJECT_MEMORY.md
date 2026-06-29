@@ -1,6 +1,83 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-29
+## Voice recorder playback timer fix (2026-06-29, local-only)
+
+User reported that after recording a reference voice, pressing Listen played the
+audio but the recorder timer stayed at `00:00` instead of showing playback time
+or the clip duration.
+
+Root cause in `app/components/voice-recorder.tsx`:
+
+- The large timer label rendered `formatTime(0)` for every non-recording state.
+- That means the component only ever showed elapsed time while actively
+  recording; once a clip reached the `done` state, playback metadata and current
+  time were not tracked or rendered.
+
+**Fix applied:**
+- `app/components/voice-recorder.tsx`
+  - Added `playbackTime` and `playbackDuration` state.
+  - Wired the hidden `<audio>` element to `onLoadedMetadata`,
+    `onDurationChange`, and `onTimeUpdate` so the recorder tracks clip length
+    and live playback position.
+  - Updated the timer display logic:
+    - `recording` state shows live record elapsed time
+    - `done` idle state shows the recorded clip duration
+    - `done` playing state shows the live playback counter
+  - Reset playback timing state when starting a new recording, when a new clip
+    is created, and when clearing a recording.
+
+**Validation:**
+- `npm run lint -- app/components/voice-recorder.tsx` passes clean.
+- `npx tsc --noEmit` passes clean.
+
+**Deployment status:** LOCAL-ONLY at time of writing.
+
+**Follow-up root cause found during local browser test:**
+- Some browser-recorded audio blobs report `audio.duration` as `Infinity` or
+  `NaN` during metadata loading / duration change.
+- The first timer patch started rendering audio-element timing, which exposed
+  this browser media quirk as `Infinity:NaN` in the large recorder timer.
+
+**Follow-up fix applied:**
+- Hardened `formatTime()` to return `00:00` for non-finite values.
+- Added `normalizeMediaSeconds()` so `duration` and `currentTime` are sanitized
+  before entering state.
+- Added `elapsedRef` to preserve the real recorded seconds from the recording
+  timer and use that as the fallback clip duration when browser metadata is
+  invalid.
+
+**Follow-up validation:**
+- `npm run lint -- app/components/voice-recorder.tsx` passes clean.
+- `npx tsc --noEmit` passes clean.
+
+**Second follow-up from local browser test:**
+- User reported two more recorder problems on `localhost`:
+  - after pressing `Listen`, the recorded clip played silently
+  - the live recorder visualizer barely reacted while speaking
+
+**Likely root cause in browser recorder path:**
+- The analyser path was using weak frequency-bin sampling with a very small FFT,
+  which can look visually dead on some browser mic streams even when input exists.
+- The recorder also had no explicit error path for empty returned blobs or audio
+  playback failures, so silent recordings could look superficially successful.
+
+**Second follow-up fix applied:**
+- `app/components/voice-recorder.tsx`
+  - Added `audioContextRef` lifecycle management and explicit cleanup.
+  - Resume the `AudioContext` after creation when it starts suspended.
+  - Switched visualizer sampling from frequency-domain bins to time-domain
+    amplitude and increased analyser FFT size for a more responsive live mic bar
+    display.
+  - Added an empty-recording guard: if the browser returns a zero-byte blob after
+    stop, the UI now shows a real error instead of pretending the clip is valid.
+  - Added `<audio onError>` handling so unplayable recorded clips surface a clear
+    message instead of failing silently.
+
+**Second follow-up validation:**
+- `npm run lint -- app/components/voice-recorder.tsx` passes clean.
+- `npx tsc --noEmit` passes clean.
+
 ## Recorded clone sample conversion hint fix (2026-06-29, local-only)
 
 User reported clone generation worked with uploaded voice files but failed when using the built-in Record Voice flow.
@@ -44,7 +121,7 @@ Root cause found in `app/components/voice-recorder.tsx` + `lib/tts-provider.ts`:
 **Remaining user-facing note:**
 - If a browser still shows the old clone UI after this rollout, that is now a client-side cache issue, not a server image issue. Hard refresh (`Ctrl+F5`) or a new incognito window should pull the current frontend bundle from the new pod.
 
-## Voice recorder secure-context guard (2026-06-29, local-only)
+## Voice recorder secure-context guard (2026-06-29, deployed to fixer)
 
 After the fixer VPS picked up the new Record Voice UI, user clicked the recorder on
 `http://178.128.103.120:30080/app/dashboard/voice-cloning` and the page showed:
@@ -74,7 +151,24 @@ Root cause:
 - `npx tsc --noEmit` passes clean.
 - `npm run lint -- app/components/voice-recorder.tsx` passes clean.
 
-**Deployment status:** LOCAL-ONLY at time of writing; redeploy fixer after commit.
+**Deployment status:** Deployed to fixer/staging VPS only.
+
+**Fixer VPS deploy (2026-06-29):**
+- Built and pushed image `ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260629-40` from commit `fe33026`.
+- Rolled fixer VPS (`178.128.103.120`) directly via `scripts/vps-ssh.py`:
+  - `kubectl -n khmer-vox set image deployment/khmer-vox-web web=ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260629-40`
+  - `kubectl -n khmer-vox set image deployment/khmer-vox-worker worker=ghcr.io/rosielreaksa/khmer-vox-tts:staging-20260629-40`
+- Verified rollout success:
+  - `khmer-vox-web` deployment image = `staging-20260629-40`
+  - `khmer-vox-worker` deployment image = `staging-20260629-40`
+  - running pods after rollout:
+    - `khmer-vox-web-695774d46d-7qljt` Ready 1/1
+    - `khmer-vox-worker-948989fdd-xxn8q` Ready 1/1
+- Public fixer route `http://178.128.103.120:30080/app/dashboard/voice-cloning` returns HTTP 200 after rollout.
+
+**User-facing behavior after deploy:**
+- The raw JavaScript error is replaced with a clear explanation that recording requires HTTPS or localhost.
+- This does not create a browser microphone permission popup on the fixer URL itself, because the fixer site is still served over plain HTTP on a raw IP address.
 
 ## Root layout locale + build stability cleanup (2026-06-29, deployed prod-20260628-38)
 

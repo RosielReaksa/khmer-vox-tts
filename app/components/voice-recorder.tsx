@@ -41,14 +41,18 @@ export default function VoiceRecorder({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const rafRef = useRef<number | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const isRecordingRef = useRef(false);
   const isStartingRef = useRef(false);
+  const elapsedRef = useRef(0);
 
   const [state, setState] = useState<RecorderState>("idle");
   const [elapsed, setElapsed] = useState(0);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [playing, setPlaying] = useState(false);
+  const [playbackTime, setPlaybackTime] = useState(0);
+  const [playbackDuration, setPlaybackDuration] = useState(0);
   const [barHeights, setBarHeights] = useState<number[]>(
     Array.from({ length: BAR_COUNT }, () => 0)
   );
@@ -62,6 +66,7 @@ export default function VoiceRecorder({
       stopTracks();
       stopTimer();
       stopRaf();
+      closeAudioContext();
       if (audioUrl) URL.revokeObjectURL(audioUrl);
     };
   }, [audioUrl]);
@@ -94,6 +99,16 @@ export default function VoiceRecorder({
     }
   }
 
+  function closeAudioContext() {
+    const audioContext = audioContextRef.current;
+    audioContextRef.current = null;
+    analyserRef.current = null;
+    if (!audioContext) return;
+    void audioContext.close().catch(() => {
+      // Ignore close errors during recorder cleanup.
+    });
+  }
+
   function stopTimer() {
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -109,30 +124,41 @@ export default function VoiceRecorder({
   }
 
   function formatTime(seconds: number): string {
+    if (!Number.isFinite(seconds) || seconds < 0) {
+      return "00:00";
+    }
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  }
+
+  function normalizeMediaSeconds(value: number, fallback = 0): number {
+    if (!Number.isFinite(value) || value < 0) {
+      return fallback;
+    }
+    return Math.floor(value);
   }
 
   function drawBars() {
     const analyser = analyserRef.current;
     if (!analyser) return;
 
-    const bufferLength = analyser.frequencyBinCount;
+    const bufferLength = analyser.fftSize;
     const dataArray = new Uint8Array(bufferLength);
-    analyser.getByteFrequencyData(dataArray);
+    analyser.getByteTimeDomainData(dataArray);
 
     // Sample down to BAR_COUNT bars
     const step = Math.floor(bufferLength / BAR_COUNT);
     const heights: number[] = [];
     for (let i = 0; i < BAR_COUNT; i++) {
-      let sum = 0;
+      let peak = 0;
       for (let j = 0; j < step; j++) {
-        sum += dataArray[i * step + j] ?? 0;
+        const sample = dataArray[i * step + j] ?? 128;
+        const distance = Math.abs(sample - 128) / 128;
+        peak = Math.max(peak, distance);
       }
-      const avg = sum / step;
+      heights.push(Math.min(1, peak * 3));
       // Normalize: 0-255 → 0-1
-      heights.push(avg / 255);
     }
     setBarHeights(heights);
 
@@ -143,7 +169,12 @@ export default function VoiceRecorder({
     if (disabled || isStartingRef.current) return;
     isStartingRef.current = true;
     setState("requesting");
+    setElapsed(0);
+    elapsedRef.current = 0;
     setErrorMsg("");
+    setPlaying(false);
+    setPlaybackTime(0);
+    setPlaybackDuration(0);
     setNeedsSecureContext(false);
     setRecordingUnsupported(false);
 
@@ -174,9 +205,14 @@ export default function VoiceRecorder({
       // Set up audio analyser for waveform visualization
       try {
         const audioCtx = new AudioContext();
+        audioContextRef.current = audioCtx;
+        if (audioCtx.state === "suspended") {
+          await audioCtx.resume();
+        }
         const source = audioCtx.createMediaStreamSource(stream);
         const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 64;
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.8;
         source.connect(analyser);
         analyserRef.current = analyser;
       } catch {
@@ -205,17 +241,27 @@ export default function VoiceRecorder({
         stopTracks();
         isRecordingRef.current = false;
         isStartingRef.current = false;
-
-        if (analyserRef.current) {
-          analyserRef.current.disconnect();
-          analyserRef.current = null;
-        }
+        closeAudioContext();
 
         const blob = new Blob(chunksRef.current, { type: mimeType });
+        if (blob.size === 0) {
+          setState("error");
+          setErrorMsg(
+            "Recording completed, but the browser returned empty audio. Check the selected microphone and try again.",
+          );
+          setPlaybackTime(0);
+          setPlaybackDuration(0);
+          stopTimer();
+          stopRaf();
+          setBarHeights(Array.from({ length: BAR_COUNT }, () => 0));
+          return;
+        }
         const file = new File([blob], `recording.${mimeType.includes("mp4") ? "mp4" : "webm"}`, {
           type: blob.type,
         });
         const url = URL.createObjectURL(blob);
+        setPlaybackTime(0);
+        setPlaybackDuration(elapsedRef.current);
         setAudioUrl(url);
         setState("done");
         onRecordingComplete(file);
@@ -227,6 +273,7 @@ export default function VoiceRecorder({
 
       recorder.onerror = () => {
         stopTracks();
+        closeAudioContext();
         isStartingRef.current = false;
         setState("error");
         setErrorMsg("Recording failed. Please try again.");
@@ -248,10 +295,13 @@ export default function VoiceRecorder({
       // Start elapsed timer
       const startTime = Date.now();
       timerRef.current = setInterval(() => {
-        setElapsed(Math.floor((Date.now() - startTime) / 1000));
+        const seconds = Math.floor((Date.now() - startTime) / 1000);
+        elapsedRef.current = seconds;
+        setElapsed(seconds);
       }, 200);
     } catch (err) {
       stopTracks();
+      closeAudioContext();
       isStartingRef.current = false;
       setState("error");
       if (err instanceof DOMException && err.name === "NotAllowedError") {
@@ -299,17 +349,21 @@ export default function VoiceRecorder({
   function clearRecording() {
     isRecordingRef.current = false;
     isStartingRef.current = false;
+    closeAudioContext();
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
     setPlaying(false);
+    setPlaybackTime(0);
+    setPlaybackDuration(0);
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl);
       setAudioUrl(null);
     }
     setState("idle");
     setElapsed(0);
+    elapsedRef.current = 0;
     setErrorMsg("");
     chunksRef.current = [];
     stopTimer();
@@ -326,11 +380,17 @@ export default function VoiceRecorder({
       setPlaying(false);
     } else {
       audio.currentTime = 0;
+      setPlaybackTime(0);
       audio.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
     }
   }
 
   const hasDoneFile = state === "done" && audioUrl;
+  const displayTime = state === "recording"
+    ? elapsed
+    : hasDoneFile
+      ? (playing ? playbackTime : (playbackDuration || playbackTime))
+      : 0;
 
   return (
     <div className="grid gap-2">
@@ -339,9 +399,37 @@ export default function VoiceRecorder({
         <audio
           ref={audioRef}
           src={audioUrl}
-          onEnded={() => setPlaying(false)}
+          onLoadedMetadata={(event) => {
+            const duration = normalizeMediaSeconds(
+              event.currentTarget.duration,
+              elapsedRef.current || playbackDuration,
+            );
+            setPlaybackDuration(duration);
+            setPlaybackTime(0);
+          }}
+          onDurationChange={(event) => {
+            const duration = normalizeMediaSeconds(
+              event.currentTarget.duration,
+              elapsedRef.current || playbackDuration,
+            );
+            setPlaybackDuration(duration);
+          }}
+          onTimeUpdate={(event) => {
+            setPlaybackTime(normalizeMediaSeconds(event.currentTarget.currentTime, 0));
+          }}
+          onEnded={() => {
+            setPlaying(false);
+            setPlaybackTime(0);
+          }}
           onPause={() => setPlaying(false)}
           onPlay={() => setPlaying(true)}
+          onError={() => {
+            setPlaying(false);
+            setState("error");
+            setErrorMsg(
+              "The browser could not play back this recorded clip. Try recording again or upload a reference file.",
+            );
+          }}
           preload="auto"
         />
       )}
@@ -385,7 +473,7 @@ export default function VoiceRecorder({
 
             {/* Timer */}
             <span className="font-headline text-3xl font-black tracking-[0.08em] text-white/90 tabular-nums">
-              {state === "recording" ? formatTime(elapsed) : formatTime(0)}
+              {formatTime(displayTime)}
             </span>
 
             {/* Recording indicator dot */}
