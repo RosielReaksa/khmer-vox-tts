@@ -347,19 +347,24 @@ function estimateMaxGenerateLength(text: string, mode: GenerationMode): number {
   const charCount = Array.from(text).length;
   const charsPerSecond = mode === "clone" ? 13 : 20;
   const paddingSeconds = mode === "clone" ? 4 : 2;
+  const latinChars = Array.from(text).filter((char) => /[A-Za-z]/.test(char)).length;
+  const mixedScriptBoostSeconds =
+    mode === "clone" && latinChars > 0
+      ? Math.min(18, Math.max(4, Math.ceil(latinChars / 6)))
+      : 0;
   const targetSeconds = Math.max(
     5,
-    Math.ceil(charCount / charsPerSecond) + paddingSeconds,
+    Math.ceil(charCount / charsPerSecond) + paddingSeconds + mixedScriptBoostSeconds,
   );
   const tokensPerSecond = readNumericEnv(
     "TTS_MAX_GENERATE_TOKENS_PER_SECOND",
-    9,
+    mode === "clone" ? 11 : 9,
     4,
     20,
   );
   const hardMax =
     mode === "clone"
-      ? readNumericEnv("TTS_CLONE_MAX_GENERATE_LENGTH", 1600, 100, 8192)
+      ? readNumericEnv("TTS_CLONE_MAX_GENERATE_LENGTH", 2200, 100, 8192)
       : readNumericEnv("TTS_MAX_GENERATE_LENGTH", 2400, 100, 8192);
 
   return Math.min(

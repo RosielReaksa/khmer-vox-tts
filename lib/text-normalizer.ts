@@ -51,8 +51,68 @@ const KHMER_DIGIT_MAP: Record<string, string> = {
   "៩": "9"
 };
 
+const MIXED_SCRIPT_LATIN_PHRASES: Array<[RegExp, string]> = [
+  [/\bopenai\b/giu, "អូផិនអេអាយ"],
+  [/\bchatgpt\b/giu, "ឆាតជីភីធី"],
+  [/\bapi\b/giu, "អេភីអាយ"],
+  [/\btts\b/giu, "ធីធីអេស"],
+  [/\bwav\b/giu, "វ៉េវ"],
+  [/\bmp3\b/giu, "អឹមភីបី"],
+  [/\bwebm\b/giu, "វេបអឹម"],
+  [/\bmp4\b/giu, "អឹមភីបួន"],
+  [/\bversion\b/giu, "វើសិន"],
+  [/\bvoice\b/giu, "វ៉យស៍"],
+  [/\bclone\b/giu, "ក្លូន"],
+  [/\benglish\b/giu, "អង់គ្លេស"],
+  [/\bkhmer\b/giu, "ខ្មែរ"],
+];
+
+const MIXED_SCRIPT_ACRONYM_MAP: Record<string, string> = {
+  A: "អេ",
+  B: "ប៊ី",
+  C: "ស៊ី",
+  D: "ឌី",
+  E: "អ៊ី",
+  F: "អេហ្វ",
+  G: "ជី",
+  H: "អេច",
+  I: "អាយ",
+  J: "ជេ",
+  K: "ខេ",
+  L: "អែល",
+  M: "អឹម",
+  N: "អិន",
+  O: "អូ",
+  P: "ភី",
+  Q: "ឃ្យូ",
+  R: "អារ",
+  S: "អេស",
+  T: "ធី",
+  U: "យូ",
+  V: "វី",
+  W: "ដាប់ប៊លយូ",
+  X: "អិច",
+  Y: "វ៉ាយ",
+  Z: "ហ្សិត",
+};
+
 function normalizeKhmerDigits(text: string): string {
   return text.replace(/[០-៩]/g, (char) => KHMER_DIGIT_MAP[char] ?? char);
+}
+
+function replaceMixedScriptLatin(text: string): string {
+  let normalized = text;
+
+  for (const [pattern, replacement] of MIXED_SCRIPT_LATIN_PHRASES) {
+    normalized = normalized.replace(pattern, replacement);
+  }
+
+  normalized = normalized.replace(/\b[A-Z]{2,}\b/g, (token) => {
+    const letters = Array.from(token).map((char) => MIXED_SCRIPT_ACRONYM_MAP[char]);
+    return letters.every(Boolean) ? letters.join("") : token;
+  });
+
+  return normalized;
 }
 
 export function integerToKhmerWords(num: number): string {
@@ -232,7 +292,9 @@ function shouldUseKhmerNumberNormalizer(text: string): boolean {
     }
   }
 
-  return khmerChars > 0 && khmerChars >= latinChars;
+  if (khmerChars === 0) return false;
+  if (latinChars === 0) return true;
+  return khmerChars >= 4 || khmerChars >= Math.ceil(latinChars / 2);
 }
 
 export function normalizeText(text: string): string {
@@ -244,6 +306,7 @@ export function normalizeText(text: string): string {
     return normalized;
   }
 
+  normalized = replaceMixedScriptLatin(normalized);
   normalized = replacePhoneNumbers(normalized);
   normalized = replaceDates(normalized);
   normalized = replaceYears(normalized);

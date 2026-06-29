@@ -1,7 +1,84 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-29
-## Voice recorder playback timer fix (2026-06-29, local-only)
+## Mixed Khmer+English clone instability analysis + mitigation (2026-06-30, local-only)
+
+User provided two generated clone WAVs from `D:\ads testss\` and reported:
+
+1. `voxtts-clone-b61e20a7-592b-4464-8b8a-8091d9c5ee2f.wav`
+   - Khmer with some English produced a harsh "machine crash" / buzzing artifact.
+2. `voxtts-clone-5e40601a-f417-4a0d-acd6-15ae96d41b64.wav`
+   - Khmer speech sounded mostly good, but the ending felt cut off / incomplete.
+
+**Measured facts from the files:**
+- `b61e20a7...wav`
+  - duration: `38.56s`
+  - spectral profile is not globally muffled or silence-trimmed; longest simple
+    tonal run measured locally was only about `0.60s`, so this was not a final
+    trailing-tail chop.
+- `5e40601a...wav`
+  - duration: `10.28s`
+  - the waveform stays loud right up to the final sample; there is effectively
+    `0s` of trailing zero/silence pad.
+  - This strongly indicates the model stopped generation early, not that the
+    app's final pause-capping / WAV-finalization stage cut off the tail.
+
+**Likely root causes identified in current source:**
+- Mixed Khmer + Latin text was mostly passed through unchanged by
+  `prepareTextForSpeech()` / `normalizeText()`.
+- VoxCPM2 clone path is much more stable when the actual spoken text is Khmer-
+  dominant and does not contain raw Latin tokens/acronyms like `API`, `OpenAI`,
+  `version`, `TTS`, etc.
+- `estimateMaxGenerateLength()` in `lib/tts-provider.ts` used a character-based
+  heuristic that underestimates mixed-script clone requests. Khmer mixed with
+  English commonly consumes more tokens than this estimate assumes, which can
+  cause the upstream to stop before the final phrase.
+
+**Fix applied locally:**
+- `lib/text-normalizer.ts`
+  - Added a mixed-script Latin rewrite path for Khmer-containing text.
+  - Common risky English tokens/acronyms are now converted to safer Khmer
+    speakable forms before synthesis, for example:
+    - `OpenAI` -> `អូផិនអេអាយ`
+    - `API` -> `អេភីអាយ`
+    - `TTS` -> `ធីធីអេស`
+    - `WAV` -> `វ៉េវ`
+    - `version` -> `វើសិន`
+  - Uppercase acronyms in Khmer-dominant text are expanded letter-by-letter
+    into Khmer pronunciations instead of being sent raw to VoxCPM2.
+  - Loosened the Khmer-dominant gate so normalization still activates when text
+    contains meaningful Khmer plus some Latin, instead of requiring Khmer chars
+    to outnumber Latin chars exactly.
+- `lib/tts-provider.ts`
+  - Increased clone-side `estimateMaxGenerateLength()` headroom.
+  - Clone now uses a higher default token-per-second budget (`11` instead of `9`)
+    and adds extra generation headroom when Latin letters are present.
+  - Increased default `TTS_CLONE_MAX_GENERATE_LENGTH` fallback from `1600` to
+    `2200` so mixed Khmer+English clone text is less likely to stop before the
+    final phrase.
+
+**Why this is the chosen fix:**
+- The second WAV proved the tail was not cut by the final silence/trim pipeline;
+  the audio remained energetic until the last sample. That points upstream.
+- The first WAV symptom is consistent with VoxCPM2 instability around raw Latin
+  runs embedded in Khmer speech, which the current sanitizer/normalizer did not
+  rewrite.
+- This fix is narrow and upstream-sympathetic: make the spoken text safer and
+  give the model more room to finish, rather than adding more destructive audio
+  post-processing.
+
+**Validation:**
+- Added focused regression test: `lib/text-normalizer.test.ts`
+  - verifies pure English stays unchanged
+  - verifies mixed Khmer+English rewrites risky Latin tokens
+  - verifies uppercase acronyms expand in Khmer-dominant text
+- `node --test lib/text-normalizer.test.ts` passes
+- `npx tsc --noEmit` passes
+- `npm run build` passes clean
+
+**Deployment status:** LOCAL-ONLY at time of writing.
+
+## Voice recorder playback timer fix (2026-06-29, deployed prod-20260629-40)
 
 User reported that after recording a reference voice, pressing Listen played the
 audio but the recorder timer stayed at `00:00` instead of showing playback time
@@ -31,7 +108,7 @@ Root cause in `app/components/voice-recorder.tsx`:
 - `npm run lint -- app/components/voice-recorder.tsx` passes clean.
 - `npx tsc --noEmit` passes clean.
 
-**Deployment status:** LOCAL-ONLY at time of writing.
+**Deployment status:** Deployed to production.
 
 **Follow-up root cause found during local browser test:**
 - Some browser-recorded audio blobs report `audio.duration` as `Infinity` or
@@ -77,6 +154,24 @@ Root cause in `app/components/voice-recorder.tsx`:
 **Second follow-up validation:**
 - `npm run lint -- app/components/voice-recorder.tsx` passes clean.
 - `npx tsc --noEmit` passes clean.
+
+**Production deploy (2026-06-29):**
+- Commit: `92f299f`
+- GitHub Actions deploy run: `28387545372`
+- Production image tag: `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260629-40`
+- Workflow result:
+  - Build and Push Image succeeded in 2m20s
+  - Deploy to production succeeded in 1m22s
+- Post-deploy verification:
+  - `https://voxtts.online/api/health` returned `{"status":"ok","store":"postgres"}`
+  - `https://voxtts.online/app/dashboard/voice-cloning` returned HTTP 200
+
+**User-facing result:**
+- Record Voice now keeps a stable timer after recording instead of getting stuck
+  at `00:00` or showing `Infinity:NaN`.
+- Live mic bars are more responsive while speaking.
+- Browser-returned empty / unplayable recordings now surface explicit errors
+  instead of failing silently.
 
 ## Recorded clone sample conversion hint fix (2026-06-29, local-only)
 
