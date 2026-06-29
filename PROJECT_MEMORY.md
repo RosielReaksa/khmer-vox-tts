@@ -1,7 +1,7 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-06-29
-## Mixed Khmer+English clone instability analysis + mitigation (2026-06-30, local-only)
+Last updated: 2026-06-30
+## Mixed Khmer+English clone instability analysis + mitigation (2026-06-30, deployed prod-20260629-41)
 
 User provided two generated clone WAVs from `D:\ads testss\` and reported:
 
@@ -76,7 +76,18 @@ User provided two generated clone WAVs from `D:\ads testss\` and reported:
 - `npx tsc --noEmit` passes
 - `npm run build` passes clean
 
-**Deployment status:** LOCAL-ONLY at time of writing.
+**Production deploy (2026-06-30):**
+- Commit: `53fb2b2`
+- GitHub Actions deploy run: `28393630557`
+- Production image tag: `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260629-41`
+- Workflow result:
+  - Build and Push Image succeeded in 3m5s
+  - Deploy to production succeeded in 1m28s
+- Post-deploy verification:
+  - `https://voxtts.online/api/health` returned `{"status":"ok","store":"postgres"}`
+  - `https://voxtts.online/app/dashboard/voice-cloning` returned HTTP 200
+
+**Deployment status:** Deployed to production.
 
 ## Voice recorder playback timer fix (2026-06-29, deployed prod-20260629-40)
 
