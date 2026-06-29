@@ -1,6 +1,33 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-29
+## Recorded clone sample conversion hint fix (2026-06-29, local-only)
+
+User reported clone generation worked with uploaded voice files but failed when using the built-in Record Voice flow.
+
+Root cause found in `app/components/voice-recorder.tsx` + `lib/tts-provider.ts`:
+
+- The browser recorder creates `File` objects as `audio/webm;codecs=opus`, `audio/webm`, or `audio/mp4`.
+- `/api/generate-clone` correctly forwards those bytes as the clone reference sample.
+- But `normalizeCloneSampleForUpstream()` in `lib/tts-provider.ts` piped the bytes into ffmpeg as `pipe:0` without giving ffmpeg an explicit input container hint.
+- Uploaded files usually arrive as WAV/MP3 and probe cleanly. Browser-recorded WebM/MP4 clips are much more sensitive to format probing from stdin, so the conversion step could fail before the reference was normalized to 16 kHz mono WAV for VoxCPM2.
+
+**Fix applied:**
+- `lib/tts-provider.ts`
+  - Added `cloneSampleInputFormat(sample)` to infer `wav`, `mp3`, `mp4`, or `webm` from clone sample MIME type / filename.
+  - `normalizeCloneSampleForUpstream()` now passes `-f <format>` to ffmpeg before `-i pipe:0` when the input format is known.
+  - Updated the user-facing reference-audio conversion error text to mention supported recorded formats (`WAV, MP3, WebM, or MP4`) instead of only `WAV or MP3`.
+
+**Why this should fix the user report:**
+- Recorder samples are the only path that commonly produces `audio/webm;codecs=opus` / `audio/mp4`.
+- Giving ffmpeg the explicit container format removes ambiguity when decoding recorder bytes from stdin, so recorded samples should now normalize the same way uploaded samples already do.
+
+**Validation:**
+- `npx tsc --noEmit` passes clean.
+- `npm run lint -- lib/tts-provider.ts` passes clean.
+
+**Deployment status:** LOCAL-ONLY. Not built, not deployed yet.
+
 ## Root layout locale + build stability cleanup (2026-06-29, deployed prod-20260628-38)
 
 User asked to "fix it step by step" after a project review found three concrete issues:

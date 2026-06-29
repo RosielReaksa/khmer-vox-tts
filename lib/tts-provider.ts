@@ -175,6 +175,29 @@ function upstreamErrorMessage(body: unknown, fallback: string): string {
   return errorTextFromValue(body) ?? fallback;
 }
 
+function cloneSampleInputFormat(sample: CloneSample): string | null {
+  const mime = sample.mimeType.trim().toLowerCase();
+  const fileName = sample.fileName?.trim().toLowerCase() ?? "";
+
+  if (mime === "audio/wav" || mime === "audio/x-wav" || fileName.endsWith(".wav")) {
+    return "wav";
+  }
+  if (
+    mime === "audio/mpeg" ||
+    mime === "audio/mp3" ||
+    fileName.endsWith(".mp3")
+  ) {
+    return "mp3";
+  }
+  if (mime === "audio/mp4" || fileName.endsWith(".mp4") || fileName.endsWith(".m4a")) {
+    return "mp4";
+  }
+  if (mime === "audio/webm" || mime.startsWith("audio/webm") || fileName.endsWith(".webm")) {
+    return "webm";
+  }
+  return null;
+}
+
 async function normalizeCloneSampleForUpstream(
   sample: CloneSample,
 ): Promise<CloneSample> {
@@ -183,11 +206,13 @@ async function normalizeCloneSampleForUpstream(
       "TTS_REFERENCE_AUDIO_FILTER",
       DEFAULT_REFERENCE_AUDIO_FILTER,
     );
+    const inputFormat = cloneSampleInputFormat(sample);
     const wavBytes = await runFfmpeg(
       [
         "-hide_banner",
         "-loglevel",
         "error",
+        ...(inputFormat ? ["-f", inputFormat] : []),
         "-i",
         "pipe:0",
         ...audioFilterArgs(referenceFilter),
@@ -225,14 +250,14 @@ async function normalizeCloneSampleForUpstream(
     if (error instanceof TtsProviderError) {
       if (error.status >= 500) {
         throw new TtsProviderError(
-          "Reference audio could not be converted. Upload a clear WAV or MP3 voice sample.",
+          "Reference audio could not be converted. Upload a clear WAV, MP3, WebM, or MP4 voice sample.",
           400,
         );
       }
       throw error;
     }
     throw new TtsProviderError(
-      "Reference audio could not be processed. Upload a clear WAV or MP3 voice sample.",
+      "Reference audio could not be processed. Upload a clear WAV, MP3, WebM, or MP4 voice sample.",
       400,
     );
   }
