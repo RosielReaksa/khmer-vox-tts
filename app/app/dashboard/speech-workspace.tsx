@@ -1542,7 +1542,7 @@ function AudioResultPanel({
                 <p className="mt-1 text-sm font-body font-medium leading-relaxed text-[#5e211b]">{error}</p>
               </div>
             </div>
-            <div className="grid grid-cols-2 border-t-2 border-primary bg-white md:grid-cols-4">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(5.75rem,1fr))] gap-[2px] border-t-2 border-primary bg-primary">
               <PanelMetaCell label="Mode" value={isCloneMode ? "Clone" : "TTS"} />
               <PanelMetaCell label="Input" value={`${text.trim().length} chars`} />
               <PanelMetaCell label="Reference" value={isCloneMode ? (hasReference ? "Ready" : "Missing") : "Preset"} />
@@ -1573,7 +1573,7 @@ function AudioResultPanel({
                 Download audio
               </a>
             </div>
-            <div className="grid grid-cols-2 border-t-2 border-primary bg-[#f5f0e8]/80 lg:grid-cols-4">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(5.75rem,1fr))] gap-[2px] border-t-2 border-primary bg-primary">
               <PanelMetaCell label="Credits" value={result.creditsCharged.toLocaleString()} />
               <PanelMetaCell label="Remaining" value={result.remainingTokens.toLocaleString()} />
               <PanelMetaCell label="Duration" value={formatDuration(result.outputSeconds)} />
@@ -1601,7 +1601,7 @@ function AudioResultPanel({
                 </p>
               </div>
             </div>
-            <div className="grid grid-cols-2 border-t-2 border-primary bg-[#f5f0e8]/80 md:grid-cols-4">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(5.75rem,1fr))] gap-[2px] border-t-2 border-primary bg-primary">
               <PanelMetaCell label="Mode" value={isCloneMode ? "Clone" : "TTS"} />
               <PanelMetaCell label="Input" value={`${text.trim().length} chars`} />
               <PanelMetaCell label="Reference" value={isCloneMode ? (hasReference ? "Ready" : "Waiting") : "Preset"} />
@@ -1670,9 +1670,9 @@ function StatusPill({
 
 function PanelMetaCell({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 border-r-2 border-primary px-3 py-3 text-center even:border-r-0 lg:px-4 lg:even:border-r-2 lg:last:border-r-0">
-      <p className="text-[9px] font-headline font-black uppercase tracking-[0.03em] text-[#4a4a4a]">{label}</p>
-      <p className="mt-1 break-words text-[13px] font-headline font-black uppercase leading-tight tracking-tight text-primary sm:text-sm">
+    <div className="min-w-0 bg-[#f5f0e8] px-3 py-3 text-center">
+      <p className="text-[9px] font-headline font-black uppercase text-[#4a4a4a]">{label}</p>
+      <p className="mt-1 text-[13px] font-headline font-black uppercase leading-tight text-primary [overflow-wrap:anywhere] sm:text-sm">
         {value}
       </p>
     </div>

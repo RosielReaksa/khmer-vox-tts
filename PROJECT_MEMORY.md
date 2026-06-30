@@ -1,6 +1,28 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-30
+## Dashboard result metadata wrap fix (2026-06-30, local-only)
+
+User showed the Audio Result panel in a narrow desktop/tablet-width column where
+the footer metadata row forced four columns and crushed labels/values such as
+`REMAINING`, `DURATION`, and `VOX CPM 2`.
+
+**Fix applied locally:**
+- `app/app/dashboard/speech-workspace.tsx`
+  - Replaced viewport-based `md/lg:grid-cols-4` metadata grids with
+    `auto-fit` / `minmax(5.75rem, 1fr)` tracks so the card responds to its real
+    available width instead of the full browser viewport.
+  - Changed the metadata grid separators to use a small grid gap with primary
+    background, avoiding broken border rules when the column count changes.
+  - Removed extra letter spacing from tiny metadata labels and added
+    `[overflow-wrap:anywhere]` for values so long model names wrap cleanly.
+
+**Validation:**
+- `npm run lint -- app/app/dashboard/speech-workspace.tsx` passes.
+- `npx tsc --noEmit` passes.
+
+**Deployment status:** Local-only, not deployed.
+
 ## Dashboard queued-job polling survives Cloudflare 403 challenges (2026-06-30, deployed prod-20260630-43)
 
 User reported the Generate Speech dashboard sometimes showed a red
