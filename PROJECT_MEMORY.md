@@ -1,6 +1,101 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-30
+## Dashboard audio-result panel redesign (2026-06-30, local-only)
+
+User wanted the dashboard generate/result panel restyled toward a cleaner
+reference card without copying fake telemetry or changing generation behavior.
+
+**Scope:**
+- `app/app/dashboard/speech-workspace.tsx`
+  - redesigned `AudioResultPanel`
+  - redesigned `GeneratingState`
+  - added small local helper components `StatusPill` and `PanelMetaCell`
+  - removed now-unused `ResultStat`
+
+**What changed:**
+- Kept all existing generation logic, polling behavior, playback, and download
+  wiring unchanged.
+- Reworked the panel into a stronger card hierarchy:
+  - header strip with workspace context + live status pill
+  - cleaner generating state with circular progress treatment
+  - richer success state with real delivery metadata only
+  - more structured error state with next-step hints
+  - no fake labels like checksum/session/system-ready
+- Clone-mode checklist remains, but now sits in a calmer footer section that
+  matches the new panel composition.
+- Follow-up adjustment after local preview on a narrow/mobile-width panel:
+  - removed the generating-state text/progress/metadata strip entirely because
+    it broke the small layout and felt visually noisy.
+  - generating now shows only a centered icon with an always-spinning circular
+    ring until audio finishes, matching the approved reference direction.
+- Second follow-up after local preview of the ready state:
+  - success panel header/footer metadata was still too rigid for a very narrow
+    viewport, causing text overflow/truncation.
+  - adjusted the success layout to stack more gracefully on small widths and
+    let metadata values wrap/break instead of visually colliding.
+  - updated `LineAudioPlayer` loading copy from `Loading audio...` to
+    `Preparing player...` because the generation is already done at that point;
+    the remaining work is only browser-side audio fetch/decode for the custom
+    seekable player.
+
+**Why this approach:**
+- The provided reference had useful hierarchy and spacing, but its fake machine
+  telemetry would reduce trust in a real product flow.
+- This keeps the stronger visual direction while preserving the existing
+  dashboard language and only showing real product data.
+
+**Validation:**
+- `npx tsc --noEmit` passes.
+- `npm run lint -- app/app/dashboard/speech-workspace.tsx` passes clean.
+
+**Deployment status:** Local-only, not deployed yet.
+
+## Voice-cloning page blocked by proxy-wide 429 limiter (2026-06-30, local-only)
+
+User reported that opening `https://voxtts.online/app/dashboard/voice-cloning`
+sometimes rendered raw JSON instead of the app:
+
+- `{"error":"Too many requests. Please try again later."}`
+
+Root cause found in `proxy.ts`:
+
+- The proxy-level in-memory limiter (`isRateLimited`) was applied to every
+  non-static request, not just API traffic.
+- That included normal dashboard HTML/RSC navigations such as
+  `/app/dashboard/voice-cloning`.
+- The dashboard can legitimately generate many requests while loaded, and once
+  the per-IP proxy window tripped, the page request itself was rejected with a
+  direct `429` JSON response before React rendered.
+- This overlapped badly with the real route-level usage limiter already enforced
+  inside the generation API routes (`/api/generate`, `/api/generate-clone`,
+  batch endpoints, auth endpoints).
+
+**Fix applied:**
+- `proxy.ts`
+  - Added `isApiRoute = pathname.startsWith("/api/")`.
+  - Restricted the coarse proxy IP limiter to API routes only.
+  - Left page routes, dashboard navigations, and other non-API app requests
+    outside that coarse limiter so the voice-cloning page can render normally.
+  - Kept admin mutation limiting and the dedicated route-level usage limiter
+    behavior unchanged.
+
+**Why this is the correct fix:**
+- The screenshot error text exactly matches the direct proxy response body in
+  `proxy.ts`, so the failure happened before the request reached the page code.
+- The app already has finer-grained request/concurrency control in
+  `lib/rate-limit.ts` and the relevant API routes, so keeping a second broad
+  proxy limiter on page navigations was unnecessary and harmful.
+- Next.js 16 proxy docs explicitly note that proxy runs before routes are
+  rendered and should be carefully scoped with matchers/conditions; applying a
+  coarse limiter to every route was too broad for this dashboard.
+
+**Validation:**
+- `npx tsc --noEmit` passes.
+- `npm run build` passes clean on Next.js `16.2.6`.
+
+**Deployment status:** Local-only, not deployed yet.
+
 ## Mixed Khmer+English clone instability analysis + mitigation (2026-06-30, deployed prod-20260629-41)
 
 User provided two generated clone WAVs from `D:\ads testss\` and reported:

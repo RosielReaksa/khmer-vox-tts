@@ -1438,82 +1438,138 @@ function AudioResultPanel({
   mode: "tts" | "clone";
   updatedLabel: string;
 }) {
+  const hasResult = Boolean(result && audioUrl);
+  const hasReference = usingSavedVoice || sampleFile !== null;
+  const permissionReady = usingSavedVoice || voiceConsent;
+  const liveState = busy ? "Generating" : error ? "Needs attention" : hasResult ? "Ready" : "Idle";
+
   return (
-    <aside className="border-4 border-primary bg-surface-bright p-5 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] grid gap-5">
-      <div className="flex items-center justify-between gap-3 border-b-4 border-primary pb-2">
-        <h2 className="font-headline font-black text-lg uppercase tracking-tight text-primary">Audio result</h2>
-        <span className="text-primary font-black">
-          <ChevronUpIcon />
-        </span>
+    <aside className="overflow-hidden border-4 border-primary bg-surface-bright shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]">
+      <div className="flex items-center justify-between gap-3 border-b-4 border-primary bg-[#f5f0e8] px-5 py-3">
+        <div className="flex items-center gap-2">
+          <span className="flex h-9 w-9 items-center justify-center border-2 border-primary bg-white text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+            {hasResult ? <MiniWaveIcon /> : <SpeakerIcon />}
+          </span>
+          <div>
+            <h2 className="font-headline font-black text-lg uppercase tracking-tight text-primary">Audio result</h2>
+            <p className="text-[10px] font-headline font-bold uppercase text-[#4a4a4a]">
+              {isCloneMode ? "Clone voice workspace" : "Standard TTS workspace"}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <StatusPill
+            label={liveState}
+            tone={busy ? "warn" : error ? "danger" : hasResult ? "success" : "idle"}
+          />
+          <span className="text-primary font-black">
+            <ChevronUpIcon />
+          </span>
+        </div>
       </div>
 
       <div
         role="status"
         aria-live="polite"
         aria-atomic="true"
-        className={`border-4 border-primary p-4 shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] ${
+        className={`m-5 border-4 border-primary shadow-[3px_3px_0px_0px_rgba(26,26,26,1)] ${
           error
             ? "bg-[#ffdad6]"
-            : result
+            : hasResult
               ? "bg-[#def3e5]"
-              : "bg-white"
+              : busy
+                ? "bg-[#fef9f1]"
+                : "bg-white"
         }`}
       >
         {busy ? (
-          <>
-            <InjectVoxEqKeyframes />
-            <GeneratingState progress={progress} />
-          </>
+          <GeneratingState progress={progress} />
         ) : error ? (
-          <div className="grid gap-2 text-xs font-headline font-bold uppercase text-red-700">
-            <p className="font-black text-sm">Needs attention</p>
-            <p className="leading-relaxed font-body normal-case font-medium">{error}</p>
-          </div>
-        ) : result && audioUrl ? (
-          <div className="grid gap-4">
-            <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center border-2 border-primary bg-[#ffcc00] text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-                <MiniWaveIcon />
+          <div className="grid gap-5 p-5">
+            <div className="flex items-start gap-3">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center border-2 border-primary bg-[#ffb3ab] text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+                <InfoIcon />
               </span>
-              <div>
-                <p className="font-headline font-black text-sm uppercase text-primary">Ready</p>
-                <p className="text-[10px] font-headline font-bold uppercase text-primary">{updatedLabel}</p>
+              <div className="min-w-0">
+                <p className="font-headline font-black text-sm uppercase text-red-700">Needs attention</p>
+                <p className="mt-1 text-sm font-body font-medium leading-relaxed text-[#5e211b]">{error}</p>
               </div>
             </div>
-            <LineAudioPlayer src={audioUrl} durationHint={result.outputSeconds} />
-            <a
-              href={audioUrl}
-              download={`voxtts-${mode}-${result.generationId}.${extensionFor(result.contentType)}`}
-              className="inline-flex h-11 items-center justify-center border-2 border-primary bg-white text-xs font-headline uppercase font-black text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#eee9e0] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all cursor-pointer"
-            >
-              Download audio
-            </a>
-            <div className="grid grid-cols-2 gap-2 mt-2">
-              <ResultStat label="Credits" value={result.creditsCharged.toLocaleString()} />
-              <ResultStat label="Remaining" value={result.remainingTokens.toLocaleString()} />
-              <ResultStat label="Duration" value={`${result.outputSeconds}s`} />
-              <ResultStat label="Model" value={result.model} />
+            <div className="grid grid-cols-2 border-t-2 border-primary bg-white md:grid-cols-4">
+              <PanelMetaCell label="Mode" value={isCloneMode ? "Clone" : "TTS"} />
+              <PanelMetaCell label="Input" value={`${text.trim().length} chars`} />
+              <PanelMetaCell label="Reference" value={isCloneMode ? (hasReference ? "Ready" : "Missing") : "Preset"} />
+              <PanelMetaCell label="Next step" value={isCloneMode && !permissionReady ? "Confirm" : "Retry"} />
+            </div>
+          </div>
+        ) : hasResult && result ? (
+          <div className="grid gap-0">
+            <div className="flex flex-col gap-3 border-b-2 border-primary px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="flex h-11 w-11 items-center justify-center border-2 border-primary bg-[#ffcc00] text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+                  <MiniWaveIcon />
+                </span>
+                <div className="min-w-0">
+                  <p className="font-headline font-black text-sm uppercase leading-tight text-primary">Audio ready</p>
+                  <p className="text-[10px] font-headline font-bold uppercase text-[#4a4a4a]">{updatedLabel}</p>
+                </div>
+              </div>
+              <StatusPill label={isCloneMode ? "Clone output" : "TTS output"} tone="success" />
+            </div>
+            <div className="grid gap-4 px-4 py-5 sm:px-5">
+              <LineAudioPlayer src={audioUrl} durationHint={result.outputSeconds} />
+              <a
+                href={audioUrl}
+                download={`voxtts-${mode}-${result.generationId}.${extensionFor(result.contentType)}`}
+                className="inline-flex h-11 items-center justify-center border-2 border-primary bg-white text-xs font-headline uppercase font-black text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] hover:bg-[#eee9e0] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all cursor-pointer"
+              >
+                Download audio
+              </a>
+            </div>
+            <div className="grid grid-cols-2 border-t-2 border-primary bg-[#f5f0e8]/80 lg:grid-cols-4">
+              <PanelMetaCell label="Credits" value={result.creditsCharged.toLocaleString()} />
+              <PanelMetaCell label="Remaining" value={result.remainingTokens.toLocaleString()} />
+              <PanelMetaCell label="Duration" value={formatDuration(result.outputSeconds)} />
+              <PanelMetaCell label="Model" value={result.model} />
+            </div>
+            <div className="flex flex-col gap-1 border-t-2 border-primary bg-white px-4 py-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-2 sm:px-5">
+              <span className="min-w-0 break-all text-[10px] font-mono font-semibold uppercase tracking-wide text-[#4a4a4a]">
+                Generation {result.generationId.slice(0, 8)}
+              </span>
+              <span className="min-w-0 break-words text-[10px] font-mono font-semibold uppercase tracking-wide text-[#4a4a4a]">
+                {result.upstreamRequestId ? `Upstream ${result.upstreamRequestId.slice(0, 10)}` : "Local delivery ready"}
+              </span>
             </div>
           </div>
         ) : (
-          <div className="grid place-items-center gap-4 py-12 text-center text-primary">
-            <span className="flex h-16 w-16 items-center justify-center border-4 border-primary bg-[#eee9e0] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
-              <SpeakerIcon />
-            </span>
-            <div>
-              <p className="font-headline font-black text-sm uppercase">No audio yet</p>
-              <p className="mt-1 text-xs font-headline font-bold uppercase text-[#4a4a4a]">Your generated speech will appear here.</p>
+          <div className="grid gap-0">
+            <div className="grid place-items-center gap-4 px-5 py-12 text-center text-primary">
+              <span className="flex h-16 w-16 items-center justify-center border-4 border-primary bg-[#eee9e0] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+                <SpeakerIcon />
+              </span>
+              <div>
+                <p className="font-headline font-black text-sm uppercase">No audio yet</p>
+                <p className="mt-1 text-xs font-body font-medium text-[#4a4a4a]">
+                  Generate speech and the player, download link, and delivery stats will appear here.
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 border-t-2 border-primary bg-[#f5f0e8]/80 md:grid-cols-4">
+              <PanelMetaCell label="Mode" value={isCloneMode ? "Clone" : "TTS"} />
+              <PanelMetaCell label="Input" value={`${text.trim().length} chars`} />
+              <PanelMetaCell label="Reference" value={isCloneMode ? (hasReference ? "Ready" : "Waiting") : "Preset"} />
+              <PanelMetaCell label="Permission" value={isCloneMode ? (permissionReady ? "Ready" : "Pending") : "Not needed"} />
             </div>
           </div>
         )}
       </div>
 
       {isCloneMode ? (
-        <div className="border-t-4 border-primary pt-4">
-          <p className="text-xs font-headline font-black uppercase text-primary mb-4">Status Checklist</p>
+        <div className="border-t-4 border-primary bg-[#f5f0e8] px-5 py-4">
+          <p className="mb-4 text-xs font-headline font-black uppercase text-primary">Status checklist</p>
           <div className="grid gap-4">
-            <StatusStep done={usingSavedVoice || sampleFile !== null} label="Reference audio" value={usingSavedVoice ? "Saved voice selected" : (sampleFile ? "Uploaded" : "Not uploaded")} />
-            <StatusStep done={usingSavedVoice || voiceConsent} label="Permission" value={usingSavedVoice ? "Confirmed (saved)" : (voiceConsent ? "Confirmed" : "Pending")} />
+            <StatusStep done={hasReference} label="Reference audio" value={usingSavedVoice ? "Saved voice selected" : (sampleFile ? "Uploaded" : "Not uploaded")} />
+            <StatusStep done={permissionReady} label="Permission" value={usingSavedVoice ? "Confirmed (saved)" : (voiceConsent ? "Confirmed" : "Pending")} />
             <StatusStep done={text.trim().length > 0} label="Text input" value={text.trim() ? "Ready" : "Waiting"} />
             <StatusStep done={Boolean(result)} label="Audio ready" value={result ? "Ready" : "Waiting"} />
           </div>
@@ -1523,62 +1579,55 @@ function AudioResultPanel({
   );
 }
 
-function InjectVoxEqKeyframes() {
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    const id = "voxeq-keyframes";
-    if (document.getElementById(id)) return;
-    const el = document.createElement("style");
-    el.id = id;
-    el.textContent = "@keyframes voxeq { 0%, 100% { height: 20%; } 50% { height: 100%; } }";
-    document.head.appendChild(el);
-  }, []);
-  return null;
+function GeneratingState({ progress }: { progress: string }) {
+  const progressCopy = progress.replace(/^Generating:\s*/i, "").trim() || "Generating audio";
+  return (
+    <div className="grid place-items-center px-5 py-10 sm:py-12">
+      <div className="relative flex min-h-[240px] w-full items-center justify-center overflow-hidden bg-[#fef9f1]">
+        <span className="absolute h-28 w-28 rounded-full border-[7px] border-[#d9d4cb]" aria-hidden="true" />
+        <span
+          className="absolute h-28 w-28 rounded-full border-[7px] border-transparent border-t-[#10b981] animate-spin"
+          aria-hidden="true"
+        />
+        <span className="relative z-10 flex h-14 w-14 items-center justify-center border-2 border-primary bg-white text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
+          <MiniWaveIcon />
+        </span>
+        <span className="sr-only">{progressCopy}</span>
+      </div>
+    </div>
+  );
 }
 
-function GeneratingState({ progress }: { progress: string }) {
-  // progress looks like "Generating: Segment 2 of 5 completed..."
-  const match = progress.match(/Segment\s+(\d+)\s+of\s+(\d+)/i);
-  const done = match ? Number(match[1]) : 0;
-  const total = match ? Number(match[2]) : 0;
-  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null;
+function StatusPill({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: "warn" | "danger" | "success" | "idle";
+}) {
+  const toneClass =
+    tone === "warn"
+      ? "bg-[#ffcc00] text-primary"
+      : tone === "danger"
+        ? "bg-[#ffb3ab] text-primary"
+        : tone === "success"
+          ? "bg-[#10b981] text-white"
+          : "bg-white text-primary";
 
   return (
-    <div className="grid place-items-center gap-4 py-6 text-center">
-      {/* Animated equalizer */}
-      <div className="flex h-20 items-end justify-center gap-1.5 border-2 border-primary bg-[#1a1a1a] px-4 py-3 w-full max-w-[240px]">
-        {Array.from({ length: 9 }).map((_, i) => (
-          <span
-            key={i}
-            className="w-2 flex-1 rounded-full bg-[#ffcc00] will-change-[height]"
-            style={{
-              animation: "voxeq 1s ease-in-out infinite",
-              animationDelay: `${i * 0.09}s`,
-            }}
-          />
-        ))}
-      </div>
+    <span className={`inline-flex h-8 self-start items-center border-2 border-primary px-3 text-[10px] font-headline font-black uppercase shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] ${toneClass}`}>
+      {label}
+    </span>
+  );
+}
 
-      <div>
-        <p className="font-headline font-black uppercase text-sm text-primary">Generating audio</p>
-        <p className="mt-1 text-[11px] font-headline font-bold uppercase text-[#4a4a4a]">
-          Crafting your voice...
-        </p>
-      </div>
-
-      {/* Progress bar */}
-      <div className="w-full max-w-[240px]">
-        <div className="h-3 w-full overflow-hidden border-2 border-primary bg-white">
-          <div
-            className={`h-full bg-[#ffcc00] transition-all duration-500 ${pct === null ? "animate-pulse" : ""}`}
-            style={{ width: pct === null ? "40%" : `${Math.max(6, pct)}%` }}
-          />
-        </div>
-        {pct !== null ? (
-          <p className="mt-1 text-right text-[10px] font-headline font-black tabular-nums text-primary">{pct}%</p>
-        ) : null}
-      </div>
-
+function PanelMetaCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 border-r-2 border-primary px-3 py-3 text-center even:border-r-0 lg:px-4 lg:even:border-r-2 lg:last:border-r-0">
+      <p className="text-[9px] font-headline font-black uppercase tracking-[0.03em] text-[#4a4a4a]">{label}</p>
+      <p className="mt-1 break-words text-[13px] font-headline font-black uppercase leading-tight tracking-tight text-primary sm:text-sm">
+        {value}
+      </p>
     </div>
   );
 }
@@ -1601,15 +1650,6 @@ function CostCell({ label, value }: { label: string; value: string }) {
       <p className="text-[10px] font-headline font-black uppercase text-[#4a4a4a]">{label}</p>
       <p className="mt-1 text-xl font-headline font-black tracking-tight text-primary">{value}</p>
     </div>
-  );
-}
-
-function ResultStat({ label, value }: { label: string; value: string }) {
-  return (
-    <p className="border-2 border-primary bg-[#eee9e0] p-2 text-xs font-headline font-bold uppercase">
-      <span className="block text-[9px] opacity-75">{label}</span>
-      <span className="font-black text-primary">{value}</span>
-    </p>
   );
 }
 

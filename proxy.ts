@@ -120,6 +120,7 @@ function isAdminRateLimited(ip: string): boolean {
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const method = request.method;
+  const isApiRoute = pathname.startsWith("/api/");
   const host = request.headers.get("host") || "";
   const hostname = host.split(":")[0]?.toLowerCase() ?? "";
   const isInternalServiceHost =
@@ -163,8 +164,11 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(`https://${host}${pathname}${request.nextUrl.search}`, 301);
   }
 
-  // 2. Rate limiting (skip static files)
-  if (!pathname.startsWith("/_next") && !pathname.includes(".")) {
+  // 2. Rate limiting for API traffic only.
+  // Page loads and RSC navigations for the dashboard can legitimately fan out
+  // into many requests; those are protected by route-level auth and the
+  // generate endpoints' dedicated usage limiter instead.
+  if (isApiRoute && !pathname.startsWith("/_next") && !pathname.includes(".")) {
     const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
     const ip = forwarded || request.headers.get("x-real-ip") || "unknown";
 

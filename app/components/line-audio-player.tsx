@@ -361,7 +361,7 @@ export default function LineAudioPlayer({
     <div className="flex flex-col gap-3 w-full">
       {!ready && !decodeError ? (
         <p className="text-center text-[10px] font-headline font-bold uppercase text-[#4a4a4a]">
-          Loading audio…
+          Preparing player...
         </p>
       ) : null}
       {decodeError ? (
