@@ -1,6 +1,15 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-30
+## Current GPU provider architecture note (2026-06-30)
+
+User clarified that production audio generation currently uses **only Modal** as
+the cloud GPU platform. Future capacity planning should assume Modal is the
+single GPU backend unless a new provider is explicitly added. Do not design
+around many separate Modal accounts to bypass limits; scale should be handled
+through the app queue/concurrency controls and legitimate Modal quota/team
+capacity increases.
+
 ## Dashboard result metadata wrap fix (2026-06-30, deployed prod-20260630-44)
 
 User showed the Audio Result panel in a narrow desktop/tablet-width column where
