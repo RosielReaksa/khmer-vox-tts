@@ -1,7 +1,7 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-30
-## Modal global generation capacity guard (2026-06-30, local-only)
+## Modal global generation capacity guard (2026-07-01, deployed prod-20260630-45)
 
 Started the first backend safety step for many simultaneous users: a global
 Modal generation concurrency guard. Production audio generation is Modal-only,
@@ -38,9 +38,29 @@ routes.
 - `npx tsc --noEmit` passes.
 - `npm run build` passes clean on Next.js `16.2.6`.
 
-**Deployment status:** Local-only, not deployed. The guard is opt-in and will
-not change runtime behavior until `MODAL_MAX_ACTIVE_GENERATIONS` is set above
-`0` in production.
+**Production deploy (2026-07-01 local time):**
+- Commit: `c1cf05b`
+- GitHub Actions deploy run: `28465820791`
+- Production image tag: `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260630-45`
+- Workflow result:
+  - Build and Push Image succeeded in `4m48s`
+  - Deploy to production succeeded in `1m16s`
+
+**Production runtime setting enabled after deploy:**
+- `MODAL_MAX_ACTIVE_GENERATIONS=5`
+- `MODAL_GENERATION_LEASE_MS=900000`
+- `MODAL_GENERATION_ACQUIRE_TIMEOUT_MS=0`
+- `MODAL_GENERATION_ACQUIRE_RETRY_MS=10000`
+
+**Post-deploy verification:**
+- Verified production web deployment image is `prod-20260630-45`.
+- Verified production worker deployment image is `prod-20260630-45`.
+- Verified both web and worker deployments have the Modal capacity env vars.
+- Verified web pods `2/2` running and worker pod `1/1` running with `0`
+  restarts immediately after rollout.
+
+**Deployment status:** Deployed to production and enabled with a conservative
+global limit of 5 active Modal generation calls.
 
 ## Current GPU provider architecture note (2026-06-30)
 
