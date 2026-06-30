@@ -2,13 +2,17 @@ import "server-only";
 
 import {
   BatchJobServiceError,
-  createQueuedBatchJob,
+  createQueuedDashboardBatchJob,
   dashboardMergeMetadataJson,
   kickBatchWorker,
   MAX_DASHBOARD_BATCH_ITEMS,
   type BatchLineInput,
 } from "@/lib/batch-service";
 import { countChars } from "@/lib/generation-service";
+import {
+  dashboardMaxQueuedJobsPerUser,
+  dashboardMaxRunningJobsPerUser,
+} from "@/lib/dashboard-job-limits";
 import { prepareTextForSpeech } from "@/lib/speech-text-sanitizer";
 import { splitTextIntoChunks, type CloneSample } from "@/lib/tts-provider";
 import type { BatchJobRecord, GenerationMode, GenerationSource } from "@/lib/types";
@@ -69,7 +73,7 @@ export async function createQueuedDashboardGeneration(params: {
   const totalChars = lines.reduce((sum, line) => sum + countChars(line.text), 0);
   const voiceStyle = normalizeVoiceStyle(params.voiceStyle);
 
-  const { job } = await createQueuedBatchJob({
+  const { job } = await createQueuedDashboardBatchJob({
     userId: params.userId,
     source: params.source ?? "dashboard",
     mode: params.mode,
@@ -87,6 +91,9 @@ export async function createQueuedDashboardGeneration(params: {
       denoiseReference: params.denoiseReference === true,
       voiceStyle,
     }),
+  }, {
+    maxRunning: dashboardMaxRunningJobsPerUser(),
+    maxQueued: dashboardMaxQueuedJobsPerUser(),
   });
 
   kickBatchWorker(job.id);

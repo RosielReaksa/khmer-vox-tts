@@ -1,6 +1,49 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-06-30
+Last updated: 2026-07-01
+## Dashboard per-user job queue limits (2026-07-01, local-only)
+
+Started the second backend safety step after the global Modal limit: prevent one
+dashboard user from adding too many queued/running audio jobs before those jobs
+enter the queue.
+
+**Fix applied locally:**
+- Added `lib/dashboard-job-limits-core.ts`
+  - Pure decision helper for dashboard queued/running limits.
+  - `maxRunning=0` or `maxQueued=0` disables that specific limit.
+- Added `lib/dashboard-job-limits.ts`
+  - Server-only wrapper that reads:
+    - `DASHBOARD_MAX_RUNNING_JOBS_PER_USER` default `1`
+    - `DASHBOARD_MAX_QUEUED_JOBS_PER_USER` default `3`
+  - Throws `DashboardJobLimitError` with a clear user-facing message.
+- Added `getDashboardBatchJobCounts(userId)` to `lib/store.ts`,
+  `lib/postgres-store.ts`, and `lib/json-store.ts`.
+  - Counts only `source='dashboard'`, `api_key_id is null`, and statuses
+    `queued` / `running`.
+- Added `createQueuedDashboardBatchJob()` in `lib/batch-service.ts` and
+  `createDashboardBatchJobWithCapacity()` in the store layer.
+  - Production Postgres now checks per-user dashboard queued/running counts and
+    inserts the new dashboard job inside one transaction protected by a
+    per-user advisory lock.
+  - Local JSON store performs the same count-and-insert inside `updateStore()`.
+- Updated `lib/generation-queue.ts`
+  - Uses the guarded dashboard create path, so rejected requests do not create
+    queue rows and do not spend credits.
+- Updated `/api/generate` and `/api/generate-clone`
+  - Return HTTP `429` with stable codes:
+    `DASHBOARD_RUNNING_JOB_LIMIT_REACHED` or
+    `DASHBOARD_QUEUED_JOB_LIMIT_REACHED`.
+- Added `lib/dashboard-job-limits-core.test.ts`.
+- Updated `.env.example` with dashboard queue limit knobs.
+
+**Validation so far:**
+- `node --test lib/dashboard-job-limits-core.test.ts` passes.
+- `npm run lint` passes.
+- `npx tsc --noEmit` passes.
+- `npm run build` passes.
+
+**Deployment status:** Local-only, not deployed.
+
 ## Modal global generation capacity guard (2026-07-01, deployed prod-20260630-45)
 
 Started the first backend safety step for many simultaneous users: a global

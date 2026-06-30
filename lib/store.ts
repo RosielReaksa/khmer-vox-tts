@@ -263,6 +263,13 @@ export async function getApiKeyBatchJobCounts(apiKeyId: string): Promise<{
   return (await activeStore()).getApiKeyBatchJobCounts(apiKeyId);
 }
 
+export async function getDashboardBatchJobCounts(userId: string): Promise<{
+  queued: number;
+  running: number;
+}> {
+  return (await activeStore()).getDashboardBatchJobCounts(userId);
+}
+
 export async function findActiveApiKeyByRawKey(rawKey: string): Promise<ApiKeyRecord | null> {
   return (await activeStore()).findActiveApiKeyByRawKey(rawKey);
 }
@@ -377,6 +384,38 @@ export async function createBatchJob(input: {
   webhookCallbackUrl?: string | null;
 }): Promise<{ job: BatchJobRecord; items: BatchJobItemRecord[] }> {
   return (await activeStore()).createBatchJob(input);
+}
+
+export async function createDashboardBatchJobWithCapacity(
+  input: {
+    userId: string;
+    apiKeyId?: string | null;
+    mode: GenerationMode;
+    source: GenerationSource;
+    title: string;
+    voice: string;
+    model: string;
+    externalId?: string | null;
+    metadataJson?: string | null;
+    lines: Array<{
+      text: string;
+      creditsEstimated: number;
+      externalId?: string | null;
+      speaker?: string | null;
+      startMs?: number | null;
+      endMs?: number | null;
+      metadataJson?: string | null;
+    }>;
+    cloneSampleBase64?: string | null;
+    cloneSampleMimeType?: string | null;
+    cloneSampleFileName?: string | null;
+    cloneConsentAt?: string | null;
+    cloneConsentText?: string | null;
+    webhookCallbackUrl?: string | null;
+  },
+  limits: { maxRunning: number; maxQueued: number },
+): Promise<{ job: BatchJobRecord; items: BatchJobItemRecord[] }> {
+  return (await activeStore()).createDashboardBatchJobWithCapacity(input, limits);
 }
 
 export async function listUserBatchJobs(

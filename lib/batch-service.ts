@@ -23,6 +23,7 @@ import {
   claimQueuedBatchJobItem,
   clearBatchJobCloneSample,
   createBatchJob,
+  createDashboardBatchJobWithCapacity,
   createBatchJobWebhookAttempt,
   createGenerationRecord,
   findUserById,
@@ -411,6 +412,58 @@ export async function createQueuedBatchJob(params: {
     cloneConsentText: params.mode === "clone" ? VOICE_CLONE_CONSENT_TEXT : null,
     webhookCallbackUrl: normalizeWebhookCallbackUrl(params.webhookCallbackUrl),
   });
+}
+
+export async function createQueuedDashboardBatchJob(
+  params: Parameters<typeof createQueuedBatchJob>[0],
+  limits: { maxRunning: number; maxQueued: number },
+): Promise<{ job: BatchJobRecord; items: BatchJobItemRecord[] }> {
+  const source = params.source ?? "dashboard";
+  if (source !== "dashboard" || params.apiKeyId) {
+    throw new BatchJobServiceError("Dashboard queue limits only apply to dashboard jobs.", 400, "DASHBOARD_JOB_INVALID");
+  }
+
+  const validated = await validateBatchRequest({
+    userId: params.userId,
+    mode: params.mode,
+    source,
+    lines: params.lines,
+    cloneSample: params.cloneSample,
+    cloneConsentAccepted: params.cloneConsentAccepted,
+  });
+
+  const storedSample = params.mode === "clone" && params.cloneSample
+    ? cloneSampleToStored(params.cloneSample)
+    : {
+        cloneSampleBase64: null,
+        cloneSampleMimeType: null,
+        cloneSampleFileName: null,
+      };
+
+  return createDashboardBatchJobWithCapacity({
+    userId: params.userId,
+    apiKeyId: null,
+    mode: params.mode,
+    source,
+    title: params.title ?? `${params.mode === "clone" ? "Clone" : "Speech"} batch`,
+    voice: params.voice,
+    model: params.model ?? process.env.TTS_UPSTREAM_MODEL ?? "voxcpm2",
+    externalId: normalizeOptionalText(params.externalId, MAX_EXTERNAL_ID_CHARS, "Job external_id", "BATCH_EXTERNAL_ID_TOO_LONG"),
+    metadataJson: params.metadataJson ?? null,
+    lines: validated.lines.map((line, index) => ({
+      text: line.text,
+      creditsEstimated: validated.lineUsages[index].creditsRequested,
+      externalId: line.externalId ?? null,
+      speaker: line.speaker ?? null,
+      startMs: line.startMs ?? null,
+      endMs: line.endMs ?? null,
+      metadataJson: line.metadataJson ?? null,
+    })),
+    ...storedSample,
+    cloneConsentAt: params.mode === "clone" ? new Date().toISOString() : null,
+    cloneConsentText: params.mode === "clone" ? VOICE_CLONE_CONSENT_TEXT : null,
+    webhookCallbackUrl: normalizeWebhookCallbackUrl(params.webhookCallbackUrl),
+  }, limits);
 }
 
 async function failRemainingItems(

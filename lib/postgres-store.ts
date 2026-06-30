@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import "server-only";
 
+import { assertDashboardJobCountsWithinLimits } from "@/lib/dashboard-job-limits-core";
 import type {
   AdminAuditLogFilter,
   AdminAuditLogRecord,
@@ -2248,6 +2249,28 @@ export async function getApiKeyBatchJobCounts(apiKeyId: string): Promise<{
   };
 }
 
+export async function getDashboardBatchJobCounts(userId: string): Promise<{
+  queued: number;
+  running: number;
+}> {
+  const rows = await queryRows<QueryResultRow & { queued: number | string; running: number | string }>(
+    `
+    select
+      count(*) filter (where status = 'queued')::int as queued,
+      count(*) filter (where status = 'running')::int as running
+    from batch_jobs
+    where user_id = $1
+      and source = 'dashboard'
+      and api_key_id is null
+    `,
+    [userId],
+  );
+  return {
+    queued: toNumber(rows[0]?.queued),
+    running: toNumber(rows[0]?.running),
+  };
+}
+
 export async function revokeApiKey(userId: string, keyId: string): Promise<boolean> {
   const rows = await queryRows<ApiKeyRow>(
     `
@@ -2567,7 +2590,7 @@ function batchItemMaxAttempts(): number {
   return Number.isInteger(configured) && configured > 0 ? configured : 3;
 }
 
-export async function createBatchJob(input: {
+type CreateBatchJobInput = {
   userId: string;
   apiKeyId?: string | null;
   mode: GenerationMode;
@@ -2592,8 +2615,12 @@ export async function createBatchJob(input: {
   cloneConsentAt?: string | null;
   cloneConsentText?: string | null;
   webhookCallbackUrl?: string | null;
-}): Promise<{ job: BatchJobRecord; items: BatchJobItemRecord[] }> {
-  return withTransaction(async (client) => {
+};
+
+async function insertBatchJob(
+  client: PoolClient,
+  input: CreateBatchJobInput,
+): Promise<{ job: BatchJobRecord; items: BatchJobItemRecord[] }> {
     const now = new Date().toISOString();
     const jobId = randomUUID();
     const lines = input.lines.map((line) => ({
@@ -2693,6 +2720,37 @@ export async function createBatchJob(input: {
     }
 
     return { job: mapBatchJob(jobRows.rows[0]), items };
+}
+
+export async function createBatchJob(input: CreateBatchJobInput): Promise<{ job: BatchJobRecord; items: BatchJobItemRecord[] }> {
+  return withTransaction(async (client) => {
+    return insertBatchJob(client, input);
+  });
+}
+
+export async function createDashboardBatchJobWithCapacity(
+  input: CreateBatchJobInput,
+  limits: { maxRunning: number; maxQueued: number },
+): Promise<{ job: BatchJobRecord; items: BatchJobItemRecord[] }> {
+  return withTransaction(async (client) => {
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [`dashboard-jobs:${input.userId}`]);
+    const countRows = await client.query<QueryResultRow & { queued: number | string; running: number | string }>(
+      `
+      select
+        count(*) filter (where status = 'queued')::int as queued,
+        count(*) filter (where status = 'running')::int as running
+      from batch_jobs
+      where user_id = $1
+        and source = 'dashboard'
+        and api_key_id is null
+      `,
+      [input.userId],
+    );
+    assertDashboardJobCountsWithinLimits({
+      queued: toNumber(countRows.rows[0]?.queued),
+      running: toNumber(countRows.rows[0]?.running),
+    }, limits);
+    return insertBatchJob(client, { ...input, apiKeyId: null, source: "dashboard" });
   });
 }
 

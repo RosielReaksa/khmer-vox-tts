@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import "server-only";
 
+import { assertDashboardJobCountsWithinLimits } from "@/lib/dashboard-job-limits-core";
 import type {
   AdminAuditLogFilter,
   AdminAuditLogRecord,
@@ -877,6 +878,22 @@ export async function getApiKeyBatchJobCounts(apiKeyId: string): Promise<{
   );
 }
 
+export async function getDashboardBatchJobCounts(userId: string): Promise<{
+  queued: number;
+  running: number;
+}> {
+  const store = await readStore();
+  return store.batchJobs.reduce(
+    (counts, job) => {
+      if (job.userId !== userId || job.source !== "dashboard" || job.apiKeyId !== null) return counts;
+      if (job.status === "queued") counts.queued += 1;
+      if (job.status === "running") counts.running += 1;
+      return counts;
+    },
+    { queued: 0, running: 0 },
+  );
+}
+
 export async function findActiveApiKeyByRawKey(rawKey: string): Promise<ApiKeyRecord | null> {
   const keyHash = createHash("sha256").update(rawKey).digest("hex");
   const store = await readStore();
@@ -1199,7 +1216,7 @@ function rollupBatchJob(store: DataStore, jobId: string): BatchJobRecord | null 
   return job;
 }
 
-export async function createBatchJob(input: {
+type CreateBatchJobInput = {
   userId: string;
   apiKeyId?: string | null;
   mode: GenerationMode;
@@ -1224,8 +1241,12 @@ export async function createBatchJob(input: {
   cloneConsentAt?: string | null;
   cloneConsentText?: string | null;
   webhookCallbackUrl?: string | null;
-}): Promise<{ job: BatchJobRecord; items: BatchJobItemRecord[] }> {
-  return updateStore((store) => {
+};
+
+function insertBatchJobIntoStore(
+  store: DataStore,
+  input: CreateBatchJobInput,
+): { job: BatchJobRecord; items: BatchJobItemRecord[] } {
     const now = new Date().toISOString();
     const jobId = randomUUID();
     const lines = input.lines.map((line) => ({
@@ -1313,6 +1334,30 @@ export async function createBatchJob(input: {
     store.batchJobs.push(job);
     store.batchJobItems.push(...items);
     return { job, items };
+}
+
+export async function createBatchJob(input: CreateBatchJobInput): Promise<{ job: BatchJobRecord; items: BatchJobItemRecord[] }> {
+  return updateStore((store) => {
+    return insertBatchJobIntoStore(store, input);
+  });
+}
+
+export async function createDashboardBatchJobWithCapacity(
+  input: CreateBatchJobInput,
+  limits: { maxRunning: number; maxQueued: number },
+): Promise<{ job: BatchJobRecord; items: BatchJobItemRecord[] }> {
+  return updateStore((store) => {
+    const counts = store.batchJobs.reduce(
+      (acc, job) => {
+        if (job.userId !== input.userId || job.source !== "dashboard" || job.apiKeyId !== null) return acc;
+        if (job.status === "queued") acc.queued += 1;
+        if (job.status === "running") acc.running += 1;
+        return acc;
+      },
+      { queued: 0, running: 0 },
+    );
+    assertDashboardJobCountsWithinLimits(counts, limits);
+    return insertBatchJobIntoStore(store, { ...input, apiKeyId: null, source: "dashboard" });
   });
 }
 

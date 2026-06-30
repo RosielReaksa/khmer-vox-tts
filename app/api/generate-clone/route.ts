@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { BatchJobServiceError } from "@/lib/batch-service";
+import { DashboardJobLimitError } from "@/lib/dashboard-job-limits";
 import { createQueuedDashboardGeneration } from "@/lib/generation-queue";
 import { acquireUsageLimit, type UsageLimitResult } from "@/lib/rate-limit";
 import { getUsagePolicy } from "@/lib/server-usage-policy";
@@ -147,6 +148,12 @@ export async function POST(request: Request) {
     if (error instanceof BatchJobServiceError) {
       return NextResponse.json(
         { error: error.message, code: error.code, remainingTokens: error.remainingTokens },
+        { status: error.status, headers: limit?.headers },
+      );
+    }
+    if (error instanceof DashboardJobLimitError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code, counts: error.counts, limit: error.limit },
         { status: error.status, headers: limit?.headers },
       );
     }
