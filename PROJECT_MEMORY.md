@@ -1,7 +1,7 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-30
-## Dashboard result metadata wrap fix (2026-06-30, local-only)
+## Dashboard result metadata wrap fix (2026-06-30, deployed prod-20260630-44)
 
 User showed the Audio Result panel in a narrow desktop/tablet-width column where
 the footer metadata row forced four columns and crushed labels/values such as
@@ -20,8 +20,22 @@ the footer metadata row forced four columns and crushed labels/values such as
 **Validation:**
 - `npm run lint -- app/app/dashboard/speech-workspace.tsx` passes.
 - `npx tsc --noEmit` passes.
+- `npm run lint` passes.
+- `npm run build` passes clean on Next.js `16.2.6`.
 
-**Deployment status:** Local-only, not deployed.
+**Production deploy (2026-06-30):**
+- Commit: `ba5231a`
+- GitHub Actions deploy run: `28458191089`
+- Production image tag: `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260630-44`
+- Workflow result:
+  - Build and Push Image succeeded in `2m21s`
+  - Deploy to production succeeded in `1m17s`
+
+**Post-deploy verification:**
+- Verified production web deployment image is `prod-20260630-44`.
+- Verified production worker deployment image is `prod-20260630-44`.
+
+**Deployment status:** Deployed to production.
 
 ## Dashboard queued-job polling survives Cloudflare 403 challenges (2026-06-30, deployed prod-20260630-43)
 
