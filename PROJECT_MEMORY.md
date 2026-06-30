@@ -1,7 +1,7 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-30
-## Dashboard audio-result panel redesign (2026-06-30, local-only)
+## Dashboard audio-result panel redesign (2026-06-30, deployed prod-20260630-42)
 
 User wanted the dashboard generate/result panel restyled toward a cleaner
 reference card without copying fake telemetry or changing generation behavior.
@@ -49,9 +49,23 @@ reference card without copying fake telemetry or changing generation behavior.
 - `npx tsc --noEmit` passes.
 - `npm run lint -- app/app/dashboard/speech-workspace.tsx` passes clean.
 
-**Deployment status:** Local-only, not deployed yet.
+**Production deploy (2026-06-30):**
+- Commit: `9af06d4`
+- GitHub Actions deploy run: `28441926619`
+- Production image tag: `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260630-42`
+- Workflow result:
+  - Build and Push Image succeeded in `2m3s`
+  - Deploy to production succeeded in `1m21s`
 
-## Voice-cloning page blocked by proxy-wide 429 limiter (2026-06-30, local-only)
+**Post-deploy verification:**
+- GitHub Actions rollout completed successfully for both web and worker.
+- Direct CLI HTTP checks from this environment to `https://voxtts.online/...`
+  were intercepted by a Cloudflare "Just a moment..." challenge page, so
+  endpoint-level verification was inconclusive from the terminal session.
+
+**Deployment status:** Deployed to production.
+
+## Voice-cloning page blocked by proxy-wide 429 limiter (2026-06-30, deployed prod-20260630-42)
 
 User reported that opening `https://voxtts.online/app/dashboard/voice-cloning`
 sometimes rendered raw JSON instead of the app:
@@ -94,7 +108,22 @@ Root cause found in `proxy.ts`:
 - `npx tsc --noEmit` passes.
 - `npm run build` passes clean on Next.js `16.2.6`.
 
-**Deployment status:** Local-only, not deployed yet.
+**Production deploy (2026-06-30):**
+- Commit: `9af06d4`
+- GitHub Actions deploy run: `28441926619`
+- Production image tag: `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260630-42`
+- Workflow result:
+  - Build and Push Image succeeded in `2m3s`
+  - Deploy to production succeeded in `1m21s`
+
+**Post-deploy verification:**
+- GitHub Actions rollout completed successfully for both web and worker.
+- Direct CLI request checks to `/api/health` and
+  `/app/dashboard/voice-cloning` from this environment were blocked by a
+  Cloudflare challenge page, so final HTTP verification should be confirmed in
+  a normal browser session if needed.
+
+**Deployment status:** Deployed to production.
 
 ## Mixed Khmer+English clone instability analysis + mitigation (2026-06-30, deployed prod-20260629-41)
 
