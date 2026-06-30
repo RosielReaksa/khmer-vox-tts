@@ -1,7 +1,7 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-07-01
-## Dashboard per-user job queue limits (2026-07-01, local-only)
+## Dashboard per-user job queue limits (2026-07-01, deployed prod-20260630-46)
 
 Started the second backend safety step after the global Modal limit: prevent one
 dashboard user from adding too many queued/running audio jobs before those jobs
@@ -42,7 +42,27 @@ enter the queue.
 - `npx tsc --noEmit` passes.
 - `npm run build` passes.
 
-**Deployment status:** Local-only, not deployed.
+**Production deploy (2026-07-01 local time):**
+- Commit: `7df8115`
+- GitHub Actions deploy run: `28470441153`
+- Production image tag: `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260630-46`
+- Workflow result:
+  - Build and Push Image succeeded in `1m59s`
+  - Deploy to production succeeded in `1m26s`
+
+**Production runtime setting enabled after deploy:**
+- `DASHBOARD_MAX_RUNNING_JOBS_PER_USER=1`
+- `DASHBOARD_MAX_QUEUED_JOBS_PER_USER=3`
+
+**Post-deploy verification:**
+- Verified production web deployment image is `prod-20260630-46`.
+- Verified production worker deployment image is `prod-20260630-46`.
+- Verified both web and worker deployments have the Modal capacity env vars and
+  the dashboard queue limit env vars.
+- Verified web pods `2/2` running and worker pod `1/1` running with `0`
+  restarts immediately after rollout.
+
+**Deployment status:** Deployed to production.
 
 ## Modal global generation capacity guard (2026-07-01, deployed prod-20260630-45)
 
