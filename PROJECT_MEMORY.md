@@ -1,6 +1,47 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-30
+## Modal global generation capacity guard (2026-06-30, local-only)
+
+Started the first backend safety step for many simultaneous users: a global
+Modal generation concurrency guard. Production audio generation is Modal-only,
+so this guard protects the scarce GPU call path rather than only individual
+routes.
+
+**Fix applied locally:**
+- Added `lib/modal-generation-capacity-core.ts`
+  - Implements an opt-in global lease around active Modal generation calls.
+  - Uses Postgres shared table/advisory lock when `DATABASE_URL` is Postgres so
+    all web/worker pods share one global count.
+  - Uses in-memory fallback only outside production for local tests/dev.
+  - Disabled by default when `MODAL_MAX_ACTIVE_GENERATIONS` is unset or `0`.
+- Added `lib/modal-generation-capacity.ts`
+  - Server-only wrapper for app imports.
+- Updated `lib/tts-provider.ts`
+  - Acquires/releases one global Modal lease around each actual upstream fetch
+    to the TTS endpoint.
+- Updated `lib/generation-service.ts`
+  - Preserves `MODAL_CAPACITY_FULL` as a specific `GenerationServiceError`.
+- Updated `lib/batch-service.ts`
+  - If a queued worker item hits `MODAL_CAPACITY_FULL`, it is put back to
+    `queued` with `next_retry_at` instead of being counted as a failed segment.
+- Added `lib/modal-generation-capacity.test.ts`
+  - Verifies disabled mode and local memory lease acquire/release behavior.
+- Updated `.env.example`
+  - Documented `MODAL_MAX_ACTIVE_GENERATIONS`,
+    `MODAL_GENERATION_LEASE_MS`, `MODAL_GENERATION_ACQUIRE_TIMEOUT_MS`, and
+    `MODAL_GENERATION_ACQUIRE_RETRY_MS`.
+
+**Validation:**
+- `node --test lib/modal-generation-capacity.test.ts` passes.
+- `npm run lint -- lib/modal-generation-capacity.ts lib/modal-generation-capacity-core.ts lib/modal-generation-capacity.test.ts lib/tts-provider.ts lib/generation-service.ts lib/batch-service.ts` passes.
+- `npx tsc --noEmit` passes.
+- `npm run build` passes clean on Next.js `16.2.6`.
+
+**Deployment status:** Local-only, not deployed. The guard is opt-in and will
+not change runtime behavior until `MODAL_MAX_ACTIVE_GENERATIONS` is set above
+`0` in production.
+
 ## Current GPU provider architecture note (2026-06-30)
 
 User clarified that production audio generation currently uses **only Modal** as

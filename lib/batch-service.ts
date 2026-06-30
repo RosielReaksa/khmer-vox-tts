@@ -1108,6 +1108,26 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
               : "Batch item failed.";
           // For permanent errors, don't retry — fail immediately.
           // For transient errors, retry up to maxBatchItemAttempts().
+          if (error instanceof GenerationServiceError && error.code === "MODAL_CAPACITY_FULL") {
+            const retryAt = nextRetryIso(1);
+            isDeferredForCapacity = true;
+            lastWorkerError = message;
+            await updateBatchJobItem({
+              itemId: runningItem.id,
+              status: "queued",
+              nextRetryAt: retryAt,
+              errorMessage: message,
+            });
+            await updateBatchJobStatus({
+              jobId: job.id,
+              status: "queued",
+              errorMessage: message,
+              lastWorkerError: message,
+              nextRetryAt: retryAt,
+              workerHeartbeatAt: new Date().toISOString(),
+            });
+            return;
+          }
           const transient = isTransientBatchError(error);
           const exhausted = !transient || runningItem.attemptCount >= maxBatchItemAttempts();
           await updateBatchJobItem({

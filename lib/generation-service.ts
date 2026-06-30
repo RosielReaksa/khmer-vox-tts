@@ -17,6 +17,7 @@ import {
 } from "@/lib/store";
 import { buildAudioObjectKey, putAudioObject } from "@/lib/audio-storage";
 import { invalidateDashboardCountCache } from "@/lib/dashboard-count-cache";
+import { ModalCapacityError } from "@/lib/modal-generation-capacity";
 import { prepareTextForSpeech } from "@/lib/speech-text-sanitizer";
 import {
   type CloneSample,
@@ -518,6 +519,14 @@ export async function runGenerationForUser(params: {
     ]);
 
     const remainingTokens = await getUserTokenBalance(params.userId);
+    if (error instanceof ModalCapacityError) {
+      throw new GenerationServiceError(
+        error.message,
+        error.status,
+        error.code,
+        remainingTokens,
+      );
+    }
     if (error instanceof TtsProviderError) {
       throw new GenerationServiceError(
         error.message,

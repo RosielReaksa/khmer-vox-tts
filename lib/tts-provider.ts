@@ -22,6 +22,7 @@ import {
   selectUpstreamEndpoint,
   type UpstreamEndpoint,
 } from "./tts-endpoints";
+import { ModalCapacityError, acquireModalGenerationLease } from "./modal-generation-capacity";
 
 export class TtsProviderError extends Error {
   status: number;
@@ -2888,12 +2889,18 @@ async function synthesizeSingleChunk(
         30000,
         600000,
       );
-      const response = await fetch(endpoint.url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(timeoutMs), // configurable; default 180s to absorb slow GPU cold starts
-      });
+      const lease = await acquireModalGenerationLease();
+      let response: Response;
+      try {
+        response = await fetch(endpoint.url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(timeoutMs), // configurable; default 180s to absorb slow GPU cold starts
+        });
+      } finally {
+        await lease.release();
+      }
 
       const upstreamRequestId = response.headers.get("x-request-id");
       if (!response.ok) {
@@ -3030,6 +3037,9 @@ async function synthesizeSingleChunk(
         endpointUrl: endpoint.url,
       };
     } catch (err) {
+      if (err instanceof ModalCapacityError) {
+        throw err;
+      }
       recordMetric(
         endpoint.url,
         params.text.length,
