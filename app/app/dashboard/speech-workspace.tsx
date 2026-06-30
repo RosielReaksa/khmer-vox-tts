@@ -108,6 +108,45 @@ function audioSourceFromResult(result: Pick<GenerationResponse, "audioBase64" | 
   return "";
 }
 
+function looksLikeEdgeChallenge(status: number, contentType: string, bodyText: string): boolean {
+  if (status !== 403) return false;
+  if (!contentType.includes("text/html")) return false;
+  const normalized = bodyText.toLowerCase();
+  return normalized.includes("just a moment")
+    || normalized.includes("cloudflare")
+    || normalized.includes("attention required");
+}
+
+async function readDashboardRouteError(response: Response): Promise<{
+  reason: string;
+  retryable: boolean;
+}> {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (contentType.includes("application/json")) {
+    const body = await response.json().catch(() => ({}));
+    const reason = typeof body.error === "string"
+      ? body.error
+      : `Background job status returned HTTP ${response.status}.`;
+    return {
+      reason,
+      retryable: [408, 409, 425, 429, 500, 502, 503, 504].includes(response.status),
+    };
+  }
+
+  const bodyText = await response.text().catch(() => "");
+  if (looksLikeEdgeChallenge(response.status, contentType, bodyText)) {
+    return {
+      reason: "Cloudflare temporarily challenged the background-job request.",
+      retryable: true,
+    };
+  }
+
+  return {
+    reason: `Background job status returned HTTP ${response.status}.`,
+    retryable: [408, 409, 425, 429, 500, 502, 503, 504].includes(response.status),
+  };
+}
+
 function commitWorkspaceSnapshot(mode: "tts" | "clone", patch: Partial<WorkspaceSnapshot>) {
   const current = workspaceSnapshots[mode];
   let changed = false;
@@ -419,19 +458,18 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
         try {
           const pollRes = await fetch(`/api/batch/jobs/${jobId}`, { cache: "no-store" });
           if (!pollRes.ok) {
-            const errBody = await pollRes.json().catch(() => ({}));
-            const reason = typeof errBody.error === "string"
-              ? errBody.error
-              : `Background job status returned HTTP ${pollRes.status}.`;
+            const { reason, retryable } = await readDashboardRouteError(pollRes);
             // 404 means the job no longer exists (e.g. cleared); stop quietly.
             if (pollRes.status === 404) {
               clearActiveJob(mode);
               commitWorkspaceSnapshot(mode, { busy: false, error: "" });
               return;
             }
-            if ([408, 409, 425, 429, 500, 502, 503, 504].includes(pollRes.status)) {
+            if (retryable) {
               commitWorkspaceSnapshot(mode, {
+                busy: true,
                 progress: `Waiting for background job status: ${reason}`,
+                error: "",
               });
               attempts++;
               continue;
@@ -442,17 +480,26 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
           const job = pollData.job;
 
           if (job.status === "completed" || job.status === "partial") {
-            completed = true;
             const mergedRes = await fetch(`/api/batch/jobs/${jobId}/merged`);
             if (!mergedRes.ok) {
-              const errBody = await mergedRes.json().catch(() => ({}));
-              throw new Error(errBody.error || "Failed to retrieve merged audio.");
+              const { reason, retryable } = await readDashboardRouteError(mergedRes);
+              if (retryable) {
+                commitWorkspaceSnapshot(mode, {
+                  busy: true,
+                  progress: `Waiting to retrieve completed audio: ${reason}`,
+                  error: "",
+                });
+                attempts++;
+                continue;
+              }
+              throw new Error(reason || "Failed to retrieve merged audio.");
             }
             const mergedData = await mergedRes.json();
             const url = audioSourceFromResult(mergedData);
             if (!url) {
               throw new Error("Merged audio is missing from the completed job response.");
             }
+            completed = true;
             clearActiveJob(mode);
             const updatedAtLabel = new Date().toLocaleTimeString();
             commitWorkspaceSnapshot(mode, {

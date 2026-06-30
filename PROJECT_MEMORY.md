@@ -1,6 +1,62 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-30
+## Dashboard queued-job polling survives Cloudflare 403 challenges (2026-06-30, local-only)
+
+User reported the Generate Speech dashboard sometimes showed a red
+`NEEDS ATTENTION` panel with:
+
+- `Background job status returned HTTP 403.`
+
+even though the generation was still running in the background.
+
+**Root cause confirmed:**
+- The dashboard poller in `app/app/dashboard/speech-workspace.tsx` polls
+  `/api/batch/jobs/:id` every 2 seconds while a queued dashboard job runs.
+- Current route code for `app/api/batch/jobs/[id]/route.ts` only returns:
+  - `401` when the dashboard session cookie is missing
+  - `404` when the job does not belong to the signed-in user or no longer exists
+- Production was verified live on `2026-06-30` to be running the expected image
+  `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260630-42` on both web and worker,
+  so this was not an old-image mismatch.
+- A direct public request from the production VPS to
+  `https://voxtts.online/api/batch/jobs/test` returned HTTP `403` with a
+  Cloudflare HTML challenge page (`Just a moment...`) before the request reached
+  the Next.js route.
+- Because the poller assumed non-JSON `403` was a fatal app error, it surfaced
+  the challenge as a red generation failure even though the worker job could
+  still complete normally.
+
+**Fix applied locally:**
+- `app/app/dashboard/speech-workspace.tsx`
+  - Added `looksLikeEdgeChallenge()` to detect Cloudflare-style HTML challenge
+    responses on `403`.
+  - Added `readDashboardRouteError()` so dashboard polling can safely parse both
+    JSON API errors and non-JSON edge/proxy responses.
+  - Changed queued-job polling so retryable edge/proxy failures keep
+    `busy: true`, clear `error`, and continue polling instead of switching to
+    `NEEDS ATTENTION`.
+  - Applied the same retry behavior to the follow-up merged-audio fetch
+    (`/api/batch/jobs/:id/merged`) because the public edge can also challenge
+    that request after the job has completed.
+  - Moved `completed = true` to after merged audio is actually retrieved, so a
+    temporary edge challenge on the merged-audio request does not incorrectly
+    mark the poll loop complete.
+
+**Why this is the correct fix:**
+- The current app route code does not explain a normal GET `403`, but the live
+  public edge does.
+- Next.js 16 proxy guidance explicitly frames proxy as a pre-route request layer;
+  similarly, Cloudflare can also answer before the route handler runs.
+- Treating HTML challenge pages as fatal generation errors is incorrect product
+  behavior; they are transport/intermediary interruptions, not worker failures.
+
+**Validation:**
+- `npm run lint -- app/app/dashboard/speech-workspace.tsx` passes.
+- `npx tsc --noEmit` passes.
+
+**Deployment status:** Local-only, not deployed yet.
+
 ## Dashboard audio-result panel redesign (2026-06-30, deployed prod-20260630-42)
 
 User wanted the dashboard generate/result panel restyled toward a cleaner
