@@ -1,7 +1,7 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-06-30
-## Dashboard queued-job polling survives Cloudflare 403 challenges (2026-06-30, local-only)
+## Dashboard queued-job polling survives Cloudflare 403 challenges (2026-06-30, deployed prod-20260630-43)
 
 User reported the Generate Speech dashboard sometimes showed a red
 `NEEDS ATTENTION` panel with:
@@ -54,8 +54,24 @@ even though the generation was still running in the background.
 **Validation:**
 - `npm run lint -- app/app/dashboard/speech-workspace.tsx` passes.
 - `npx tsc --noEmit` passes.
+- `npm run build` passes clean on Next.js `16.2.6`.
 
-**Deployment status:** Local-only, not deployed yet.
+**Production deploy (2026-06-30):**
+- Commit: `3411b1e`
+- GitHub Actions deploy run: `28451902180`
+- Production image tag: `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260630-43`
+- Workflow result:
+  - Build and Push Image succeeded in `3m8s`
+  - Deploy to production succeeded in `1m19s`
+
+**Post-deploy verification:**
+- Verified production web deployment image is `prod-20260630-43`.
+- Verified production worker deployment image is `prod-20260630-43`.
+- Direct terminal verification of the live dashboard route response remains
+  limited because Cloudflare can still challenge scripted HTTP checks from this
+  environment, which is the exact edge behavior this UI fix now tolerates.
+
+**Deployment status:** Deployed to production.
 
 ## Dashboard audio-result panel redesign (2026-06-30, deployed prod-20260630-42)
 
