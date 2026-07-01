@@ -1486,9 +1486,11 @@ function AudioResultPanel({
   updatedLabel: string;
 }) {
   const hasResult = Boolean(result && audioUrl);
+  const hasResultWarning = Boolean(hasResult && error);
+  const hasBlockingError = Boolean(error && !hasResult);
   const hasReference = usingSavedVoice || sampleFile !== null;
   const permissionReady = usingSavedVoice || voiceConsent;
-  const liveState = busy ? "Generating" : error ? "Needs attention" : hasResult ? "Ready" : "Idle";
+  const liveState = busy ? "Generating" : hasBlockingError ? "Needs attention" : hasResultWarning ? "Partial ready" : hasResult ? "Ready" : "Idle";
 
   return (
     <aside className="overflow-hidden border-4 border-primary bg-surface-bright shadow-[6px_6px_0px_0px_rgba(26,26,26,1)]">
@@ -1507,7 +1509,7 @@ function AudioResultPanel({
         <div className="flex items-center gap-2">
           <StatusPill
             label={liveState}
-            tone={busy ? "warn" : error ? "danger" : hasResult ? "success" : "idle"}
+            tone={busy || hasResultWarning ? "warn" : hasBlockingError ? "danger" : hasResult ? "success" : "idle"}
           />
           <span className="text-primary font-black">
             <ChevronUpIcon />
@@ -1521,7 +1523,9 @@ function AudioResultPanel({
         aria-atomic="true"
         className={`m-5 border-4 border-primary shadow-[3px_3px_0px_0px_rgba(26,26,26,1)] ${
           error
-            ? "bg-[#ffdad6]"
+            ? hasResult
+              ? "bg-[#fff3bf]"
+              : "bg-[#ffdad6]"
             : hasResult
               ? "bg-[#def3e5]"
               : busy
@@ -1531,7 +1535,7 @@ function AudioResultPanel({
       >
         {busy ? (
           <GeneratingState progress={progress} />
-        ) : error ? (
+        ) : hasBlockingError ? (
           <div className="grid gap-5 p-5">
             <div className="flex items-start gap-3">
               <span className="flex h-12 w-12 shrink-0 items-center justify-center border-2 border-primary bg-[#ffb3ab] text-primary shadow-[2px_2px_0px_0px_rgba(26,26,26,1)]">
@@ -1561,8 +1565,13 @@ function AudioResultPanel({
                   <p className="text-[10px] font-headline font-bold uppercase text-[#4a4a4a]">{updatedLabel}</p>
                 </div>
               </div>
-              <StatusPill label={isCloneMode ? "Clone output" : "TTS output"} tone="success" />
+              <StatusPill label={hasResultWarning ? "Partial output" : isCloneMode ? "Clone output" : "TTS output"} tone={hasResultWarning ? "warn" : "success"} />
             </div>
+            {hasResultWarning ? (
+              <div className="border-b-2 border-primary bg-[#fff3bf] px-4 py-3 sm:px-5">
+                <p className="text-sm font-body font-bold leading-6 text-primary">{error}</p>
+              </div>
+            ) : null}
             <div className="grid gap-4 px-4 py-5 sm:px-5">
               <LineAudioPlayer src={audioUrl} durationHint={result.outputSeconds} />
               <a
