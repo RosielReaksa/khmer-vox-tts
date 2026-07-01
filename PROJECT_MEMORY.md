@@ -1,6 +1,100 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-07-01
+## Dashboard partial batch audio warning fix (2026-07-01, deployed prod-20260701-47)
+
+User showed the Voice Cloning dashboard after a long clone job generated
+`6 of 7` segments and displayed a red `NEEDS ATTENTION` card:
+`Generated 6 of 7 segments. 1 failed — retry from Batch Jobs.`
+
+Root cause:
+- The batch backend already supports `partial` dashboard merge jobs and can
+  build merged audio from successful segments.
+- `pollQueuedJob()` successfully stores both `result`/`audioUrl` and a warning
+  string in `error` for partial jobs.
+- `AudioResultPanel` rendered `error` before `result`, so usable partial audio
+  was hidden behind the red attention state.
+
+Fix applied locally:
+- `app/app/dashboard/speech-workspace.tsx`
+  - Treats `error + result/audioUrl` as a non-blocking partial-output warning.
+  - Shows the audio player/download for partial output.
+  - Shows a yellow warning strip with the failed-segment message.
+  - Keeps the red `Needs attention` card only for blocking errors with no audio.
+
+Validation before deploy:
+- `npm run lint -- app/app/dashboard/speech-workspace.tsx` passes.
+- `npx tsc --noEmit` passes.
+- `npm run lint` passes.
+- `npm run build` passes clean on Next.js `16.2.6`.
+
+Production deploy:
+- Commit: `58435f7`
+- GitHub Actions deploy run: `28500539641`
+- Production image tag: `ghcr.io/rosielreaksa/khmer-vox-tts:prod-20260701-47`
+- Workflow result:
+  - Build and Push Image succeeded in `3m8s`
+  - Deploy to production succeeded in `1m19s`
+
+Post-deploy verification:
+- Verified production web deployment image is `prod-20260701-47`.
+- Verified production worker deployment image is `prod-20260701-47`.
+- Verified production web pods `2/2` running and worker pod `1/1` running with
+  `0` restarts immediately after rollout.
+- Verified internal cluster health:
+  `{"status":"ok","store":"postgres"}` from
+  `http://khmer-vox-web-svc:3000/api/health`.
+- Direct public terminal check to `https://voxtts.online/api/health` remains
+  Cloudflare-challenged from this environment, which is expected from earlier
+  verification attempts.
+
+Status: Deployed to production. Current existing partial jobs can still be
+retried from Batch Jobs using `Retry failed lines`; this UI fix makes already-
+merged successful audio usable instead of hiding it.
+
+## Local codebase-memory-mcp setup (2026-07-01, local-only)
+
+Installed `DeusData/codebase-memory-mcp` v0.8.1 locally for this workspace.
+
+What changed:
+- Downloaded `codebase-memory-mcp-windows-amd64.zip` from the GitHub v0.8.1
+  release and verified SHA-256:
+  `a602ad090ed3f49d86c55472f73f27ad7055222806a82358f2e08513e027f00f`.
+- Extracted the binary to `.codex/tools/codebase-memory-mcp/`.
+- Added a project-local MCP entry in `.codex/config.toml`:
+  `mcp_servers.codebase_memory`.
+- Added `.codex/tools/` and `.codebase-memory/` to `.gitignore` so the local
+  binary and generated memory indexes are not committed.
+
+Validation:
+- `.codex/tools/codebase-memory-mcp/codebase-memory-mcp.exe --version` returns
+  `codebase-memory-mcp 0.8.1`.
+- `cli list_projects` runs successfully.
+- The first indexing attempt with `repo_path="."` analyzed 448 files but failed
+  during the final dump phase. A stale global cache entry
+  `D-vommberber.db` exists under the user's codebase-memory cache and may need
+  rebuilding via the tool's installer or after restarting Codex with the MCP
+  loaded.
+- Follow-up graph index run succeeded after allowing the tool to write to the
+  user cache directory:
+  - Project: `D-website-api-seller`
+  - Mode: `fast`
+  - Indexed files discovered: 312
+  - Nodes: 4,872
+  - Edges: 9,629
+  - Excluded local/generated dirs include `.git`, `.next`, `node_modules`,
+    `data`, `public`, `scripts`, test-output dirs, and `.codex/tools`.
+- Tried to start the graph UI on localhost port `9749`. The UI-capable binary
+  has `ui_enabled=true`, but launching the MCP process outside a real MCP stdio
+  client exits immediately, so no long-lived listener stayed bound to port
+  `9749` from the terminal session. It should start when an MCP client keeps
+  the server process alive after Codex restart/session reload.
+
+Status:
+- Local-only, not deployed.
+- Codex may need a restart/new session before the new MCP server appears in the
+  available tools.
+
 ## Dashboard per-user job queue limits (2026-07-01, deployed prod-20260630-46)
 
 Started the second backend safety step after the global Modal limit: prevent one
