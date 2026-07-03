@@ -10,6 +10,7 @@ import {
 import { useDashboardUser } from "@/app/app/dashboard/dashboard-user-context";
 import { KeyManager } from "@/app/app/dashboard/key-manager";
 import { VoxLoader } from "@/app/components/vox-loader";
+import { fetchJsonSafe } from "@/lib/edge-fetch";
 import { formatCloneCreditRate } from "@/lib/credit-rates";
 import type {
   BatchJobRecord,
@@ -489,38 +490,36 @@ function WebhookTestPanel({
 
     setSubmitting(true);
     setMessage(null);
-    try {
-      const response = await fetch("/api/business/webhook-test", {
+    const result = await fetchJsonSafe<{
+      event?: WebhookTestEventRecord;
+      error?: string;
+    }>(
+      "/api/business/webhook-test",
+      {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      });
-      const data = (await response.json().catch(() => ({}))) as {
-        event?: WebhookTestEventRecord;
-        error?: string;
-      };
-      if (!response.ok || !data.event) {
-        throw new Error(data.error ?? "Could not send webhook test.");
-      }
-      onCreated(data.event);
-      setMessage({
-        type: data.event.deliveryStatus === "delivered" ? "success" : "error",
-        text:
-          data.event.deliveryStatus === "delivered"
-            ? `Webhook delivered in ${data.event.latencyMs.toLocaleString()}ms.`
-            : (data.event.errorMessage ?? "Webhook test failed."),
-      });
-    } catch (error) {
+      },
+      "Could not send webhook test.",
+    );
+    if (!result.ok || !result.data.event) {
       setMessage({
         type: "error",
-        text:
-          error instanceof Error
-            ? error.message
-            : "Could not send webhook test.",
+        text: !result.ok ? result.message : "Could not send webhook test.",
       });
-    } finally {
       setSubmitting(false);
+      return;
     }
+    const webhookEvent = result.data.event;
+    onCreated(webhookEvent);
+    setMessage({
+      type: webhookEvent.deliveryStatus === "delivered" ? "success" : "error",
+      text:
+        webhookEvent.deliveryStatus === "delivered"
+          ? `Webhook delivered in ${webhookEvent.latencyMs.toLocaleString()}ms.`
+          : (webhookEvent.errorMessage ?? "Webhook test failed."),
+    });
+    setSubmitting(false);
   }
 
   return (
@@ -897,35 +896,30 @@ function BusinessRequestForm({
 
     setSubmitting(true);
     setMessage(null);
-    try {
-      const response = await fetch("/api/business/request", {
+    const result = await fetchJsonSafe<{ error?: string }>(
+      "/api/business/request",
+      {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      });
-      const data = (await response.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      if (!response.ok) {
-        throw new Error(data.error ?? "Could not submit business request.");
-      }
-      form.reset();
-      await refresh();
-      setMessage({
-        type: "success",
-        text: "Request sent. Admin will review it before production launch.",
-      });
-    } catch (error) {
+      },
+      "Could not submit business request.",
+    );
+    if (!result.ok) {
       setMessage({
         type: "error",
-        text:
-          error instanceof Error
-            ? error.message
-            : "Could not submit business request.",
+        text: result.message,
       });
-    } finally {
       setSubmitting(false);
+      return;
     }
+    form.reset();
+    await refresh();
+    setMessage({
+      type: "success",
+      text: "Request sent. Admin will review it before production launch.",
+    });
+    setSubmitting(false);
   }
 
   return (

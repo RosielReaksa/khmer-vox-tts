@@ -3,6 +3,7 @@
 import { useState, type ChangeEvent } from "react";
 
 import { preparePaymentProofImage } from "@/lib/client-payment-proof-image";
+import { fetchJsonSafe } from "@/lib/edge-fetch";
 import { formatUsd } from "@/lib/plans";
 import type { PaymentOrderRecord } from "@/lib/types";
 
@@ -37,8 +38,9 @@ export function PaymentProofClient({
   async function submit() {
     setLoading(true);
     setMessage("");
-    try {
-      const response = await fetch("/api/payments/proof", {
+    const result = await fetchJsonSafe<{ error?: string }>(
+      "/api/payments/proof",
+      {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -47,19 +49,17 @@ export function PaymentProofClient({
           userNote: note,
           proofImageDataUrl: imageDataUrl,
         }),
-      });
-      const data = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        setMessage(data.error ?? "Could not submit payment proof.");
-        return;
-      }
-      setSubmitted(true);
-      setMessage("Payment proof submitted. Admin will approve after checking the bank notice.");
-    } catch {
-      setMessage("Network error while submitting payment proof.");
-    } finally {
+      },
+      "Could not submit payment proof.",
+    );
+    if (!result.ok) {
+      setMessage(result.message);
       setLoading(false);
+      return;
     }
+    setSubmitted(true);
+    setMessage("Payment proof submitted. Admin will approve after checking the bank notice.");
+    setLoading(false);
   }
 
   const canSubmit = !loading && !submitted && Boolean(imageDataUrl);

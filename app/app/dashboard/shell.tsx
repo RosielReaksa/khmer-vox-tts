@@ -8,6 +8,7 @@ import { DashboardUserProvider } from "@/app/app/dashboard/dashboard-user-contex
 import { DashboardQueryProvider } from "@/app/app/dashboard/dashboard-query-provider";
 import { DashboardSpa } from "@/app/app/dashboard/dashboard-spa";
 import { useT } from "@/app/components/locale-provider";
+import { fetchJsonSafe, requestGuardedReload } from "@/lib/edge-fetch";
 
 type DashboardShellProps = {
   children: React.ReactNode;
@@ -117,20 +118,31 @@ export function DashboardShell({
     mainRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [clientPath]);
 
+  const consecutiveMeFailuresRef = useRef(0);
   useEffect(() => {
     async function refreshUser() {
-      try {
-        const response = await fetch("/api/me", { cache: "no-store" });
-        const data = (await response.json()) as {
-          user?: {
-            tokenBalance?: number;
-          } | null;
-        };
-        if (response.ok && typeof data.user?.tokenBalance === "number") {
-          setLiveTokenBalance(data.user.tokenBalance);
+      const result = await fetchJsonSafe<{
+        user?: {
+          tokenBalance?: number;
+        } | null;
+      }>("/api/me", { cache: "no-store" });
+
+      if (result.ok) {
+        consecutiveMeFailuresRef.current = 0;
+        if (typeof result.data.user?.tokenBalance === "number") {
+          setLiveTokenBalance(result.data.user.tokenBalance);
         }
-      } catch {
-        // Keep the last known balance; polling should not interrupt dashboard work.
+        return;
+      }
+
+      // Keep the last known balance; polling should not interrupt dashboard
+      // work. But if the session-check itself is repeatedly hitting a
+      // Cloudflare challenge, the tab is effectively stuck — reload it
+      // (capped) so the challenge can actually clear.
+      if (result.kind === "edge-challenge" && ++consecutiveMeFailuresRef.current >= 3) {
+        requestGuardedReload(
+          `${consecutiveMeFailuresRef.current} consecutive edge challenges on /api/me`,
+        );
       }
     }
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useT } from "@/app/components/locale-provider";
+import { fetchJsonSafe } from "@/lib/edge-fetch";
 
 export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { initialEmail?: string; csrfToken?: string }) {
   const t = useT();
@@ -16,26 +17,25 @@ export function ForgotPasswordForm({ initialEmail = "", csrfToken = "" }: { init
     setSubmitting(true);
     setError("");
 
-    try {
-      const response = await fetch("/api/auth/forgot-password", {
+    const result = await fetchJsonSafe<{ error?: string; message?: string }>(
+      "/api/auth/forgot-password",
+      {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-CSRF-Token": csrfToken,
         },
         body: JSON.stringify({ email: email.trim() }),
-      });
-      const data = (await response.json()) as { error?: string; message?: string };
-      if (!response.ok) {
-        setError(data.error ?? t("auth.forgot.errorDefault"));
-        return;
-      }
-      setSuccess(true);
-    } catch {
-      setError(t("auth.forgot.errorNetwork"));
-    } finally {
+      },
+      t("auth.forgot.errorDefault"),
+    );
+    if (!result.ok) {
+      setError(result.kind === "network-error" ? t("auth.forgot.errorNetwork") : result.message);
       setSubmitting(false);
+      return;
     }
+    setSuccess(true);
+    setSubmitting(false);
   }
 
   return (

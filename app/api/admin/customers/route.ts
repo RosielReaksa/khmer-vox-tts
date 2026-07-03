@@ -12,12 +12,17 @@ export async function GET() {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
 
-  const payload = await cachedDashboardValue(dashboardCacheKey("admin", "customers"), 15, async () => {
-    const customers = await listCustomersForAdmin();
-    return {
-      customers,
-      generatedAt: new Date().toISOString(),
-    };
-  });
-  return NextResponse.json(payload);
+  try {
+    const payload = await cachedDashboardValue(dashboardCacheKey("admin", "customers"), 15, async () => {
+      const customers = await listCustomersForAdmin();
+      return {
+        customers,
+        generatedAt: new Date().toISOString(),
+      };
+    });
+    return NextResponse.json(payload);
+  } catch (error) {
+    console.error("[admin/customers] Failed to build customers payload.", error);
+    return NextResponse.json({ error: "Failed to load customers." }, { status: 500 });
+  }
 }

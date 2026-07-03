@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useT } from "@/app/components/locale-provider";
+import { fetchJsonSafe } from "@/lib/edge-fetch";
 
 export function ResetPasswordForm({
   token,
@@ -33,28 +34,27 @@ export function ResetPasswordForm({
     }
 
     setSubmitting(true);
-    try {
-      const response = await fetch("/api/auth/reset-password", {
+    const result = await fetchJsonSafe<{ error?: string }>(
+      "/api/auth/reset-password",
+      {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-CSRF-Token": csrfToken,
         },
         body: JSON.stringify({ token, password }),
-      });
-      const data = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        setError(data.error ?? t("auth.reset.errorDefault"));
-        return;
-      }
-      setPassword("");
-      setConfirmPassword("");
-      setSuccess(true);
-    } catch {
-      setError(t("auth.reset.errorNetwork"));
-    } finally {
+      },
+      t("auth.reset.errorDefault"),
+    );
+    if (!result.ok) {
+      setError(result.kind === "network-error" ? t("auth.reset.errorNetwork") : result.message);
       setSubmitting(false);
+      return;
     }
+    setPassword("");
+    setConfirmPassword("");
+    setSuccess(true);
+    setSubmitting(false);
   }
 
   return (

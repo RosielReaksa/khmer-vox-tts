@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import LineAudioPlayer from "@/app/components/line-audio-player";
 import VoicePreviewCard from "@/app/components/voice-preview-card";
 import { useT } from "@/app/components/locale-provider";
+import { fetchJsonSafe } from "@/lib/edge-fetch";
 
 export default function HomePlayground() {
   const [text, setText] = useState("សូមស្វាគមន៍មកកាន់ Khmer Vox TTS។");
@@ -23,23 +24,31 @@ export default function HomePlayground() {
     setError("");
     setAudioUrl("");
 
-    try {
-      // Check if logged in
-      const meRes = await fetch("/api/me");
-      if (!meRes.ok) {
+    // Check if logged in
+    const meResult = await fetchJsonSafe<{ user?: unknown }>("/api/me");
+    if (!meResult.ok) {
+      if (meResult.kind === "edge-challenge") {
+        setError(meResult.message);
+      } else {
         setShowModal(true);
-        setBusy(false);
-        return;
       }
-      const meData = await meRes.json();
-      if (!meData.user) {
-        setShowModal(true);
-        setBusy(false);
-        return;
-      }
+      setBusy(false);
+      return;
+    }
+    if (!meResult.data.user) {
+      setShowModal(true);
+      setBusy(false);
+      return;
+    }
 
-      // Generate speech
-      const res = await fetch("/api/generate", {
+    // Generate speech
+    const result = await fetchJsonSafe<{
+      error?: string;
+      contentType?: string;
+      audioBase64?: string;
+    }>(
+      "/api/generate",
+      {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -47,22 +56,19 @@ export default function HomePlayground() {
           voice,
           model: "voxcpm2",
         }),
-      });
+      },
+      t("playground.errorFailed"),
+    );
 
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || t("playground.errorFailed"));
-        setBusy(false);
-        return;
-      }
-
-      const url = `data:${data.contentType};base64,${data.audioBase64}`;
-      setAudioUrl(url);
+    if (!result.ok) {
+      setError(result.kind === "network-error" ? t("playground.errorConnect") : result.message);
       setBusy(false);
-    } catch {
-      setError(t("playground.errorConnect"));
-      setBusy(false);
+      return;
     }
+
+    const url = `data:${result.data.contentType};base64,${result.data.audioBase64}`;
+    setAudioUrl(url);
+    setBusy(false);
   };
 
   return (

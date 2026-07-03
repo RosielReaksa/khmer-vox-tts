@@ -8,6 +8,8 @@ import {
   type QueryKey,
 } from "@tanstack/react-query";
 
+import { fetchJsonForQuery } from "@/lib/edge-fetch";
+
 type CachedState<T> = {
   data: T | null;
   error: string;
@@ -52,7 +54,7 @@ export function useCachedJson<T>(
   const query = useQuery<T, Error>({
     queryKey: dashboardQueryKey(key, url),
     meta: { dashboardKey: key } satisfies DashboardQueryMeta,
-    queryFn: async ({ signal }) => fetchJson<T>(url, signal),
+    queryFn: async ({ signal }) => fetchJsonForQuery<T>("dashboard", url, signal),
     placeholderData: (previousData) => previousData,
     refetchInterval: pollMs > 0 ? pollMs : false,
     refetchIntervalInBackground: false,
@@ -86,13 +88,4 @@ function isDashboardQueryMatch(query: Query, keyPrefix: string): boolean {
         ? query.queryKey[1]
         : "";
   return dashboardKey.startsWith(keyPrefix);
-}
-
-async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", signal });
-  const data = (await response.json()) as T & { error?: string };
-  if (!response.ok) {
-    throw new Error(data.error ?? "Request failed.");
-  }
-  return data;
 }

@@ -29,44 +29,50 @@ export async function GET(request: Request) {
   const searchOpts = { source: "all" as const, mode, search: q || undefined };
 
   const countCachePart = q ? `history:${mode}:count:${Buffer.from(q).toString("base64url")}` : `history:${mode}:count:all`;
-  const [stats, total, rows] = await Promise.all([
-    cachedDashboardValue(dashboardCacheKey(user.id, `history:${mode}:stats`), 5, () =>
-      getGenerationStats(user.id, mode),
-    ),
-    cachedDashboardValue(dashboardCacheKey(user.id, countCachePart), 5, () => countUserGenerations(user.id, searchOpts)),
-    listUserGenerations(user.id, {
-      ...searchOpts,
-      limit: pageSize,
-      offset,
-    }),
-  ]);
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  try {
+    const [stats, total, rows] = await Promise.all([
+      cachedDashboardValue(dashboardCacheKey(user.id, `history:${mode}:stats`), 5, () =>
+        getGenerationStats(user.id, mode),
+      ),
+      cachedDashboardValue(dashboardCacheKey(user.id, countCachePart), 5, () => countUserGenerations(user.id, searchOpts)),
+      listUserGenerations(user.id, {
+        ...searchOpts,
+        limit: pageSize,
+        offset,
+      }),
+    ]);
 
-  return NextResponse.json({
-    mode,
-    q,
-    stats,
-    pagination: {
-      page,
-      pageSize,
-      total,
-      totalPages,
-    },
-    recent: rows.map((item) => ({
-      id: item.id,
-      createdAt: item.createdAt,
-      mode: item.mode,
-      source: item.source,
-      status: item.status,
-      inputChars: item.inputChars,
-      inputPreview: item.inputPreview,
-      outputSeconds: item.outputSeconds,
-      creditsCharged: item.creditsCharged,
-      errorMessage: item.errorMessage,
-      hasAudio: Boolean(item.hasAudio || item.audioBase64 || item.audioObjectKey),
-      voice: item.voice,
-      model: item.model,
-    })),
-  });
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+    return NextResponse.json({
+      mode,
+      q,
+      stats,
+      pagination: {
+        page,
+        pageSize,
+        total,
+        totalPages,
+      },
+      recent: rows.map((item) => ({
+        id: item.id,
+        createdAt: item.createdAt,
+        mode: item.mode,
+        source: item.source,
+        status: item.status,
+        inputChars: item.inputChars,
+        inputPreview: item.inputPreview,
+        outputSeconds: item.outputSeconds,
+        creditsCharged: item.creditsCharged,
+        errorMessage: item.errorMessage,
+        hasAudio: Boolean(item.hasAudio || item.audioBase64 || item.audioObjectKey),
+        voice: item.voice,
+        model: item.model,
+      })),
+    });
+  } catch (error) {
+    console.error("[dashboard/history] Failed to build history payload.", error);
+    return NextResponse.json({ error: "Failed to load history." }, { status: 500 });
+  }
 }

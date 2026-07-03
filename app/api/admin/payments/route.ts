@@ -20,6 +20,11 @@ export async function GET(request: Request) {
     ? (requestedStatus as PaymentOrderStatus | "all")
     : "pending";
 
-  const orders = await listPaymentOrdersForAdmin(status);
-  return NextResponse.json({ orders });
+  try {
+    const orders = await listPaymentOrdersForAdmin(status);
+    return NextResponse.json({ orders });
+  } catch (error) {
+    console.error("[admin/payments] Failed to load payment orders.", error);
+    return NextResponse.json({ error: "Failed to load payment orders." }, { status: 500 });
+  }
 }

@@ -8,6 +8,8 @@ import {
   type QueryKey,
 } from "@tanstack/react-query";
 
+import { fetchJsonForQuery } from "@/lib/edge-fetch";
+
 type AdminQueryMeta = {
   adminKey?: string;
 };
@@ -51,7 +53,7 @@ export function useAdminCachedJson<T>(
   const query = useQuery<T, Error>({
     queryKey: adminQueryKey(key, url),
     meta: { adminKey: key } satisfies AdminQueryMeta,
-    queryFn: async ({ signal }) => fetchJson<T>(url, signal),
+    queryFn: async ({ signal }) => fetchJsonForQuery<T>("admin", url, signal),
     placeholderData: (previousData) => previousData,
     refetchInterval: pollMs > 0 ? pollMs : false,
     refetchIntervalInBackground: false,
@@ -86,13 +88,4 @@ function isAdminQueryMatch(query: Query, keyPrefix: string): boolean {
         ? query.queryKey[1]
         : "";
   return adminKey.startsWith(keyPrefix);
-}
-
-async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", signal });
-  const data = (await response.json()) as T & { error?: string };
-  if (!response.ok) {
-    throw new Error(data.error ?? "Request failed.");
-  }
-  return data;
 }

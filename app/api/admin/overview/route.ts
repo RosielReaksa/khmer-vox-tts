@@ -20,30 +20,35 @@ export async function GET() {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
 
-  const payload = await cachedDashboardValue(dashboardCacheKey("admin", "overview"), 10, async () => {
-    const [customers, orders, supportTickets, webhookEvents, telegramEvents, recentGenerations, failedGenerations, systemStatus] =
-      await Promise.all([
-        listCustomersForAdmin(),
-        listPaymentOrdersForAdmin("all"),
-        listPaymentSupportTicketsForAdmin("open"),
-        listPaymentWebhookEventsForAdmin({ limit: 12, status: "all" }),
-        listTelegramPaymentEventsForAdmin({ limit: 12, status: "all" }),
-        listGenerationsForAdmin({ limit: 12, status: "all" }),
-        listGenerationsForAdmin({ limit: 8, status: "failed" }),
-        getSystemStatus(),
-      ]);
+  try {
+    const payload = await cachedDashboardValue(dashboardCacheKey("admin", "overview"), 10, async () => {
+      const [customers, orders, supportTickets, webhookEvents, telegramEvents, recentGenerations, failedGenerations, systemStatus] =
+        await Promise.all([
+          listCustomersForAdmin(),
+          listPaymentOrdersForAdmin("all"),
+          listPaymentSupportTicketsForAdmin("open"),
+          listPaymentWebhookEventsForAdmin({ limit: 12, status: "all" }),
+          listTelegramPaymentEventsForAdmin({ limit: 12, status: "all" }),
+          listGenerationsForAdmin({ limit: 12, status: "all" }),
+          listGenerationsForAdmin({ limit: 8, status: "failed" }),
+          getSystemStatus(),
+        ]);
 
-    return {
-      customers,
-      orders,
-      supportTickets,
-      webhookEvents,
-      telegramEvents,
-      recentGenerations,
-      failedGenerations,
-      systemStatus,
-      generatedAt: new Date().toISOString(),
-    };
-  });
-  return NextResponse.json(payload);
+      return {
+        customers,
+        orders,
+        supportTickets,
+        webhookEvents,
+        telegramEvents,
+        recentGenerations,
+        failedGenerations,
+        systemStatus,
+        generatedAt: new Date().toISOString(),
+      };
+    });
+    return NextResponse.json(payload);
+  } catch (error) {
+    console.error("[admin/overview] Failed to build overview payload.", error);
+    return NextResponse.json({ error: "Failed to load admin overview." }, { status: 500 });
+  }
 }

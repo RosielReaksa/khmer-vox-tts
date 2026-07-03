@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useRef, useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { preparePaymentProofImage } from "@/lib/client-payment-proof-image";
+import { fetchJsonSafe, requestGuardedReload } from "@/lib/edge-fetch";
 import { VoxLoader } from "@/app/components/vox-loader";
 import { useDashboardUser } from "@/app/app/dashboard/dashboard-user-context";
 import Link from "next/link";
@@ -174,22 +175,17 @@ export function CheckoutClient({
 
     setCancelling(true);
     setError(null);
-    try {
-      const response = await fetch(`/api/payments/orders/${order.id}/cancel`, {
-        method: "POST",
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setError(data.error ?? "Failed to cancel order.");
-        setCancelling(false);
-        return;
-      }
-      router.push("/app/dashboard/billing");
-    } catch (err) {
-      console.error(err);
-      setError("Network error while cancelling order.");
+    const result = await fetchJsonSafe<{ error?: string }>(
+      `/api/payments/orders/${order.id}/cancel`,
+      { method: "POST" },
+      "Failed to cancel order.",
+    );
+    if (!result.ok) {
+      setError(result.message);
       setCancelling(false);
+      return;
     }
+    router.push("/app/dashboard/billing");
   };
 
   // Verification form states
@@ -215,18 +211,13 @@ export function CheckoutClient({
   const tax = total - subtotal;
 
   const refreshLiveTokenBalance = useCallback(async () => {
-    try {
-      const response = await fetch("/api/me", { cache: "no-store" });
-      const data = (await response.json()) as {
-        user?: {
-          tokenBalance?: number;
-        } | null;
-      };
-      if (response.ok && typeof data.user?.tokenBalance === "number") {
-        setTokenBalance(data.user.tokenBalance);
-      }
-    } catch (err) {
-      console.error("[checkout] Could not refresh token balance:", err);
+    const result = await fetchJsonSafe<{
+      user?: {
+        tokenBalance?: number;
+      } | null;
+    }>("/api/me", { cache: "no-store" });
+    if (result.ok && typeof result.data.user?.tokenBalance === "number") {
+      setTokenBalance(result.data.user.tokenBalance);
     }
   }, [setTokenBalance]);
 
@@ -250,36 +241,37 @@ export function CheckoutClient({
       setProofImageBase64(null);
       setPreviewUrl(null);
 
-      try {
-        const response = await fetch("/api/payments/orders", {
+      const result = await fetchJsonSafe<{
+        error?: string;
+        order?: PaymentOrderRecord;
+      }>(
+        "/api/payments/orders",
+        {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             planId,
             quantity: 1,
           }),
-        });
+        },
+        "Failed to initialize payment invoice.",
+      );
 
-        const data = await response.json();
-        if (!response.ok || !data.order) {
-          setError(data.error ?? "Failed to initialize payment invoice.");
-          return;
-        }
-
-        setOrder(data.order);
-        setInfoMessage(
-          isKhqrcc
-            ? "ABA QR generated. Pay with ABA Mobile, then wait for automatic confirmation."
-            : paymentInfo.checkoutMode === "static_payway_qr"
-              ? "Scan static PayWay QR and pay exact amount manually, then upload receipt."
-              : "Bakong KHQR generated dynamically. Scan with any Cambodian banking app.",
-        );
-      } catch (err) {
-        console.error(err);
-        setError("Network error while generating KHQR code.");
-      } finally {
+      if (!result.ok || !result.data.order) {
+        setError(!result.ok ? result.message : "Failed to initialize payment invoice.");
         setLoading(false);
+        return;
       }
+
+      setOrder(result.data.order);
+      setInfoMessage(
+        isKhqrcc
+          ? "ABA QR generated. Pay with ABA Mobile, then wait for automatic confirmation."
+          : paymentInfo.checkoutMode === "static_payway_qr"
+            ? "Scan static PayWay QR and pay exact amount manually, then upload receipt."
+            : "Bakong KHQR generated dynamically. Scan with any Cambodian banking app.",
+      );
+      setLoading(false);
     },
     [isKhqrcc, paymentInfo.checkoutMode, suspendedAt, suspendedReason],
   );
@@ -333,40 +325,46 @@ export function CheckoutClient({
     return () => clearInterval(interval);
   }, [order?.khqrExpiresAt, order?.status, order?.id, router]);
 
+  const consecutiveKhqrccChallengesRef = useRef(0);
   const checkKhqrccPayment = useCallback(async () => {
     if (!order?.id) return;
     setSubmitting(true);
     setError(null);
 
-    try {
-      const response = await fetch(`/api/payments/orders/${order.id}/verify`, {
-        method: "POST",
-      });
-      const data = (await response.json()) as {
-        error?: string;
-        message?: string;
-        order?: PaymentOrderRecord;
-      };
-      if (!response.ok) {
-        setError(data.error ?? "Could not check payment.");
-        return;
-      }
-      if (data.order) {
-        setOrder(data.order);
-        if (data.order.status === "approved") {
-          await refreshLiveTokenBalance();
+    const result = await fetchJsonSafe<{
+      error?: string;
+      message?: string;
+      order?: PaymentOrderRecord;
+    }>(`/api/payments/orders/${order.id}/verify`, { method: "POST" }, "Could not check payment.");
+
+    if (!result.ok) {
+      if (result.kind === "edge-challenge" && ++consecutiveKhqrccChallengesRef.current >= 3) {
+        const reloaded = requestGuardedReload(
+          `${consecutiveKhqrccChallengesRef.current} consecutive edge challenges checking KHQRcc payment`,
+        );
+        if (!reloaded) {
+          setError("Repeated security checks are blocking payment status checks. Please refresh manually.");
         }
+      } else if (result.kind !== "edge-challenge") {
+        setError(result.message);
       }
-      setInfoMessage(data.message ?? "Payment status checked.");
-    } catch (err) {
-      console.error(err);
-      setError("Network error while checking payment.");
-    } finally {
       setSubmitting(false);
+      return;
     }
+    consecutiveKhqrccChallengesRef.current = 0;
+
+    if (result.data.order) {
+      setOrder(result.data.order);
+      if (result.data.order.status === "approved") {
+        await refreshLiveTokenBalance();
+      }
+    }
+    setInfoMessage(result.data.message ?? "Payment status checked.");
+    setSubmitting(false);
   }, [order, refreshLiveTokenBalance]);
 
   // Poll order status while KHQRcc is pending, or after manual proof has been submitted.
+  const consecutivePollChallengesRef = useRef(0);
   useEffect(() => {
     if (!order?.id) return;
     if (isKhqrcc) {
@@ -384,24 +382,29 @@ export function CheckoutClient({
       return;
 
     const pollStatus = async () => {
-      try {
-        const response = await fetch(`/api/payments/orders/${order.id}`);
-        if (!response.ok) return;
-        const data = await response.json();
-        if (data.order) {
-          const updatedOrder = data.order as PaymentOrderRecord;
-          if (
-            updatedOrder.status !== order.status ||
-            updatedOrder.adminNote !== order.adminNote
-          ) {
-            setOrder(updatedOrder);
-            if (updatedOrder.status === "approved") {
-              await refreshLiveTokenBalance();
-            }
+      const result = await fetchJsonSafe<{ order?: PaymentOrderRecord }>(
+        `/api/payments/orders/${order.id}`,
+      );
+      if (!result.ok) {
+        if (result.kind === "edge-challenge" && ++consecutivePollChallengesRef.current >= 3) {
+          requestGuardedReload(
+            `${consecutivePollChallengesRef.current} consecutive edge challenges polling order status`,
+          );
+        }
+        return;
+      }
+      consecutivePollChallengesRef.current = 0;
+      if (result.data.order) {
+        const updatedOrder = result.data.order;
+        if (
+          updatedOrder.status !== order.status ||
+          updatedOrder.adminNote !== order.adminNote
+        ) {
+          setOrder(updatedOrder);
+          if (updatedOrder.status === "approved") {
+            await refreshLiveTokenBalance();
           }
         }
-      } catch (err) {
-        console.error("Error polling order status:", err);
       }
     };
 
@@ -463,36 +466,34 @@ export function CheckoutClient({
           setOrder(null);
         }
 
-        try {
-          const response = await fetch(`/api/payments/orders/${orderIdParam}`);
-          const data = await response.json();
-          if (!response.ok || !data.order) {
-            if (active) setError(data.error ?? "Failed to load payment order.");
-            return;
-          }
-          const loadedOrder = data.order as PaymentOrderRecord;
-          if (active) {
-            setOrder(loadedOrder);
-            setLoadedOrderId(orderIdParam);
-
-            const orderPlanId =
-              loadedOrder.planId in PLAN_INFO
-                ? (loadedOrder.planId as keyof typeof PLAN_INFO)
-                : "creator";
-            setSelectedPlanId(orderPlanId);
-            setInfoMessage(
-              isKhqrcc
-                ? "ABA QR loaded. Pay with ABA Mobile, then wait for automatic confirmation."
-                : paymentInfo.checkoutMode === "static_payway_qr"
-                  ? "Scan static PayWay QR and pay exact amount manually, then upload receipt."
-                  : "Bakong KHQR loaded for this order. Scan with any Cambodian banking app.",
-            );
-          }
-        } catch (err) {
-          console.error(err);
-          if (active) setError("Network error while loading payment order.");
-        } finally {
+        const result = await fetchJsonSafe<{ error?: string; order?: PaymentOrderRecord }>(
+          `/api/payments/orders/${orderIdParam}`,
+          undefined,
+          "Failed to load payment order.",
+        );
+        if (!result.ok || !result.data.order) {
+          if (active) setError(!result.ok ? result.message : "Failed to load payment order.");
           if (active) setLoading(false);
+          return;
+        }
+        const loadedOrder = result.data.order;
+        if (active) {
+          setOrder(loadedOrder);
+          setLoadedOrderId(orderIdParam);
+
+          const orderPlanId =
+            loadedOrder.planId in PLAN_INFO
+              ? (loadedOrder.planId as keyof typeof PLAN_INFO)
+              : "creator";
+          setSelectedPlanId(orderPlanId);
+          setInfoMessage(
+            isKhqrcc
+              ? "ABA QR loaded. Pay with ABA Mobile, then wait for automatic confirmation."
+              : paymentInfo.checkoutMode === "static_payway_qr"
+                ? "Scan static PayWay QR and pay exact amount manually, then upload receipt."
+                : "Bakong KHQR loaded for this order. Scan with any Cambodian banking app.",
+          );
+          setLoading(false);
         }
       }
       void loadOrder();
@@ -582,8 +583,9 @@ export function CheckoutClient({
     setSubmitting(true);
     setError(null);
 
-    try {
-      const response = await fetch(`/api/payments/orders/${order.id}`, {
+    const result = await fetchJsonSafe<{ error?: string; order?: PaymentOrderRecord }>(
+      `/api/payments/orders/${order.id}`,
+      {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -592,22 +594,18 @@ export function CheckoutClient({
           paymentMethod: selectedBank,
           proofImageDataUrl: proofImageBase64,
         }),
-      });
+      },
+      "Failed to submit payment confirmation.",
+    );
 
-      const data = await response.json();
-      if (!response.ok || !data.order) {
-        setError(data.error ?? "Failed to submit payment confirmation.");
-        setSubmitting(false);
-        return;
-      }
-
-      setOrder(data.order);
-      setSuccess(true);
-    } catch (err) {
-      console.error(err);
-      setError("Network error while submitting payment verification.");
+    if (!result.ok || !result.data.order) {
+      setError(!result.ok ? result.message : "Failed to submit payment confirmation.");
       setSubmitting(false);
+      return;
     }
+
+    setOrder(result.data.order);
+    setSuccess(true);
   };
 
   const isStaticPayway = paymentInfo.checkoutMode === "static_payway_qr";

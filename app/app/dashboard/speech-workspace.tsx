@@ -9,6 +9,8 @@ import { Portal } from "@/app/components/portal";
 import VoicePreviewCard from "@/app/components/voice-preview-card";
 import VoiceRecorder from "@/app/components/voice-recorder";
 
+import { fetchJsonSafe, parseJsonResponse, requestGuardedReload } from "@/lib/edge-fetch";
+
 import { MAX_DASHBOARD_TTS_CHARS } from "@/lib/usage-policy";
 import {
   DASHBOARD_TTS_VOICE_PRESETS,
@@ -108,42 +110,23 @@ function audioSourceFromResult(result: Pick<GenerationResponse, "audioBase64" | 
   return "";
 }
 
-function looksLikeEdgeChallenge(status: number, contentType: string, bodyText: string): boolean {
-  if (status !== 403) return false;
-  if (!contentType.includes("text/html")) return false;
-  const normalized = bodyText.toLowerCase();
-  return normalized.includes("just a moment")
-    || normalized.includes("cloudflare")
-    || normalized.includes("attention required");
-}
-
 async function readDashboardRouteError(response: Response): Promise<{
   reason: string;
   retryable: boolean;
+  isEdgeChallenge: boolean;
 }> {
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  if (contentType.includes("application/json")) {
-    const body = await response.json().catch(() => ({}));
-    const reason = typeof body.error === "string"
-      ? body.error
-      : `Background job status returned HTTP ${response.status}.`;
-    return {
-      reason,
-      retryable: [408, 409, 425, 429, 500, 502, 503, 504].includes(response.status),
-    };
+  const result = await parseJsonResponse<{ error?: string }>(
+    response,
+    `Background job status returned HTTP ${response.status}.`,
+  );
+  if (result.ok) {
+    // Only ever called when !response.ok, but keep this branch total.
+    return { reason: "", retryable: false, isEdgeChallenge: false };
   }
-
-  const bodyText = await response.text().catch(() => "");
-  if (looksLikeEdgeChallenge(response.status, contentType, bodyText)) {
-    return {
-      reason: "Cloudflare temporarily challenged the background-job request.",
-      retryable: true,
-    };
-  }
-
   return {
-    reason: `Background job status returned HTTP ${response.status}.`,
-    retryable: [408, 409, 425, 429, 500, 502, 503, 504].includes(response.status),
+    reason: result.message,
+    retryable: result.retryable,
+    isEdgeChallenge: result.kind === "edge-challenge",
   };
 }
 
@@ -226,14 +209,11 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
   const [saveVoiceError, setSaveVoiceError] = useState("");
 
   async function fetchSavedVoices() {
-    try {
-      const res = await fetch("/api/dashboard/voices");
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        setSavedVoices(data.voices);
-      }
-    } catch (e) {
-      console.error(e);
+    const result = await fetchJsonSafe<{ ok?: boolean; voices?: typeof savedVoices }>(
+      "/api/dashboard/voices",
+    );
+    if (result.ok && result.data.ok && result.data.voices) {
+      setSavedVoices(result.data.voices);
     }
   }
 
@@ -451,6 +431,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
       commitWorkspaceSnapshot(mode, { busy: true, progress: "Generating: starting..." });
       let completed = false;
       let attempts = 0;
+      let consecutiveEdgeChallenges = 0;
       const maxAttempts = QUEUED_JOB_MAX_POLL_ATTEMPTS;
 
       while (!completed && attempts < maxAttempts) {
@@ -458,11 +439,24 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
         try {
           const pollRes = await fetch(`/api/batch/jobs/${jobId}`, { cache: "no-store" });
           if (!pollRes.ok) {
-            const { reason, retryable } = await readDashboardRouteError(pollRes);
+            const { reason, retryable, isEdgeChallenge } = await readDashboardRouteError(pollRes);
             // 404 means the job no longer exists (e.g. cleared); stop quietly.
             if (pollRes.status === 404) {
               clearActiveJob(mode);
               commitWorkspaceSnapshot(mode, { busy: false, error: "" });
+              return;
+            }
+            if (isEdgeChallenge && ++consecutiveEdgeChallenges >= 3) {
+              const reloaded = requestGuardedReload(
+                `${consecutiveEdgeChallenges} consecutive edge challenges polling job ${jobId}`,
+              );
+              if (!reloaded) {
+                clearActiveJob(mode);
+                commitWorkspaceSnapshot(mode, {
+                  busy: false,
+                  error: "Repeated security checks are blocking this page. Please refresh manually.",
+                });
+              }
               return;
             }
             if (retryable) {
@@ -476,13 +470,27 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
             }
             throw new Error(reason);
           }
+          consecutiveEdgeChallenges = 0;
           const pollData = await pollRes.json();
           const job = pollData.job;
 
           if (job.status === "completed" || job.status === "partial") {
             const mergedRes = await fetch(`/api/batch/jobs/${jobId}/merged`);
             if (!mergedRes.ok) {
-              const { reason, retryable } = await readDashboardRouteError(mergedRes);
+              const { reason, retryable, isEdgeChallenge } = await readDashboardRouteError(mergedRes);
+              if (isEdgeChallenge && ++consecutiveEdgeChallenges >= 3) {
+                const reloaded = requestGuardedReload(
+                  `${consecutiveEdgeChallenges} consecutive edge challenges fetching merged audio for job ${jobId}`,
+                );
+                if (!reloaded) {
+                  clearActiveJob(mode);
+                  commitWorkspaceSnapshot(mode, {
+                    busy: false,
+                    error: "Repeated security checks are blocking this page. Please refresh manually.",
+                  });
+                }
+                return;
+              }
               if (retryable) {
                 commitWorkspaceSnapshot(mode, {
                   busy: true,
@@ -494,6 +502,7 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
               }
               throw new Error(reason || "Failed to retrieve merged audio.");
             }
+            consecutiveEdgeChallenges = 0;
             const mergedData = await mergedRes.json();
             const url = audioSourceFromResult(mergedData);
             if (!url) {
@@ -664,22 +673,21 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
         });
       }
 
-      const data = (await response.json()) as Record<string, unknown> & {
+      const parsed = await parseJsonResponse<Record<string, unknown> & {
         queued?: boolean;
         jobId?: string;
         remainingTokens?: number;
-      };
+      }>(response, "Generation request failed.");
 
-      if (!response.ok) {
-        const reason = data && typeof data.error === "string"
-          ? data.error
-          : "Generation request failed.";
+      if (!parsed.ok) {
         commitWorkspaceSnapshot(mode, {
           busy: false,
-          error: reason,
+          error: parsed.message,
         });
         return;
       }
+
+      const data = parsed.data;
 
       if (data.queued && data.jobId) {
         persistActiveJob(mode, data.jobId);
@@ -723,13 +731,13 @@ export function SpeechWorkspace({ mode, title, onNavigate }: SpeechWorkspaceProp
       fd.set("name", newVoiceName);
       fd.set("description", newVoiceDesc);
       fd.set("sample", newVoiceFile);
-      const res = await fetch("/api/dashboard/voices", {
-        method: "POST",
-        body: fd,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setSaveVoiceError(data.error || "Failed to save voice.");
+      const result = await fetchJsonSafe<{ error?: string }>(
+        "/api/dashboard/voices",
+        { method: "POST", body: fd },
+        "Failed to save voice.",
+      );
+      if (!result.ok) {
+        setSaveVoiceError(result.message);
         return;
       }
       setNewVoiceName("");

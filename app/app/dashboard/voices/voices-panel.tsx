@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import VoiceRecorder from "@/app/components/voice-recorder";
 import { useCachedJson, clearDashboardCache } from "@/app/app/dashboard/dashboard-data-cache";
 import { VoxLoader } from "@/app/components/vox-loader";
+import { fetchJsonSafe } from "@/lib/edge-fetch";
 import { MAX_CLONE_SAMPLE_BYTES } from "@/lib/usage-policy";
 
 type UserVoiceListItem = {
@@ -70,37 +71,33 @@ export function VoicesPanel({ initialVoices = [], onNavigate }: VoicesPanelProps
     setSaveVoiceError("");
     setSaveVoiceSuccess("");
 
-    try {
-      const fd = new FormData();
-      fd.set("name", newVoiceName);
-      fd.set("description", newVoiceDesc);
-      fd.set("sample", newVoiceFile);
+    const fd = new FormData();
+    fd.set("name", newVoiceName);
+    fd.set("description", newVoiceDesc);
+    fd.set("sample", newVoiceFile);
 
-      const res = await fetch("/api/dashboard/voices", {
-        method: "POST",
-        body: fd,
-      });
-      const resData = await res.json();
+    const result = await fetchJsonSafe<{ error?: string }>(
+      "/api/dashboard/voices",
+      { method: "POST", body: fd },
+      "Failed to save voice.",
+    );
 
-      if (!res.ok) {
-        setSaveVoiceError(resData.error || "Failed to save voice.");
-        return;
-      }
-
-      setNewVoiceName("");
-      setNewVoiceDesc("");
-      setNewVoiceFile(null);
-      setVoiceConsent(false);
-      setSaveVoiceSuccess("Voice template successfully saved to your library!");
-
-      // Refresh list
-      clearDashboardCache("dashboard:voices");
-      void refresh();
-    } catch {
-      setSaveVoiceError("Network error. Please try again.");
-    } finally {
+    if (!result.ok) {
+      setSaveVoiceError(result.message);
       setIsSavingVoice(false);
+      return;
     }
+
+    setNewVoiceName("");
+    setNewVoiceDesc("");
+    setNewVoiceFile(null);
+    setVoiceConsent(false);
+    setSaveVoiceSuccess("Voice template successfully saved to your library!");
+
+    // Refresh list
+    clearDashboardCache("dashboard:voices");
+    void refresh();
+    setIsSavingVoice(false);
   }
 
   async function handleDeleteVoice(id: string) {

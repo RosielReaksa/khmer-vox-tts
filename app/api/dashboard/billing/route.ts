@@ -18,31 +18,36 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [orders, supportTickets, totalCreditsEarned, apiAccess, adminActiveSetting] = await Promise.all([
-    listUserPaymentOrders(user.id),
-    listUserPaymentSupportTickets(user.id),
-    cachedDashboardValue(dashboardCacheKey(user.id, "billing:credits-earned"), 8, () =>
-      getUserTotalCreditsEarned(user.id),
-    ),
-    getApiAccessStatus(user.id),
-    getSystemSetting("admin_active", "true"),
-  ]);
+  try {
+    const [orders, supportTickets, totalCreditsEarned, apiAccess, adminActiveSetting] = await Promise.all([
+      listUserPaymentOrders(user.id),
+      listUserPaymentSupportTickets(user.id),
+      cachedDashboardValue(dashboardCacheKey(user.id, "billing:credits-earned"), 8, () =>
+        getUserTotalCreditsEarned(user.id),
+      ),
+      getApiAccessStatus(user.id),
+      getSystemSetting("admin_active", "true"),
+    ]);
 
-  return NextResponse.json({
-    orders,
-    supportTickets,
-    plans: TOKEN_PACK_PLANS,
-    currentBalance: user.tokenBalance,
-    totalCreditsEarned,
-    apiAccess,
-    paymentInfo: {
-      khqrName: "KHQRcc ABA Pay",
-      khqrAccount: khqrccAccountLabel(),
-      telegramHandle: process.env.TELEGRAM_ADMIN_HANDLE?.trim() || "https://t.me/OfficalVoxTTS",
-      staticQrImageUrl: "",
-      autoVerificationEnabled: isKhqrccConfigured(),
-      checkoutMode: "khqrcc_qr",
-      initialAdminActive: adminActiveSetting === "true",
-    },
-  });
+    return NextResponse.json({
+      orders,
+      supportTickets,
+      plans: TOKEN_PACK_PLANS,
+      currentBalance: user.tokenBalance,
+      totalCreditsEarned,
+      apiAccess,
+      paymentInfo: {
+        khqrName: "KHQRcc ABA Pay",
+        khqrAccount: khqrccAccountLabel(),
+        telegramHandle: process.env.TELEGRAM_ADMIN_HANDLE?.trim() || "https://t.me/OfficalVoxTTS",
+        staticQrImageUrl: "",
+        autoVerificationEnabled: isKhqrccConfigured(),
+        checkoutMode: "khqrcc_qr",
+        initialAdminActive: adminActiveSetting === "true",
+      },
+    });
+  } catch (error) {
+    console.error("[dashboard/billing] Failed to build billing payload.", error);
+    return NextResponse.json({ error: "Failed to load billing data." }, { status: 500 });
+  }
 }

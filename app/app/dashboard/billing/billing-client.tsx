@@ -12,6 +12,7 @@ import {
 
 import { clearDashboardCache } from "@/app/app/dashboard/dashboard-data-cache";
 import { useDashboardUser } from "@/app/app/dashboard/dashboard-user-context";
+import { fetchJsonSafe } from "@/lib/edge-fetch";
 import { preparePaymentProofImage } from "@/lib/client-payment-proof-image";
 import { paymentMethodLabel } from "@/lib/payment-method-label";
 import {
@@ -161,20 +162,20 @@ export function BillingClient({
         activeOrder?.status === "pending" &&
         paymentInfo.autoVerificationEnabled
       ) {
-        const verificationResponse = await fetch(
-          `/api/payments/orders/${activeOrder.id}/verify`,
-          {
-            method: "POST",
-          },
-        );
-        const verification = (await verificationResponse.json()) as {
+        const verification = await fetchJsonSafe<{
           message?: string;
           status?: string;
-        };
-        if (verification.message) {
+        }>(`/api/payments/orders/${activeOrder.id}/verify`, { method: "POST" });
+        if (verification.ok) {
+          if (verification.data.message) {
+            setMessage(verification.data.message);
+          } else if (verification.data.status === "approved") {
+            setMessage("Payment confirmed. Credits added.");
+          }
+        } else if (verification.kind !== "edge-challenge") {
+          // A challenged verify call is silently retried on the next poll tick
+          // rather than shown as an error, since it is not user-actionable.
           setMessage(verification.message);
-        } else if (verification.status === "approved") {
-          setMessage("Payment confirmed. Credits added.");
         }
       } else if (activeOrder?.status === "pending") {
         setMessage(
@@ -184,32 +185,36 @@ export function BillingClient({
         );
       }
 
-      const response = await fetch("/api/dashboard/billing", {
-        cache: "no-store",
-      });
-      const data = (await response.json()) as {
+      const result = await fetchJsonSafe<{
         orders?: PaymentOrderRecord[];
         supportTickets?: PaymentSupportTicketRecord[];
         currentBalance?: number;
-      };
-      if (!response.ok || !data.orders) return;
+      }>("/api/dashboard/billing", { cache: "no-store" });
+      if (!result.ok) {
+        if (result.kind !== "edge-challenge") {
+          setMessage("Could not refresh payment status. Please try again.");
+        }
+        return;
+      }
+      const { orders: freshOrders, supportTickets: freshSupportTickets, currentBalance: freshBalance } = result.data;
+      if (!freshOrders) return;
 
-      setOrders(data.orders);
-      setSupportTickets(data.supportTickets ?? []);
-      if (typeof data.currentBalance === "number") {
-        setLiveBalance(data.currentBalance);
-        setTokenBalance(data.currentBalance);
+      setOrders(freshOrders);
+      setSupportTickets(freshSupportTickets ?? []);
+      if (typeof freshBalance === "number") {
+        setLiveBalance(freshBalance);
+        setTokenBalance(freshBalance);
       }
       clearDashboardCache("dashboard:billing");
       if (selectedOrder) {
         setSelectedOrder(
-          data.orders.find((order) => order.id === selectedOrder.id) ??
+          freshOrders.find((order) => order.id === selectedOrder.id) ??
             selectedOrder,
         );
       }
       if (activeOrder) {
         const updatedActiveOrder =
-          data.orders.find((order) => order.id === activeOrder.id) ?? null;
+          freshOrders.find((order) => order.id === activeOrder.id) ?? null;
         setActiveOrder(updatedActiveOrder);
         if (updatedActiveOrder?.status === "approved") {
           setMessage(
@@ -250,34 +255,42 @@ export function BillingClient({
     setMessage("");
 
     try {
-      const response = await fetch("/api/payments/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          planId,
-          quantity: 1,
-        }),
-      });
-      const data = (await response.json()) as {
+      const result = await fetchJsonSafe<{
         error?: string;
         order?: PaymentOrderRecord;
         telegram?: { sent: boolean; reason?: string };
-      };
+      }>(
+        "/api/payments/orders",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            planId,
+            quantity: 1,
+          }),
+        },
+        "Could not create payment order.",
+      );
 
-      if (!response.ok || !data.order) {
-        setMessage(data.error ?? "Could not create payment order.");
+      if (!result.ok) {
+        setMessage(result.message);
+        return;
+      }
+      const { order } = result.data;
+      if (!order) {
+        setMessage("Could not create payment order.");
         return;
       }
 
-      setOrders((prev) => [data.order!, ...prev]);
+      setOrders((prev) => [order, ...prev]);
       clearDashboardCache("dashboard:billing");
-      setActiveOrder(data.order);
+      setActiveOrder(order);
       setShowAddMoreModal(false);
       if (options.openCheckout) {
-        router.push(`/app/checkout?orderId=${data.order.id}`);
+        router.push(`/app/checkout?orderId=${order.id}`);
         return;
       }
-      setSelectedOrder(data.order);
+      setSelectedOrder(order);
     } catch {
       setMessage("Network error while creating payment order.");
     } finally {
@@ -291,38 +304,43 @@ export function BillingClient({
     setMessage("");
 
     try {
-      const response = await fetch(
+      const result = await fetchJsonSafe<{
+        ticket?: PaymentSupportTicketRecord;
+        telegram?: { sent: boolean; reason?: "not_configured" | "failed" };
+        error?: string;
+        message?: string;
+      }>(
         `/api/payments/orders/${supportOrder.id}/support`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: supportMessage }),
         },
+        "Could not send support request.",
       );
-      const data = (await response.json()) as {
-        ticket?: PaymentSupportTicketRecord;
-        telegram?: { sent: boolean; reason?: "not_configured" | "failed" };
-        error?: string;
-        message?: string;
-      };
 
-      if (!response.ok || !data.ticket) {
-        setMessage(data.error ?? "Could not send support request.");
+      if (!result.ok) {
+        setMessage(result.message);
+        return;
+      }
+      const { ticket, telegram, message: successMessage } = result.data;
+      if (!ticket) {
+        setMessage("Could not send support request.");
         return;
       }
 
       setSupportTickets((prev) => {
         const withoutDuplicate = prev.filter(
-          (ticket) => ticket.id !== data.ticket!.id,
+          (item) => item.id !== ticket.id,
         );
-        return [data.ticket!, ...withoutDuplicate];
+        return [ticket, ...withoutDuplicate];
       });
-      const telegramNote = data.telegram?.sent
+      const telegramNote = telegram?.sent
         ? " Admin Telegram was notified."
-        : data.telegram?.reason === "failed"
+        : telegram?.reason === "failed"
           ? " Support was saved, but Telegram notification failed."
           : "";
-      setMessage(`${data.message ?? "Support request sent."}${telegramNote}`);
+      setMessage(`${successMessage ?? "Support request sent."}${telegramNote}`);
       setSupportOrder(null);
       setSupportMessage("");
       clearDashboardCache("dashboard:billing");
@@ -337,23 +355,26 @@ export function BillingClient({
     setPhoneProofLoading(true);
     setMessage("");
     try {
-      const response = await fetch(
-        `/api/payments/orders/${order.id}/proof-link`,
-        {
-          cache: "no-store",
-        },
-      );
-      const data = (await response.json()) as {
+      const result = await fetchJsonSafe<{
         error?: string;
         uploadUrl?: string;
         qrDataUrl?: string;
-      };
-      if (!response.ok || !data.uploadUrl || !data.qrDataUrl) {
-        setMessage(data.error ?? "Could not create phone upload link.");
+      }>(
+        `/api/payments/orders/${order.id}/proof-link`,
+        { cache: "no-store" },
+        "Could not create phone upload link.",
+      );
+      if (!result.ok) {
+        setMessage(result.message);
         return;
       }
-      setPhoneProofLink(data.uploadUrl);
-      setPhoneProofQr(data.qrDataUrl);
+      const { uploadUrl, qrDataUrl } = result.data;
+      if (!uploadUrl || !qrDataUrl) {
+        setMessage("Could not create phone upload link.");
+        return;
+      }
+      setPhoneProofLink(uploadUrl);
+      setPhoneProofQr(qrDataUrl);
     } catch {
       setMessage("Network error while creating phone upload link.");
     } finally {
@@ -385,39 +406,47 @@ export function BillingClient({
     setMessage("");
 
     try {
-      const response = await fetch(`/api/payments/orders/${proofOrder.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          paymentReference: proofReference,
-          userNote: proofNote,
-          proofImageDataUrl,
-        }),
-      });
-      const data = (await response.json()) as {
+      const result = await fetchJsonSafe<{
         error?: string;
         order?: PaymentOrderRecord;
         telegram?: { sent: boolean; reason?: "not_configured" | "failed" };
-      };
+      }>(
+        `/api/payments/orders/${proofOrder.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            paymentReference: proofReference,
+            userNote: proofNote,
+            proofImageDataUrl,
+          }),
+        },
+        "Could not submit payment confirmation.",
+      );
 
-      if (!response.ok || !data.order) {
-        setMessage(data.error ?? "Could not submit payment confirmation.");
+      if (!result.ok) {
+        setMessage(result.message);
+        return;
+      }
+      const { order: updatedOrder, telegram } = result.data;
+      if (!updatedOrder) {
+        setMessage("Could not submit payment confirmation.");
         return;
       }
 
       setOrders((prev) =>
         prev.map((order) =>
-          order.id === data.order!.id ? data.order! : order,
+          order.id === updatedOrder.id ? updatedOrder : order,
         ),
       );
       setActiveOrder((current) =>
-        current?.id === data.order!.id ? data.order! : current,
+        current?.id === updatedOrder.id ? updatedOrder : current,
       );
       setSelectedOrder((current) =>
-        current?.id === data.order!.id ? data.order! : current,
+        current?.id === updatedOrder.id ? updatedOrder : current,
       );
       setMessage(
-        data.telegram?.sent
+        telegram?.sent
           ? "Payment confirmation sent. Admin will approve after matching the receipt."
           : "Payment confirmation saved. Admin will approve after matching the receipt.",
       );
@@ -441,40 +470,41 @@ export function BillingClient({
     setCancelLoading(true);
     setMessage("");
     try {
-      const response = await fetch(`/api/payments/orders/${order.id}/cancel`, {
-        method: "POST",
-      });
-      const data = (await response.json()) as {
+      const result = await fetchJsonSafe<{
         error?: string;
         order?: PaymentOrderRecord;
-      };
+      }>(
+        `/api/payments/orders/${order.id}/cancel`,
+        { method: "POST" },
+        "Could not cancel payment order.",
+      );
 
-      if (!response.ok || !data.order) {
-        setMessage(data.error ?? "Could not cancel payment order.");
-        if (data.order) {
+      if (!result.ok || !result.data.order) {
+        if (!result.ok) setMessage(result.message);
+        const partialOrder = !result.ok ? result.data?.order : undefined;
+        if (partialOrder) {
           setOrders((prev) =>
-            prev.map((item) =>
-              item.id === data.order!.id ? data.order! : item,
-            ),
+            prev.map((item) => (item.id === partialOrder.id ? partialOrder : item)),
           );
           setActiveOrder((current) =>
-            current?.id === data.order!.id ? data.order! : current,
+            current?.id === partialOrder.id ? partialOrder : current,
           );
         }
         return;
       }
 
+      const updatedOrder = result.data.order;
       setOrders((prev) =>
-        prev.map((item) => (item.id === data.order!.id ? data.order! : item)),
+        prev.map((item) => (item.id === updatedOrder.id ? updatedOrder : item)),
       );
       setSelectedOrder((current) =>
-        current?.id === data.order!.id ? data.order! : current,
+        current?.id === updatedOrder.id ? updatedOrder : current,
       );
       setProofOrder((current) =>
-        current?.id === data.order!.id ? null : current,
+        current?.id === updatedOrder.id ? null : current,
       );
       setActiveOrder((current) =>
-        current?.id === data.order!.id ? null : current,
+        current?.id === updatedOrder.id ? null : current,
       );
       setCancelConfirmOrder(null);
       setMessage("Payment order cancelled. No tokens were charged.");

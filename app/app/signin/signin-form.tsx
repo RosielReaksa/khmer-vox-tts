@@ -6,6 +6,7 @@ import { useState } from "react";
 
 import { GoogleAuthButton, authErrorMessage } from "@/app/app/google-auth-button";
 import { useT } from "@/app/components/locale-provider";
+import { fetchJsonSafe } from "@/lib/edge-fetch";
 
 export function SigninForm({
   csrfToken = "",
@@ -28,29 +29,28 @@ export function SigninForm({
     setLoading(true);
     setError("");
 
-    try {
-      const response = await fetch("/api/auth/signin", {
+    const result = await fetchJsonSafe<{ error?: string }>(
+      "/api/auth/signin",
+      {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-CSRF-Token": csrfToken,
         },
         body: JSON.stringify({ email: email.trim(), password }),
-      });
-      const data = (await response.json()) as { error?: string };
+      },
+      t("auth.signin.errorDefault"),
+    );
 
-      if (!response.ok) {
-        setError(data.error ?? t("auth.signin.errorDefault"));
-        return;
-      }
-
-      router.replace("/app/dashboard");
-      router.refresh();
-    } catch {
-      setError(t("auth.signin.errorNetwork"));
-    } finally {
+    if (!result.ok) {
+      setError(result.kind === "network-error" ? t("auth.signin.errorNetwork") : result.message);
       setLoading(false);
+      return;
     }
+
+    router.replace("/app/dashboard");
+    router.refresh();
+    setLoading(false);
   }
 
   return (

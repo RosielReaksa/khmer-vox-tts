@@ -1,6 +1,94 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-07-01
+Last updated: 2026-07-03
+## Site-wide Cloudflare challenge / stuck-page fix (2026-07-03, NOT YET DEPLOYED - local only)
+
+User reported (with screenshots) two related symptoms across the whole
+site, not just admin: (1) `/app/admin` overview loaded stale cached data
+plus a raw red banner reading `UNEXPECTED TOKEN '<', "<!DOCTYPE "... IS
+NOT VALID JSON`, and (2) `/app/dashboard` sometimes landed directly on
+Cloudflare's own "Performing security verification / Verifying..."
+interstitial and never proceeded - stuck until a manual browser refresh.
+
+**Root cause:** When Cloudflare intercepts a request with its bot-
+verification challenge, the response is HTML, not JSON. Every client-side
+`fetch()` + `.json()` call site across the app assumed a JSON response and
+threw an uncaught `SyntaxError` on the HTML body, which surfaced as a raw
+error string with no recovery path. Critically, **nothing in the codebase
+ever called `window.location.reload()`** - a real page reload is the only
+way Cloudflare's JS challenge can actually execute and clear itself (it
+cannot run inside a background `fetch()`/`XHR`). A prior partial fix
+(2026-06-30, `looksLikeEdgeChallenge`/`readDashboardRouteError` in
+`speech-workspace.tsx`) only covered 2 of the ~25 affected fetch call
+sites and never triggered an actual reload, just marked responses
+"retryable" and polled forever against a stuck wall.
+
+Separately, `app/api/admin/overview/route.ts` (and 4 sibling admin/
+dashboard GET routes) had no try/catch around their data-loading -
+any unexpected server exception fell through to Next.js's generic HTML
+error page instead of JSON, reproducing the identical client crash even
+with zero Cloudflare involvement.
+
+The second symptom (Cloudflare's own interstitial hanging on
+"Verifying...") is served entirely from Cloudflare's edge before the
+request ever reaches this Next.js origin - it is NOT fixable by app code
+(confirmed no Cloudflare API token/config exists anywhere in this repo).
+That needs to be checked directly in the Cloudflare dashboard (Security
+Level, WAF/Bot Fight Mode rules that might challenge
+`/cdn-cgi/challenge-platform/*` sub-resources) or by testing in an
+incognito window with extensions disabled (ad blockers commonly block
+`challenges.cloudflare.com`). This was communicated to the user as a
+separate, non-code action item.
+
+**Fix:**
+- New shared client utility `lib/edge-fetch.ts`: `parseJsonResponse()` /
+  `fetchJsonSafe()` safely classify a fetch failure as `edge-challenge`
+  vs `app-error` vs `network-error` instead of throwing a raw SyntaxError;
+  `fetchJsonForQuery()` is the react-query `queryFn` variant that also
+  tracks consecutive edge-challenges per named scope. `requestGuardedReload()`
+  calls `window.location.reload()` capped at 3 reloads per 5-minute window
+  via `sessionStorage` (a real reload wipes all in-memory JS state, so the
+  cap has to survive the reload it's guarding) - falls back to a "please
+  refresh manually" message after the cap.
+- `dashboard-data-cache.ts` and `admin-data-cache.ts` (byte-for-byte
+  duplicated `fetchJson`) both now use `fetchJsonForQuery`, auto-reloading
+  after 3 consecutive challenges on the same query scope.
+- `speech-workspace.tsx`'s prior partial fix migrated onto the shared
+  utility (now also covers HTTP 503, not just 403); the background job-poll
+  loop now escalates to a guarded reload after 3 consecutive challenges
+  instead of polling forever. The one-shot generate/save-voice calls also
+  migrated for friendlier error text.
+- `shell.tsx`'s `/api/me` 60s poller and `dashboard-live-events.ts`'s SSE
+  reconnect loop both get the same guarded-reload escalation (3 consecutive
+  failures for the poller, ~10/30s for SSE reconnects).
+- Migrated ~25 raw `fetch()+.json()` call sites onto `fetchJsonSafe`:
+  key-manager.tsx, billing-client.tsx (incl. the payment-status poller),
+  batch-jobs-panel.tsx, checkout-client.tsx (incl. both KHQRcc and manual-
+  proof payment pollers - highest priority since a stuck poll here affects
+  real payments), home-playground.tsx (public homepage demo), signin/
+  signup/forgot-password/reset-password forms, voices-panel.tsx,
+  business-onboarding-client.tsx, payment-proof-client.tsx.
+- `app/api/admin/overview/route.ts` plus 4 sibling routes (admin/customers,
+  admin/payments, dashboard/billing, dashboard/history) wrapped in
+  try/catch returning proper `NextResponse.json({error}, {status:500})`
+  instead of falling through to Next's HTML error page.
+
+**Not touched (explicit scope decision):** admin-only action buttons that
+go through `lib/admin-fetch.ts` (payment-support, system, jobs, payments,
+customers admin panels) - same bug class but lower priority since the
+user's report was about non-admin, whole-site impact and the core admin
+crash (admin-data-cache.ts + overview route) is fixed. `line-audio-player.tsx`
+fetches binary audio, not JSON - already fails visibly via `setDecodeError`,
+doesn't need the JSON-specific utility.
+
+**Validation:**
+- npx tsc --noEmit: clean
+- npm run lint: 0 errors (1 pre-existing unrelated warning in
+  speech-workspace.tsx, confirmed via git stash comparison)
+- npm run build: succeeds (95 routes)
+
+**Not yet deployed.** This is local-only pending user review/deploy.
+
 ## Dashboard partial batch audio warning fix (2026-07-01, deployed prod-20260701-47)
 
 User showed the Voice Cloning dashboard after a long clone job generated

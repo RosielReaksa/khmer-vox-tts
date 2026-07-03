@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { clearDashboardCache } from "@/app/app/dashboard/dashboard-data-cache";
 import { Portal } from "@/app/components/portal";
+import { fetchJsonSafe } from "@/lib/edge-fetch";
 
 // Persist the one-time raw API key across tab refreshes / accidental navigation.
 // Using sessionStorage (cleared on tab close) so the secret does not linger
@@ -170,32 +171,40 @@ export function KeyManager({
     setCopyStatus("");
 
     try {
-      const response = await fetch("/api/keys", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          dailyTokenLimit: parseOptionalLimit(dailyLimit),
-          monthlyTokenLimit: parseOptionalLimit(monthlyLimit),
-          isBusiness,
-        }),
-      });
-      const data = (await response.json()) as {
+      const result = await fetchJsonSafe<{
         error?: string;
         rawKey?: string;
         key?: ApiKeyItem;
-      };
-      if (!response.ok || !data.key || !data.rawKey) {
-        setMessage(data.error ?? "Could not create key.");
+      }>(
+        "/api/keys",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            dailyTokenLimit: parseOptionalLimit(dailyLimit),
+            monthlyTokenLimit: parseOptionalLimit(monthlyLimit),
+            isBusiness,
+          }),
+        },
+        "Could not create key.",
+      );
+      if (!result.ok) {
+        setMessage(result.message);
         return;
       }
-      const nextKeys = [data.key, ...keys];
+      const { key, rawKey } = result.data;
+      if (!key || !rawKey) {
+        setMessage("Could not create key.");
+        return;
+      }
+      const nextKeys = [key, ...keys];
       setKeys(nextKeys);
       onKeysChange?.(nextKeys);
       setDailyLimit("");
       setMonthlyLimit("");
       clearDashboardCache("dashboard:api");
-      setRawKey(data.rawKey);
+      setRawKey(rawKey);
       setRawKeyExpiresAt(Date.now() + RAW_KEY_VISIBLE_MS);
       setCountdownNow(Date.now());
       setCopyStatus("");
@@ -221,17 +230,25 @@ export function KeyManager({
     setLoading(true);
     setMessage("");
     try {
-      const response = await fetch(`/api/keys/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dailyTokenLimit, monthlyTokenLimit }),
-      });
-      const data = (await response.json()) as { error?: string; key?: ApiKeyItem };
-      if (!response.ok || !data.key) {
-        setMessage(data.error ?? "Could not update key limits.");
+      const result = await fetchJsonSafe<{ error?: string; key?: ApiKeyItem }>(
+        `/api/keys/${id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dailyTokenLimit, monthlyTokenLimit }),
+        },
+        "Could not update key limits.",
+      );
+      if (!result.ok) {
+        setMessage(result.message);
         return;
       }
-      const nextKeys = keys.map((item) => (item.id === id ? { ...item, ...data.key! } : item));
+      const { key } = result.data;
+      if (!key) {
+        setMessage("Could not update key limits.");
+        return;
+      }
+      const nextKeys = keys.map((item) => (item.id === id ? { ...item, ...key } : item));
       setKeys(nextKeys);
       onKeysChange?.(nextKeys);
       clearDashboardCache("dashboard:api");
@@ -248,12 +265,13 @@ export function KeyManager({
     setMessage("");
     setRevokeTarget(null);
     try {
-      const response = await fetch(`/api/keys/${id}/revoke`, {
-        method: "POST",
-      });
-      const data = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        setMessage(data.error ?? "Could not revoke key.");
+      const result = await fetchJsonSafe<{ error?: string }>(
+        `/api/keys/${id}/revoke`,
+        { method: "POST" },
+        "Could not revoke key.",
+      );
+      if (!result.ok) {
+        setMessage(result.message);
         return;
       }
       const nextKeys = keys.map((item) =>

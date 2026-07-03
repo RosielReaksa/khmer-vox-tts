@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 
 import { clearDashboardCache } from "@/app/app/dashboard/dashboard-data-cache";
+import { requestGuardedReload } from "@/lib/edge-fetch";
 
 type DashboardUpdateEvent = {
   at: string;
@@ -26,10 +27,18 @@ export function useDashboardLiveEvents({ onUpdate }: LiveEventOptions = {}) {
     let closed = false;
     let source: EventSource | null = null;
     let retryTimer: number | null = null;
+    let consecutiveFailures = 0;
+    // ~30s of sustained reconnect failure at the 3s retry cadence below
+    // signals the tab is stuck behind an edge challenge, not a normal blip.
+    const MAX_FAILURES_BEFORE_RELOAD = 10;
 
     function connect() {
       if (closed) return;
       source = new EventSource("/api/dashboard/events");
+
+      source.addEventListener("open", () => {
+        consecutiveFailures = 0;
+      });
 
       source.addEventListener("dashboard-update", (event) => {
         const payload = parseUpdateEvent(event);
@@ -46,9 +55,13 @@ export function useDashboardLiveEvents({ onUpdate }: LiveEventOptions = {}) {
       source.onerror = () => {
         source?.close();
         source = null;
-        if (!closed) {
-          retryTimer = window.setTimeout(connect, 3000);
+        if (closed) return;
+        consecutiveFailures++;
+        if (consecutiveFailures >= MAX_FAILURES_BEFORE_RELOAD) {
+          requestGuardedReload(`${consecutiveFailures} consecutive dashboard-events reconnect failures`);
+          return;
         }
+        retryTimer = window.setTimeout(connect, 3000);
       };
     }
 

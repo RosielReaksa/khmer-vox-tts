@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { VoxLoader } from "@/app/components/vox-loader";
+import { fetchJsonSafe, parseJsonResponse } from "@/lib/edge-fetch";
 import type { BatchJobItemRecord, BatchJobRecord, GenerationMode } from "@/lib/types";
 import {
   DASHBOARD_TTS_VOICE_PRESETS,
@@ -139,35 +140,37 @@ export function BatchJobsPanel() {
 
   async function loadJobs() {
     setLoadingJobs(true);
-    try {
-      const response = await fetch("/api/batch/jobs", { cache: "no-store" });
-      const body = (await response.json()) as JobsResponse | { error?: string };
-      if (!response.ok) throw new Error("error" in body ? body.error : "Could not load batch jobs.");
-      setJobs("jobs" in body ? body.jobs : []);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Could not load batch jobs.");
-    } finally {
-      setLoadingJobs(false);
+    const result = await fetchJsonSafe<JobsResponse>(
+      "/api/batch/jobs",
+      { cache: "no-store" },
+      "Could not load batch jobs.",
+    );
+    if (!result.ok) {
+      setError(result.message);
+    } else {
+      setJobs(result.data.jobs ?? []);
     }
+    setLoadingJobs(false);
   }
 
   async function loadSavedVoices() {
     setLoadingVoices(true);
-    try {
-      const response = await fetch("/api/dashboard/voices", { cache: "no-store" });
-      const body = (await response.json()) as VoicesResponse | { error?: string };
-      if (!response.ok) throw new Error("error" in body ? body.error : "Could not load saved voices.");
-      const voices = "voices" in body ? body.voices : [];
+    const result = await fetchJsonSafe<VoicesResponse>(
+      "/api/dashboard/voices",
+      { cache: "no-store" },
+      "Could not load saved voices.",
+    );
+    if (!result.ok) {
+      setError(result.message);
+    } else {
+      const voices = result.data.voices ?? [];
       setSavedVoices(voices);
       setSelectedSavedVoiceId((current) => {
         if (current && voices.some((item) => item.id === current)) return current;
         return voices[0]?.id ?? "";
       });
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Could not load saved voices.");
-    } finally {
-      setLoadingVoices(false);
     }
+    setLoadingVoices(false);
   }
 
   async function loadDetail(jobId: string, options: { silent?: boolean } = {}) {
@@ -177,17 +180,18 @@ export function BatchJobsPanel() {
       setDetailLoadingJobId(jobId);
       setDetailError(null);
     }
-    try {
-      const response = await fetch(`/api/batch/jobs/${jobId}`, { cache: "no-store" });
-      const body = (await response.json()) as JobDetail | { error?: string };
-      if (!response.ok) throw new Error("error" in body ? body.error : "Could not load job detail.");
-      if (detailRequestRef.current !== requestId) return;
-      setDetail(body as JobDetail);
-    } catch (loadError) {
-      if (detailRequestRef.current !== requestId) return;
-      setDetailError(loadError instanceof Error ? loadError.message : "Could not load job detail.");
-    } finally {
-      if (detailRequestRef.current === requestId && !options.silent) {
+    const result = await fetchJsonSafe<JobDetail>(
+      `/api/batch/jobs/${jobId}`,
+      { cache: "no-store" },
+      "Could not load job detail.",
+    );
+    if (detailRequestRef.current === requestId) {
+      if (!result.ok) {
+        setDetailError(result.message);
+      } else {
+        setDetail(result.data);
+      }
+      if (!options.silent) {
         setDetailLoadingJobId(null);
       }
     }
@@ -287,10 +291,13 @@ export function BatchJobsPanel() {
         });
       }
 
-      const body = (await response.json()) as JobDetail & { ok?: boolean; error?: string };
-      if (!response.ok) throw new Error(body.error ?? "Batch generation failed.");
-      setDetail({ job: body.job, items: body.items });
-      setSelectedJobId(body.job.id);
+      const parsed = await parseJsonResponse<JobDetail & { ok?: boolean; error?: string }>(
+        response,
+        "Batch generation failed.",
+      );
+      if (!parsed.ok) throw new Error(parsed.message);
+      setDetail({ job: parsed.data.job, items: parsed.data.items });
+      setSelectedJobId(parsed.data.job.id);
       setDetailLoadingJobId(null);
       setDetailError(null);
       await loadJobs();
@@ -304,18 +311,19 @@ export function BatchJobsPanel() {
   async function retryFailedLines(jobId: string) {
     setRetryingJobId(jobId);
     setDetailError(null);
-    try {
-      const response = await fetch(`/api/batch/jobs/${jobId}/retry`, { method: "POST" });
-      const body = (await response.json()) as RetryFailedLinesResponse;
-      if (!response.ok) throw new Error(body.error ?? "Could not retry failed lines.");
-      setDetail({ job: body.job, items: body.items });
-      setSelectedJobId(body.job.id);
+    const result = await fetchJsonSafe<RetryFailedLinesResponse>(
+      `/api/batch/jobs/${jobId}/retry`,
+      { method: "POST" },
+      "Could not retry failed lines.",
+    );
+    if (!result.ok) {
+      setDetailError(result.message);
+    } else {
+      setDetail({ job: result.data.job, items: result.data.items });
+      setSelectedJobId(result.data.job.id);
       await loadJobs();
-    } catch (retryError) {
-      setDetailError(retryError instanceof Error ? retryError.message : "Could not retry failed lines.");
-    } finally {
-      setRetryingJobId(null);
     }
+    setRetryingJobId(null);
   }
 
   return (
