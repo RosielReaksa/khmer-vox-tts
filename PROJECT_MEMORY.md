@@ -1,7 +1,7 @@
 # Khmer Vox TTS Project Memory
 
 Last updated: 2026-07-03
-## Site-wide Cloudflare challenge / stuck-page fix (2026-07-03, NOT YET DEPLOYED - local only)
+## Site-wide Cloudflare challenge / stuck-page fix (2026-07-03, deployed prod-20260703-48)
 
 User reported (with screenshots) two related symptoms across the whole
 site, not just admin: (1) `/app/admin` overview loaded stale cached data
@@ -87,7 +87,8 @@ doesn't need the JSON-specific utility.
   speech-workspace.tsx, confirmed via git stash comparison)
 - npm run build: succeeds (95 routes)
 
-**Not yet deployed.** This is local-only pending user review/deploy.
+**Deploy:** prod-20260703-48 (commit e672d8a, GH Actions run 28662366862).
+Both web + worker pods rolled out successfully.
 
 ## Dashboard partial batch audio warning fix (2026-07-01, deployed prod-20260701-47)
 
