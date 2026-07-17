@@ -3162,6 +3162,7 @@ async function synthesizeChunkWithSilenceRetry(
   model: string,
   responseFormat: AudioResponseFormat,
   expectedContentType: string,
+  baseRetryAttempt = 0,
 ): Promise<Awaited<ReturnType<typeof synthesizeSingleChunk>>> {
   // Two retries by default (3 total attempts). Analyzes raw upstream audio for
   // silence AND buzzing/stuck-tonal/noise issues; passing audio is returned
@@ -3178,7 +3179,7 @@ async function synthesizeChunkWithSilenceRetry(
         model,
         responseFormat,
         expectedContentType,
-        attempt - 1,
+        baseRetryAttempt + attempt - 1,
       );
       const analysis = await analyzeRawGeneratedAudioSilence(
         result.audioBytes,
@@ -3281,6 +3282,7 @@ async function synthesizeAllChunks(
   model: string,
   responseFormat: AudioResponseFormat,
   expectedContentType: string,
+  baseRetryAttempt = 0,
 ): Promise<ChunkSynthesisResult[]> {
   const synthesizeOne = (chunkText: string, continuationPrompt?: ChunkContinuationPrompt) =>
     synthesizeChunkWithSilenceRetry(
@@ -3288,6 +3290,7 @@ async function synthesizeAllChunks(
       model,
       responseFormat,
       expectedContentType,
+      baseRetryAttempt,
     );
 
   if (!chunkContinuationEnabled() || chunks.length <= 1) {
@@ -3323,15 +3326,18 @@ async function synthesizeAllChunks(
   return results;
 }
 
-async function synthesizeMergedAudio(params: {
-  mode: GenerationMode;
-  text: string;
-  voice: string;
-  model?: string;
-  cloneSample?: CloneSample;
-  denoiseReference?: boolean;
-  voiceStyle?: VoiceStylePreset;
-}): Promise<TtsSynthesisResult> {
+async function synthesizeMergedAudio(
+  params: {
+    mode: GenerationMode;
+    text: string;
+    voice: string;
+    model?: string;
+    cloneSample?: CloneSample;
+    denoiseReference?: boolean;
+    voiceStyle?: VoiceStylePreset;
+  },
+  baseRetryAttempt = 0,
+): Promise<TtsSynthesisResult> {
   const model = (
     params.model ??
     process.env.TTS_UPSTREAM_MODEL ??
@@ -3357,6 +3363,7 @@ async function synthesizeMergedAudio(params: {
     model,
     responseFormat,
     expectedContentType,
+    baseRetryAttempt,
   );
 
   // Independently generated chunks drift in volume, which makes long audio get
@@ -3455,7 +3462,14 @@ export async function synthesizeWithUpstream(params: {
   let best: { result: TtsSynthesisResult; tonalSeconds: number } | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const result = await synthesizeMergedAudio(params);
+    // Escalate sampling across whole-synthesis retries: each retry re-rolls
+    // every chunk with a higher temperature + lower CFG so a stuck-resonance
+    // trajectory (buzzy output that survives chunk-level retries) samples a
+    // different path. VoxCPM2's own docs recommend lowering CFG toward 1.5-1.6
+    // when long-form output turns buzzy. The per-chunk retry already escalates;
+    // this complements it by stepping the BASE attempt up on every whole
+    // synthesis retry. Caps in retryAdjustedTemperature/retryAdjustedCfg bound it.
+    const result = await synthesizeMergedAudio(params, attempt - 1);
     if (attempt >= maxAttempts && best === null) {
       // Last attempt and nothing kept yet: skip the extra analysis pass.
       return result;
