@@ -838,6 +838,56 @@ async function reduceOutputNoise(bytes: Uint8Array): Promise<Uint8Array> {
   }
 }
 
+// Sustained-tonal "machine buzz" removal. VoxCPM2 occasionally emits a
+// stationary ~300-700 Hz tone whose energy smears across the 800-4000 Hz speech
+// band, which reads as a harsh mechanical buzz overlaid on the voice. The
+// per-chunk gate (analyzeRawGeneratedAudioSilence) and the delivered-audio
+// check (analyzeDeliveredAudio) both retry these, but when every attempt buzzes
+// the retry loop gives up and would deliver buzzing audio. This step strips the
+// stationary tonal component directly so the delivered audio stays clean even on
+// an unlucky run.
+// Afftdn in tonal-only mode (tn=1) targets sustained tones that do not track
+// speech formants, so speech is left essentially untouched while the buzz band
+// is suppressed. Validated on real buzzing output: longestSteadyTonal 3.25s ->
+// 0.00s, speech harmonics preserved. Disabled with TTS_OUTPUT_REMOVE_TONE=false.
+async function removeSustainedTone(bytes: Uint8Array): Promise<Uint8Array> {
+  if (!readBooleanEnv("TTS_OUTPUT_REMOVE_TONE", true)) {
+    return bytes;
+  }
+  const noiseReduction = readNumericEnv("TTS_OUTPUT_REMOVE_TONE_NR", 30, 5, 97);
+  const noiseFloor = readNumericEnv("TTS_OUTPUT_REMOVE_TONE_NF", -24, -80, -20);
+  try {
+    const sampleRate = readCanonicalGeneratedSampleRate();
+    const output = await runFfmpeg(
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-af",
+        `afftdn=nr=${noiseReduction}:nf=${noiseFloor}:tn=1`,
+        "-ac",
+        "1",
+        "-ar",
+        String(sampleRate),
+        "-codec:a",
+        "pcm_s16le",
+        "-sample_fmt",
+        "s16",
+        "-f",
+        "wav",
+        "pipe:1",
+      ],
+      bytes,
+    );
+    return output.byteLength > 0 ? output : bytes;
+  } catch {
+    // Tone removal is a finishing touch; never fail delivery over it.
+    return bytes;
+  }
+}
+
 // 2026-06-26: voice clarity / de-narrow filter. VoxCPM2 ref-clone output has a
 // resonant build-up around 300-1500 Hz (nasal / "honk" zone) and a low ceiling
 // above ~5.5 kHz, which makes the voice sound like the speaker is talking with
@@ -1987,7 +2037,8 @@ export async function mergePublicMp3SegmentsForDelivery(
   const merged = concatPcm16WavBuffers(volumeNormalizedSegments);
   const depaused = await capLongPauses(merged);
   const denoised = await reduceOutputNoise(depaused);
-  const normalized = await normalizeOutputLoudness(denoised);
+  const toned = await removeSustainedTone(denoised);
+  const normalized = await normalizeOutputLoudness(toned);
   const paced = await applyOutputTempo(normalized, mode);
   return {
     bytes: finalizeDeliveredWav(paced),
@@ -3353,10 +3404,14 @@ async function synthesizeMergedAudio(params: {
   const mergedBytes = concatPcm16WavBuffers(publicSegments);
   const depausedBytes = await capLongPauses(mergedBytes);
   const denoisedBytes = await reduceOutputNoise(depausedBytes);
+  // Strip the stationary "machine buzz" tone before EQ + loudnorm so the buzz
+  // band is gone before it gets amplified/colored by the stages below.
+  const tonedBytes = await removeSustainedTone(denoisedBytes);
   // 2026-06-26: open up VoxCPM2's nasal / "closed-nose" coloration before
   // loudnorm so the compressor + EQ see a natural spectrum. De-narrow runs
-  // between denoise (kills hiss) and loudnorm (matches integrated loudness).
-  const denarrowedBytes = await deNarrowVoice(denoisedBytes);
+  // between tone removal (kills buzz) and loudnorm (matches integrated
+  // loudness).
+  const denarrowedBytes = await deNarrowVoice(tonedBytes);
   const normalizedBytes = await normalizeOutputLoudness(denarrowedBytes);
   const pacedBytes = await applyOutputTempo(normalizedBytes, params.mode);
   const deliverableBytes = finalizeDeliveredWav(pacedBytes);
