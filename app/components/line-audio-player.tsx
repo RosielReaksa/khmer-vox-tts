@@ -85,6 +85,13 @@ export default function LineAudioPlayer({
 
   const stopSource = useCallback((captureOffset = true) => {
     const source = sourceRef.current;
+    // Capture the position BEFORE nulling the source ref: readPosition()
+    // returns early with the (wrong) segment start offset when
+    // sourceRef.current is null, which made pause/resume reset to 0.
+    if (captureOffset && playbackRef.current.playing) {
+      playbackRef.current.offset = readPosition();
+      playbackRef.current.playing = false;
+    }
     if (source) {
       if (endedHandlerRef.current) {
         source.removeEventListener("ended", endedHandlerRef.current);
@@ -97,10 +104,6 @@ export default function LineAudioPlayer({
       }
       source.disconnect();
       sourceRef.current = null;
-    }
-    if (captureOffset && playbackRef.current.playing) {
-      playbackRef.current.offset = readPosition();
-      playbackRef.current.playing = false;
     }
   }, [readPosition]);
 
