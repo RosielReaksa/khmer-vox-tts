@@ -59,7 +59,11 @@ export default function VoicePreviewCard({
     }
 
     try {
-      audio.currentTime = 0;
+      // Resume from the paused position; only restart from the beginning
+      // when playback had already reached the end.
+      if (audio.ended || audio.currentTime >= audio.duration - 0.05) {
+        audio.currentTime = 0;
+      }
       await audio.play();
       setPlaying(true);
     } catch {
@@ -184,7 +188,11 @@ export function VoicePreviewButton({ voice }: { voice: "female" | "male" }) {
       return;
     }
     try {
-      audio.currentTime = 0;
+      // Resume from the paused position; only restart from the beginning
+      // when playback had already reached the end.
+      if (audio.ended || audio.currentTime >= audio.duration - 0.05) {
+        audio.currentTime = 0;
+      }
       await audio.play();
       setPlaying(true);
     } catch {
