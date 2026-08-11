@@ -300,10 +300,9 @@ export default function LineAudioPlayer({
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
-      if (resumeAfterScrubRef.current) {
-        resumeAfterScrubRef.current = false;
-        void startAt(playbackRef.current.offset);
-      }
+      // Clicking/dragging the track seeks and leaves the audio paused —
+      // it does not auto-resume. The user presses play to continue.
+      resumeAfterScrubRef.current = false;
     },
     [startAt],
   );
