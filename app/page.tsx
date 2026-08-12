@@ -540,19 +540,22 @@ Content-Type: application/json
 
               <div className="border-4 border-primary bg-primary shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] overflow-hidden">
                 <div className="bg-[#eee9e0] border-b-2 border-primary px-4 py-2 font-headline uppercase font-black text-xs text-primary flex items-center justify-between">
-                  <span>cURL Voice Cloning</span>
+                  <span>cURL Voice Cloning (Async)</span>
                   <span className="h-3 w-3 rounded-full bg-accent"></span>
                 </div>
                 <pre className="p-4 overflow-x-auto font-mono text-xs text-[#faf7f2] bg-[#1a1a1a] leading-relaxed">
-                  {`# Clone Voice
-POST /v1/audio/clone
+                  {`# Clone Voice (Async) — returns job_id immediately
+POST /v2/audio/clone/jobs
 Authorization: Bearer YOUR_API_KEY
 Content-Type: multipart/form-data
 
 sample=@reference.wav
 input=soursdey nih ku chea somleng khmer
 model=voxcpm2
-output_format=mp3`}
+voice_consent=true
+
+# Poll status: GET /v2/audio/jobs/JOB_ID
+# Download: GET /v2/audio/jobs/JOB_ID/audio`}
                 </pre>
               </div>
             </div>

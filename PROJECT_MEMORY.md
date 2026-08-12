@@ -1,6 +1,35 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-07-03
+Last updated: 2026-08-12
+
+## Website docs: replace v1 clone with v2 async (2026-08-12, local-only)
+
+Customer reported HTTP 524 timeout on `POST /api/v1/audio/clone` because
+voice clone generation takes 60-180s (Modal VoxCPM2 GPU processing),
+exceeding Cloudflare's 100s proxy read timeout.
+
+The async v2 endpoint `POST /api/v2/audio/clone/jobs` already existed and
+returns `job_id` in <1s. Updated all website references to point users to
+v2 async instead of v1 sync for clone operations.
+
+Files changed:
+- `app/docs/page.tsx`: Removed v1 clone + batch clone endpoint cards and
+  their full EndpointSections. Enhanced v2 async section description.
+- `app/docs/api-test-console.tsx`: Replaced v1 clone test mode with v2
+  async clone mode. Updated runTest() to handle v2 JSON response
+  (job_id/status_url/audio_url instead of audio binary).
+- `app/review/page.tsx`: Updated checklist to reference v2 clone endpoint.
+- `app/page.tsx`: Replaced home page v1 clone curl example with v2 async
+  flow (queue → poll → download).
+
+Not changed:
+- `app/api/v1/audio/clone/route.ts` — left intact (existing sync
+  integrations still work; some users may use it for short requests)
+- `app/api/v1/audio/batch/clone/route.ts` — left intact
+- Dashboard code and lib code — no v1 clone references existed there
+
+Validation: tsc clean, lint clean (pre-existing warnings only), build succeeds (95 routes).
+Customer was informed to switch to v2 async endpoint.
 ## Site-wide Cloudflare challenge / stuck-page fix (2026-07-03, deployed prod-20260703-48)
 
 User reported (with screenshots) two related symptoms across the whole

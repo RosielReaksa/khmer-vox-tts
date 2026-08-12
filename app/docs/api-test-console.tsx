@@ -23,15 +23,9 @@ const modes: Array<{
   },
   {
     id: "clone",
-    label: "Clone",
-    endpoint: "/api/v1/audio/clone",
-    note: "Recommended for dubbing tests. Sends multipart/form-data with sample, input, and voice_consent=true.",
-  },
-  {
-    id: "batch_clone",
-    label: "Batch Clone",
-    endpoint: "/api/v1/audio/batch/clone",
-    note: "Creates an async clone job. Use this for many dubbing/customer-system segments.",
+    label: "Clone (Async)",
+    endpoint: "/api/v2/audio/clone/jobs",
+    note: "Async clone — returns job_id immediately, then poll for completion. No timeout.",
   },
 ];
 
@@ -52,7 +46,7 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
     [mode],
   );
   const fullUrl = `${baseUrl}${activeMode.endpoint}`;
-  const needsReference = mode === "clone" || mode === "batch_clone";
+  const needsReference = mode === "clone";
 
   useEffect(() => {
     return () => {
@@ -105,12 +99,9 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
         formData.set("model", "voxcpm2");
         formData.set("voice", "match the reference speaker clearly");
         formData.set("voice_consent", "true");
-        formData.set("output_format", "mp3");
-        if (mode === "batch_clone") {
-          formData.set("title", "Docs test batch");
-          if (webhookUrl.trim()) {
-            formData.set("webhook_url", webhookUrl.trim());
-          }
+        formData.set("output_format", "wav");
+        if (webhookUrl.trim()) {
+          formData.set("webhook_url", webhookUrl.trim());
         }
         body = formData;
       }
@@ -150,12 +141,28 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
 
         try {
           const json = JSON.parse(text) as {
+            job_id?: string;
+            status?: string;
+            status_url?: string;
+            audio_url?: string;
             job?: { id: string; status: string; download_url?: string };
           };
+          if (json.job_id) {
+            setResponseText(
+              [
+                "SUCCESS (Async Clone Job Created)",
+                `job_id: ${json.job_id}`,
+                `status: ${json.status ?? "queued"}`,
+                `status_url: ${json.status_url ?? "-"}`,
+                `audio_url: ${json.audio_url ?? "-"}`,
+              ].join("\n"),
+            );
+            return;
+          }
           if (json.job) {
             setResponseText(
               [
-                "SUCCESS (Async Batch Job Created)",
+                "SUCCESS (Async Job Created)",
                 `job_id: ${json.job.id}`,
                 `status: ${json.job.status}`,
                 `download_url: ${json.job.download_url ?? "-"}`,

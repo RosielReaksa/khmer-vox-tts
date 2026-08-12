@@ -64,16 +64,6 @@ const endpointCards = [
     path: "/api/v1/audio/speech",
     note: "Fast single-call TTS for tests where speaker consistency is not required.",
   },
-  {
-    title: "Clone",
-    path: "/api/v1/audio/clone",
-    note: "Reference-audio voice for real products and business users.",
-  },
-  {
-    title: "Batch Clone",
-    path: "/api/v1/audio/batch/clone",
-    note: "Async high-volume jobs with external IDs, metadata, and webhook callbacks.",
-  },
 ];
 
 export default function ApiDocsPage() {
@@ -242,7 +232,7 @@ export default function ApiDocsPage() {
               method="POST"
               path="/api/v2/audio/jobs"
               title="Async Audio Jobs V2"
-              description="Recommended business path. Submit a job, poll status, then download one merged WAV. Long text is split into safe worker segments automatically."
+              description="Recommended for all voice cloning and long-form TTS. Submit a job, poll status, then download merged WAV. Long text is split into safe worker segments automatically. Returns job_id immediately — no timeout issues."
             >
               <CodeBlock
                 title="Standard TTS job"
@@ -291,57 +281,7 @@ export default function ApiDocsPage() {
               />
             </EndpointSection>
 
-            <EndpointSection
-              id="clone"
-              method="POST"
-              path="/api/v1/audio/clone"
-              title="Session Clone Voice"
-              description="Recommended for real users and business API customers. For dubbing tools, use the multipart upload format first. The reference audio controls the speaker for the request/session and is not saved as a lifetime voice profile."
-            >
-              <CodeBlock
-                title="Multipart upload recommended"
-                code={`curl -X POST "${baseUrl}/api/v1/audio/clone" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  --output cloned.wav \\\n  -F "sample=@reference.wav;type=audio/wav" \\\n  -F "input=soursdey nih ku chea somleng khmer" \\\n  -F "model=voxcpm2" \\\n  -F "voice_consent=true" \\\n  -F "output_format=wav"`}
-              />
-              <CodeBlock
-                title="Python multipart file send"
-                code={`import requests\n\nfiles = {\n    "sample": ("ref.wav", open("reference.wav", "rb"), "audio/wav"),\n}\ndata = {\n    "input": "soursdey nih ku chea somleng khmer",\n    "model": "voxcpm2",\n    "voice_consent": "true",\n    "output_format": "wav",\n}\n\nresponse = requests.post(\n    "${baseUrl}/api/v1/audio/clone",\n    headers={"Authorization": "Bearer YOUR_API_KEY"},\n    files=files,\n    data=data,\n    timeout=600,\n)\nresponse.raise_for_status()\nopen("cloned.wav", "wb").write(response.content)`}
-              />
-              <FieldTable
-                rows={[
-                  ["sample", "file (binary)", `Required. WAV or MP3 audio file containing clean voice sample, max ${(MAX_CLONE_SAMPLE_BYTES / 1024 / 1024).toFixed(1)}MB.`],
-                  ["input", "string", `Required. 1 to ${MAX_TEXT_CHARS.toLocaleString()} characters.`],
-                  ["voice_consent", "boolean", "Required. Must be set to true indicating the user has permission to use the reference voice."],
-                  ["model", "string", "Optional. Default is voxcpm2."],
-                  ["voice", "string", "Optional. Descriptive guide for prosody styling."],
-                ]}
-              />
-            </EndpointSection>
 
-            <EndpointSection
-              id="batch"
-              method="POST"
-              path="/api/v1/audio/batch/clone"
-              title="Batch Clone Voice (Async)"
-              description="Ideal for dubbing lines. Submit a reference voice sample and a list of text items. The request finishes instantly, returning a job ID that polls progress until ZIP download is ready."
-            >
-              <CodeBlock
-                title="cURL Multipart Batch"
-                code={`curl -X POST "${baseUrl}/api/v1/audio/batch/clone" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -F "sample=@reference.wav;type=audio/wav" \\\n  -F "model=voxcpm2" \\\n  -F "voice_consent=true" \\\n  -F "webhook_url=https://your-app.com/callback" \\\n  -F "items=[{\\"id\\":\\"seg01\\",\\"text\\":\\"soursdey segment one\\"},{\\"id\\":\\"seg02\\",\\"text\\":\\"somleng khmer segment two\\"}]"`}
-              />
-              <CodeBlock
-                title="Python Multipart Batch"
-                code={`import json\nimport requests\n\nfiles = {\n    "sample": ("ref.wav", open("reference.wav", "rb"), "audio/wav"),\n}\ndata = {\n    "voice_consent": "true",\n    "webhook_url": "https://your-app.com/callback",\n    "items": json.dumps([\n        {"id": "seg01", "text": "soursdey segment one"},\n        {"id": "seg02", "text": "somleng khmer segment two"},\n    ]),\n}\n\nresponse = requests.post(\n    "${baseUrl}/api/v1/audio/batch/clone",\n    headers={"Authorization": "Bearer YOUR_API_KEY"},\n    files=files,\n    data=data,\n    timeout=60,\n)\nprint(response.json()) # Contains job_id, status: pending`}
-              />
-              <FieldTable
-                rows={[
-                  ["sample", "file (binary)", "Required. Voice sample sample for the batch speaker, max 8MB."],
-                  ["items", "JSON array/string", "Required list of generation items. Each item must have text. id and title are optional. Maximum 100 items per batch request."],
-                  ["voice_consent", "boolean", "Required. Must be set to true."],
-                  ["webhook_url", "string", "Optional. Webhook URL to receive a POST event when the batch completes or fails."],
-                  ["model", "string", "Optional. Default is voxcpm2."],
-                ]}
-              />
-            </EndpointSection>
 
             {/* Tokens & Limits */}
             <section id="tokens" className="scroll-mt-24 border-4 border-outline bg-white p-6 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] text-left">
