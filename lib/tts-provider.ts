@@ -851,7 +851,7 @@ async function reduceOutputNoise(bytes: Uint8Array): Promise<Uint8Array> {
 // is suppressed. Validated on real buzzing output: longestSteadyTonal 3.25s ->
 // 0.00s, speech harmonics preserved. Disabled with TTS_OUTPUT_REMOVE_TONE=false.
 async function removeSustainedTone(bytes: Uint8Array): Promise<Uint8Array> {
-  if (!readBooleanEnv("TTS_OUTPUT_REMOVE_TONE", true)) {
+  if (!readBooleanEnv("TTS_OUTPUT_REMOVE_TONE", false)) {
     return bytes;
   }
   const noiseReduction = readNumericEnv("TTS_OUTPUT_REMOVE_TONE_NR", 30, 5, 97);
@@ -900,7 +900,7 @@ async function removeSustainedTone(bytes: Uint8Array): Promise<Uint8Array> {
 // Disabled with TTS_OUTPUT_DE_NARROW=false. Strength is fixed because the
 // 300-1500 Hz resonance is a property of VoxCPM2's output, not the input.
 async function deNarrowVoice(bytes: Uint8Array): Promise<Uint8Array> {
-  if (!readBooleanEnv("TTS_OUTPUT_DE_NARROW", true)) {
+  if (!readBooleanEnv("TTS_OUTPUT_DE_NARROW", false)) {
     return bytes;
   }
   try {
@@ -936,7 +936,7 @@ async function deNarrowVoice(bytes: Uint8Array): Promise<Uint8Array> {
 }
 
 async function normalizeOutputLoudness(bytes: Uint8Array): Promise<Uint8Array> {
-  if (!readBooleanEnv("TTS_OUTPUT_LOUDNORM", true)) {
+  if (!readBooleanEnv("TTS_OUTPUT_LOUDNORM", false)) {
     return bytes;
   }
   const targetI = readNumericEnv("TTS_OUTPUT_LOUDNORM_I", -16, -36, -8);
@@ -1050,7 +1050,7 @@ async function applyOutputTempo(
   bytes: Uint8Array,
   mode: GenerationMode,
 ): Promise<Uint8Array> {
-  if (!readBooleanEnv("TTS_OUTPUT_TEMPO_ENABLED", true)) {
+  if (!readBooleanEnv("TTS_OUTPUT_TEMPO_ENABLED", false)) {
     return bytes;
   }
   const tempo = readOutputTempo(mode);
