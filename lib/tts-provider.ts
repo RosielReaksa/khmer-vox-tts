@@ -1508,8 +1508,8 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
   );
   const maxHighZeroCrossingSeconds = readNumericEnv(
     "TTS_AUDIO_MAX_HIGH_ZCR_SECONDS",
-    1,
-    0.25,
+    0.5,
+    0.1,
     5,
   );
   // Stuck-vowel buzz bursts from VoxCPM2 are typically 1-2s each. The old
@@ -1522,8 +1522,8 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
   // the first attempt, cascading into batch-item failures ("2 of 4 failed").
   const maxSteadyTonalSeconds = readNumericEnv(
     "TTS_AUDIO_MAX_STEADY_TONAL_SECONDS",
-    1.4,
-    0.75,
+    0.8,
+    0.3,
     10,
   );
   const maxSteadyTonalRatio = readNumericEnv(
@@ -1568,8 +1568,8 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
   // tonal runs and we don't want a chunk to fail on the first attempt.
   const maxHighDominantFreqSeconds = readNumericEnv(
     "TTS_AUDIO_MAX_HIGH_DOMINANT_FREQ_SECONDS",
-    0.9,
-    0.25,
+    0.5,
+    0.1,
     5,
   );
   const maxHighDominantFreqRatio = readNumericEnv(
@@ -2255,6 +2255,9 @@ function finalizeDeliveredWav(bytes: Uint8Array): Uint8Array {
   const dataEnd = Math.min(buffer.length, info.dataOffset + info.dataSize);
   const data = buffer.subarray(info.dataOffset, dataEnd);
 
+  // Apply dithering to reduce quantization artifacts from gain adjustments
+  applyDither(buffer, info.dataOffset);
+
   // Fast path: canonical 44-byte header already present with correct sizes and
   // no extra chunks (data immediately after fmt). Avoid a needless copy.
   if (
@@ -2368,7 +2371,7 @@ function levelWavChunksToCommonLoudness(chunks: Uint8Array[]): Uint8Array[] {
     return chunks;
   }
 
-  const maxGainDb = readNumericEnv("TTS_CHUNK_LEVEL_MAX_GAIN_DB", 6, 0, 18);
+  const maxGainDb = readNumericEnv("TTS_CHUNK_LEVEL_MAX_GAIN_DB", 3, 0, 6);
   return chunks.map((chunk, index) => {
     const level = levels[index];
     if (!level || level <= 0) return chunk;
@@ -2376,7 +2379,7 @@ function levelWavChunksToCommonLoudness(chunks: Uint8Array[]): Uint8Array[] {
       -maxGainDb,
       Math.min(maxGainDb, 20 * Math.log10(reference / level)),
     );
-    if (Math.abs(clampedGainDb) < 0.25) return chunk;
+    if (Math.abs(clampedGainDb) < 0.5) return chunk;
     const gain = Math.pow(10, clampedGainDb / 20);
 
     let info: Pcm16WavInfo;
@@ -2635,10 +2638,104 @@ function concatPcm16WavBuffers(buffers: Uint8Array[]): Uint8Array {
 
   let data: Buffer = rawSegments[0];
   for (let index = 1; index < rawSegments.length; index++) {
-    data = joinSegments(data, rawSegments[index]);
+    let segment = rawSegments[index];
+    const clickLevel = detectBoundaryClick(data, segment, first.channels);
+    if (clickLevel > 500) {
+      const joined = microDeclickJoin(data, segment, first.sampleRate, first.channels);
+      data = joined;
+    } else {
+      data = joinSegments(data, segment);
+    }
   }
 
+  applyDither(data, 0);
+
   return createPcm16Wav(data, first.channels, first.sampleRate);
+}
+
+/**
+ * Detects amplitude discontinuity (click/crash) at a seam between two PCM segments.
+ * Returns the absolute sample-level jump at the boundary.
+ */
+function detectBoundaryClick(
+  leftTail: Buffer,
+  rightHead: Buffer,
+  channels: number,
+  windowSize = 16,
+): number {
+  if (leftTail.length < windowSize * channels * 2 || rightHead.length < windowSize * channels * 2) {
+    return 0;
+  }
+  let leftAvg = 0;
+  let rightAvg = 0;
+  for (let i = 0; i < windowSize * channels; i++) {
+    const lOffset = leftTail.length - (windowSize * channels - i) * 2;
+    const rOffset = i * 2;
+    if (lOffset >= 0 && rOffset + 1 < rightHead.length) {
+      leftAvg += leftTail.readInt16LE(lOffset);
+      rightAvg += rightHead.readInt16LE(rOffset);
+    }
+  }
+  leftAvg /= (windowSize * channels);
+  rightAvg /= (windowSize * channels);
+  return Math.abs(leftAvg - rightAvg);
+}
+
+/**
+ * Apply micro-declick fades at the junction of two PCM-16 segments.
+ * Uses a 0.5ms linear fade — short enough to be inaudible but long enough to
+ * eliminate sample-level discontinuities that read as clicks/crashes.
+ */
+function microDeclickJoin(left: Buffer, right: Buffer, sampleRate: number, channels: number): Buffer {
+  const bytesPerFrame = channels * 2;
+  const fadeSamples = Math.max(1, Math.round(sampleRate * 0.0005)); // 0.5ms
+  const leftFrames = Math.floor(left.length / bytesPerFrame);
+  const rightFrames = Math.floor(right.length / bytesPerFrame);
+
+  if (fadeSamples > leftFrames || fadeSamples > rightFrames) {
+    return Buffer.concat([left, right]);
+  }
+
+  const result = Buffer.alloc(left.length + right.length);
+  left.copy(result, 0);
+  right.copy(result, left.length);
+
+  for (let frame = 0; frame < fadeSamples; frame++) {
+    const t = frame / fadeSamples; // 0..1 linear
+    const leftFrameIdx = leftFrames - fadeSamples + frame;
+    const rightFrameIdx = frame;
+    for (let ch = 0; ch < channels; ch++) {
+      const leftOffset = (leftFrameIdx * channels + ch) * 2;
+      const rightOffset = left.length + (rightFrameIdx * channels + ch) * 2;
+      if (leftOffset + 1 < result.length && rightOffset + 1 < result.length) {
+        const leftSample = result.readInt16LE(leftOffset);
+        const rightSample = result.readInt16LE(rightOffset);
+        result.writeInt16LE(
+          Math.round(leftSample * t + rightSample * (1 - t)),
+          rightOffset,
+        );
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Add triangular dither to PCM-16 audio before output.
+ * Eliminates quantization distortion from gain adjustments.
+ */
+function applyDither(pcm: Buffer, dataOffset: number): void {
+  let prev = 0;
+  for (let i = dataOffset; i + 1 < pcm.length; i += 2) {
+    const r1 = Math.random() - 0.5;
+    const r2 = Math.random() - 0.5;
+    const dither = (r1 + r2 - prev) * 0.5;
+    prev = r2;
+    const original = pcm.readInt16LE(i);
+    const dithered = Math.round(original + dither);
+    pcm.writeInt16LE(Math.max(-32768, Math.min(32767, dithered)), i);
+  }
 }
 
 // VoxCPM2 failures are sticky at low temperature: resending the identical
@@ -2875,8 +2972,8 @@ async function synthesizeSingleChunk(
         qualityRetryAttempt,
       );
     } else {
-      // Preset male/female: ref_audio only (official). Never send voice â€” upstream
-      // prepends it to speakable text as "(male)â€¦" / "(female)â€¦" and the model
+      // Preset male/female: ref_audio only (official). Never send voice — upstream
+      // prepends it to speakable text as “(male)…” / “(female)…” and the model
       // reads the English label aloud on every chunk.
       delete payload.voice;
       payload.temperature = retryAdjustedTemperature(
@@ -3168,7 +3265,7 @@ async function synthesizeChunkWithSilenceRetry(
   // silence AND buzzing/stuck-tonal/noise issues; passing audio is returned
   // unchanged, failing audio is regenerated (with temperature escalation).
   const maxAttempts =
-    Math.round(readNumericEnv("TTS_NEAR_SILENCE_RETRIES", 2, 0, 5)) + 1;
+    Math.round(readNumericEnv("TTS_NEAR_SILENCE_RETRIES", 4, 0, 8)) + 1;
   let lastError: Error | null = null;
   let lastSilenceIssue: string | null = null;
 
