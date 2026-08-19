@@ -1218,6 +1218,14 @@ type WavPcm16Stats = {
   longestSteadyTonalSeconds: number;
   highDominantFreqWindowRatio: number;
   longestHighDominantFreqSeconds: number;
+  // Clipping/crackle detection (Phase 1). VoxCPM2 occasionally emits a burst
+  // of samples pinned near the 16-bit ceiling ("flat-top" crackle) and/or a
+  // short broadband energy spike (a "pop"). Neither moves the 0.25s windowed
+  // RMS/ZCR averages enough to trip the sustained-buzz gates above, so these
+  // dedicated detectors catch transient artifacts the old gate was blind to.
+  longestClippedRunSeconds: number;
+  transientSpikeCount: number;
+  longestTransientBurstSeconds: number;
 };
 
 function getWavPcm16Stats(
@@ -1306,6 +1314,51 @@ function getWavPcm16Stats(
   let intervalSum = 0;
   let intervalSumSquares = 0;
   let intervalCount = 0;
+
+  // --- Clipping-run detector ----------------------------------------------
+  // Samples pinned near the 16-bit ceiling (|sample| >= clipThreshold) form a
+  // "flat-top" crackle when they run consecutively. A single clipped peak is
+  // normal speech headroom; a run of many is the artifact. Track the longest
+  // consecutive run across the whole clip.
+  const clipThreshold = readNumericEnv(
+    "TTS_AUDIO_CLIP_THRESHOLD",
+    32000,
+    30000,
+    32767,
+  );
+  let currentClippedRun = 0;
+  let longestClippedRun = 0;
+
+  // --- Transient-spike detector --------------------------------------------
+  // Pops/crackles are short broadband energy spikes. We compute RMS in a fine
+  // (~5 ms) sliding window and compare each window to the median of its local
+  // neighbourhood: a window far louder than its neighbours is a spike. This is
+  // independent of the coarser 0.25s speech-quality windows above.
+  const transientWindowSeconds = readNumericEnv(
+    "TTS_AUDIO_TRANSIENT_WINDOW_SECONDS",
+    0.005,
+    0.002,
+    0.02,
+  );
+  const transientSamplesPerWindow = Math.max(
+    1,
+    Math.round(info.sampleRate * info.channels * transientWindowSeconds),
+  );
+  const transientSpikeDb = readNumericEnv(
+    "TTS_AUDIO_TRANSIENT_SPIKE_DB",
+    9,
+    3,
+    20,
+  );
+  const transientMedianWindow = readNumericEnv(
+    "TTS_AUDIO_TRANSIENT_MEDIAN_WINDOWS",
+    11,
+    3,
+    41,
+  );
+  let transientWindowSumSquares = 0;
+  let transientWindowSamples = 0;
+  const transientRmsValues: number[] = [];
 
   function flushWindow(): void {
     if (windowSamples === 0) return;
@@ -1406,8 +1459,60 @@ function getWavPcm16Stats(
     if (windowSamples >= samplesPerWindow) {
       flushWindow();
     }
+
+    // Clipping-run detector: extend or reset the consecutive-clip run.
+    if (abs >= clipThreshold) {
+      currentClippedRun += 1;
+      if (currentClippedRun > longestClippedRun) {
+        longestClippedRun = currentClippedRun;
+      }
+    } else {
+      currentClippedRun = 0;
+    }
+
+    // Transient-spike detector: accumulate a fine-grained RMS window.
+    transientWindowSumSquares += square;
+    transientWindowSamples += 1;
+    if (transientWindowSamples >= transientSamplesPerWindow) {
+      transientRmsValues.push(
+        Math.sqrt(transientWindowSumSquares / transientWindowSamples),
+      );
+      transientWindowSumSquares = 0;
+      transientWindowSamples = 0;
+    }
   }
   flushWindow();
+  // Flush any trailing transient window so the tail of the audio is analysed.
+  if (transientWindowSamples > 0) {
+    transientRmsValues.push(
+      Math.sqrt(transientWindowSumSquares / transientWindowSamples),
+    );
+  }
+
+  // Second pass: count transient spikes (windows far louder than their local
+  // median neighbourhood) and longest burst of consecutive spike windows.
+  let transientSpikeCount = 0;
+  let currentTransientBurst = 0;
+  let longestTransientBurst = 0;
+  const halfMedian = Math.floor(transientMedianWindow / 2);
+  for (let w = 0; w < transientRmsValues.length; w++) {
+    const start = Math.max(0, w - halfMedian);
+    const stop = Math.min(transientRmsValues.length, w + halfMedian + 1);
+    const neighbourhood = transientRmsValues.slice(start, stop).sort((a, b) => a - b);
+    const median = neighbourhood[Math.floor(neighbourhood.length / 2)];
+    if (
+      median > 0 &&
+      transientRmsValues[w] / median > Math.pow(10, transientSpikeDb / 20)
+    ) {
+      transientSpikeCount += 1;
+      currentTransientBurst += 1;
+      if (currentTransientBurst > longestTransientBurst) {
+        longestTransientBurst = currentTransientBurst;
+      }
+    } else {
+      currentTransientBurst = 0;
+    }
+  }
 
   if (samples === 0) return null;
   const rms = Math.sqrt(sumSquares / samples);
@@ -1441,6 +1546,13 @@ function getWavPcm16Stats(
       totalWindows > 0 ? highDominantFreqWindows / totalWindows : 0,
     longestHighDominantFreqSeconds:
       longestHighDominantFreqWindows * lowWindowSeconds,
+    // Clipping run converted to seconds; transient burst converted to seconds
+    // via the fine-grained window length.
+    longestClippedRunSeconds:
+      info.sampleRate > 0 ? longestClippedRun / info.sampleRate : 0,
+    transientSpikeCount,
+    longestTransientBurstSeconds:
+      longestTransientBurst * transientWindowSeconds,
   };
 }
 
@@ -1589,6 +1701,36 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
     stats.highDominantFreqWindowRatio > maxHighDominantFreqRatio
   ) {
     return `contains too much high-frequency tone (${Math.round(stats.highDominantFreqWindowRatio * 100)}% of windows)`;
+  }
+
+  // Clipping/crackle gates (Phase 1). These are transient defects, so they are
+  // not gated on overall clip duration — a crackle ruins even a short chunk.
+  const maxClippedRunSeconds = readNumericEnv(
+    "TTS_AUDIO_MAX_CLIPPED_RUN_SECONDS",
+    0.02,
+    0.005,
+    0.5,
+  );
+  if (stats.longestClippedRunSeconds > maxClippedRunSeconds) {
+    return `contains a clipped/crackle burst (${stats.longestClippedRunSeconds.toFixed(3)}s run near full scale)`;
+  }
+  const maxTransientSpikeCount = readNumericEnv(
+    "TTS_AUDIO_TRANSIENT_SPIKE_MAX",
+    3,
+    0,
+    50,
+  );
+  if (stats.transientSpikeCount > maxTransientSpikeCount) {
+    return `contains transient crackle/pop spikes (${stats.transientSpikeCount} spikes)`;
+  }
+  const maxTransientBurstSeconds = readNumericEnv(
+    "TTS_AUDIO_MAX_TRANSIENT_BURST_SECONDS",
+    0.05,
+    0.01,
+    0.5,
+  );
+  if (stats.longestTransientBurstSeconds > maxTransientBurstSeconds) {
+    return `contains a sustained crackle burst (${stats.longestTransientBurstSeconds.toFixed(3)}s)`;
   }
 
   return null;
@@ -2398,6 +2540,129 @@ function levelWavChunksToCommonLoudness(chunks: Uint8Array[]): Uint8Array[] {
   });
 }
 
+// Phase 2 — per-chunk boundary cleanup. Independently generated VoxCPM2
+// chunks carry a little leading/trailing silence (and sometimes a DC offset)
+// from the model. Left in, that silence is where the crossfade lands and the
+// DC step between two chunks is audible as a "thump" at the seam. Trim the deep
+// silence back to the nearest zero-crossing and remove the per-chunk DC offset
+// BEFORE loudness-matching, so the join operates on clean, zero-centered speech.
+// This is the long-referenced TTS_AUDIO_EDGE_TRIM_DB behaviour (memory 2026-06-13)
+// that was never actually implemented until now.
+function trimChunkEdges(
+  pcm: Buffer<ArrayBuffer>,
+  sampleRate: number,
+  channels: number,
+): Buffer<ArrayBuffer> {
+  if (!readBooleanEnv("TTS_AUDIO_EDGE_TRIM_ENABLED", true)) {
+    return pcm;
+  }
+  const bytesPerFrame = channels * 2;
+  const totalFrames = Math.floor(pcm.length / bytesPerFrame);
+  if (totalFrames === 0) return pcm;
+
+  const threshold = dbToAmplitude(
+    readNumericEnv("TTS_AUDIO_EDGE_TRIM_DB", -52, -70, -20),
+  );
+  // How far around the detected edge to search for a zero-crossing snap point.
+  const edgeWindowFrames = Math.max(
+    1,
+    Math.round(
+      (sampleRate * readNumericEnv("TTS_AUDIO_EDGE_WINDOW_MS", 40, 5, 200)) / 1000,
+    ),
+  );
+
+  const frameAbsMax = (frame: number): number => {
+    const frameOffset = frame * bytesPerFrame;
+    let maxAbs = 0;
+    for (let channel = 0; channel < channels; channel++) {
+      const value = Math.abs(pcm.readInt16LE(frameOffset + channel * 2));
+      if (value > maxAbs) maxAbs = value;
+    }
+    return maxAbs;
+  };
+
+  // Find the first frame that rises above the silence threshold.
+  let firstAudible = -1;
+  for (let frame = 0; frame < totalFrames; frame++) {
+    if (frameAbsMax(frame) >= threshold) {
+      firstAudible = frame;
+      break;
+    }
+  }
+  if (firstAudible < 0) return pcm; // entirely below threshold; leave as-is
+
+  // Find the last frame that rises above the silence threshold.
+  let lastAudible = -1;
+  for (let frame = totalFrames - 1; frame >= 0; frame--) {
+    if (frameAbsMax(frame) >= threshold) {
+      lastAudible = frame;
+      break;
+    }
+  }
+
+  // Snap outward to the nearest zero-crossing (frame closest to 0 amplitude)
+  // within the edge window, so the cut lands on a zero-amplitude point and does
+  // not introduce a DC step. Constrain the search to the silent side so we
+  // never clip into audible speech.
+  const snapToZero = (centerFrame: number, direction: -1 | 1): number => {
+    let bestFrame = centerFrame;
+    let bestAbs = frameAbsMax(centerFrame);
+    for (let step = 1; step <= edgeWindowFrames; step++) {
+      const candidate = centerFrame + direction * step;
+      if (candidate < 0 || candidate >= totalFrames) break;
+      // Stop once we cross back into audible territory on the signal side.
+      if (direction === -1 && candidate <= firstAudible && frameAbsMax(candidate) >= threshold) {
+        break;
+      }
+      if (direction === 1 && candidate >= lastAudible && frameAbsMax(candidate) >= threshold) {
+        break;
+      }
+      const candidateAbs = frameAbsMax(candidate);
+      if (candidateAbs < bestAbs) {
+        bestAbs = candidateAbs;
+        bestFrame = candidate;
+      }
+    }
+    return bestFrame;
+  };
+
+  const leadFrame = snapToZero(firstAudible, -1);
+  const trailFrame = snapToZero(lastAudible, 1);
+
+  const startByte = leadFrame * bytesPerFrame;
+  const endByte = Math.min(pcm.length, (trailFrame + 1) * bytesPerFrame);
+  if (endByte <= startByte) return pcm;
+  if (startByte === 0 && endByte === pcm.length) return pcm; // nothing to trim
+  return Buffer.from(pcm.subarray(startByte, endByte));
+}
+
+// Remove a per-chunk DC offset (subtract the mean sample). Two chunks with
+// different DC offsets produce an audible "thump" at their seam; centering each
+// chunk on zero before joining removes it. Operates in-place on a copy.
+function removeDcOffset(pcm: Buffer<ArrayBuffer>): Buffer<ArrayBuffer> {
+  if (!readBooleanEnv("TTS_AUDIO_DC_OFFSET_REMOVE", true)) {
+    return pcm;
+  }
+  const totalSamples = Math.floor(pcm.length / 2);
+  if (totalSamples === 0) return pcm;
+
+  let sum = 0;
+  for (let i = 0; i + 1 < pcm.length; i += 2) {
+    sum += pcm.readInt16LE(i);
+  }
+  const mean = Math.round(sum / totalSamples);
+  if (mean === 0) return pcm;
+
+  const out = Buffer.from(pcm);
+  for (let i = 0; i + 1 < out.length; i += 2) {
+    out.writeInt16LE(
+      Math.max(-32768, Math.min(32767, out.readInt16LE(i) - mean)),
+      i,
+    );
+  }
+  return out;
+}
+
 function concatPcm16WavBuffers(buffers: Uint8Array[]): Uint8Array {
   if (buffers.length === 0) return new Uint8Array();
   if (buffers.length === 1) return buffers[0];
@@ -2447,6 +2712,16 @@ function concatPcm16WavBuffers(buffers: Uint8Array[]): Uint8Array {
       source.subarray(info.dataOffset, info.dataOffset + info.dataSize),
     );
   });
+
+  // Phase 2: clean each chunk's edges before leveling/joining. Trim deep
+  // silence back to a zero-crossing and remove per-chunk DC offset so the
+  // crossfade lands on clean, zero-centered speech instead of a silent/gappy
+  // seam with a DC step. Skipped for single-chunk audio (nothing to join).
+  if (rawSegments.length > 1) {
+    rawSegments = rawSegments.map((segment) =>
+      removeDcOffset(trimChunkEdges(segment, first.sampleRate, first.channels)),
+    );
+  }
 
   // Chunks are generated independently, so their average level can drift a few
   // dB from one to the next. Listeners hear that drift as "uneven" long audio.
@@ -2596,8 +2871,36 @@ function concatPcm16WavBuffers(buffers: Uint8Array[]): Uint8Array {
     // become audible stop/start cuts.
     const leftFrames = Math.floor(left.length / bytesPerFrame);
     const rightFrames = Math.floor(right.length / bytesPerFrame);
+    // A loud-loud seam is a mid-phrase split where both sides are in active
+    // speech. Blending two uncorrelated loud speech signals over a long
+    // crossfade makes them overlap for too long and audibly "double"/smear. Use
+    // a shorter crossfade on those seams so the overlap stays click-free but the
+    // two phrases are not heard simultaneously. Quiet-or-one-side seams keep the
+    // longer, smoother crossfade.
+    const loudSeamThresholdDb = readNumericEnv(
+      "TTS_CHUNK_LOUD_SEAM_THRESHOLD_DB",
+      -30,
+      -50,
+      -10,
+    );
+    const edgeWindowFrames = Math.round(
+      (first.sampleRate * joinEdgeWindowMs) / 1000,
+    );
+    const leftTailDb =
+      leftFrames > 0 && edgeWindowFrames > 0
+        ? pcmWindowDb(left, leftFrames - Math.min(edgeWindowFrames, leftFrames), Math.min(edgeWindowFrames, leftFrames))
+        : Number.NEGATIVE_INFINITY;
+    const rightHeadDb =
+      rightFrames > 0 && edgeWindowFrames > 0
+        ? pcmWindowDb(right, 0, Math.min(edgeWindowFrames, rightFrames))
+        : Number.NEGATIVE_INFINITY;
+    const isLoudLoudSeam =
+      leftTailDb > loudSeamThresholdDb && rightHeadDb > loudSeamThresholdDb;
+    const crossfadeDurationMs = isLoudLoudSeam
+      ? readNumericEnv("TTS_CHUNK_CROSSFADE_MS_LOUD", 18, 5, crossfadeMs)
+      : crossfadeMs;
     const fadeFrames = Math.min(
-      Math.round((first.sampleRate * crossfadeMs) / 1000),
+      Math.round((first.sampleRate * crossfadeDurationMs) / 1000),
       Math.floor(leftFrames / 3),
       Math.floor(rightFrames / 3),
     );
@@ -2638,7 +2941,7 @@ function concatPcm16WavBuffers(buffers: Uint8Array[]): Uint8Array {
 
   let data: Buffer = rawSegments[0];
   for (let index = 1; index < rawSegments.length; index++) {
-    let segment = rawSegments[index];
+    const segment = rawSegments[index];
     const clickLevel = detectBoundaryClick(data, segment, first.channels);
     if (clickLevel > 500) {
       const joined = microDeclickJoin(data, segment, first.sampleRate, first.channels);

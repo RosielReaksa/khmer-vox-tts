@@ -1,5 +1,16 @@
 * text=auto eol=lf
 
+# Force UTF-8 for source files — prevents Latin-1 misinterpretation on Windows
+# when PowerShell or other tools write files without -Encoding utf8
+*.ts text working-tree-encoding=UTF-8 eol=lf
+*.tsx text working-tree-encoding=UTF-8 eol=lf
+*.mts text working-tree-encoding=UTF-8 eol=lf
+*.js text working-tree-encoding=UTF-8 eol=lf
+*.mjs text working-tree-encoding=UTF-8 eol=lf
+*.json text working-tree-encoding=UTF-8 eol=lf
+*.md text working-tree-encoding=UTF-8 eol=lf
+*.css text working-tree-encoding=UTF-8 eol=lf
+
 *.png binary
 *.jpg binary
 *.jpeg binary

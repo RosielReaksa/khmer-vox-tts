@@ -1,0 +1,19 @@
+# EditorConfig — enforces consistent encoding and line endings
+# https://editorconfig.org/
+#
+# This prevents the mojibake class of bugs by ensuring every editor
+# saves source files as UTF-8 with LF line endings.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{png,jpg,jpeg,gif,webp,ico,mp3,wav,zip,gz,br,woff,woff2,ttf,pdf}]
+charset = unset
