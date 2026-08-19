@@ -187,11 +187,16 @@ function getStagedFiles() {
   }
 }
 
-/** Get all tracked .ts/.tsx files */
+/** Get all tracked source files (code + config, NOT docs) */
 function getAllTrackedFiles() {
   try {
     // Use git ls-files without globs (Windows shell won't expand them),
     // then filter by extension in JS.
+    //
+    // Deliberately excludes .md: markdown docs (e.g. PROJECT_MEMORY.md) often
+    // contain corrupted text *as historical documentation* of past incidents,
+    // which is a false positive for a "is this source file corrupted?" check.
+    // Mojibake in .ts/.js/.json is always a bug; in .md it is often intentional.
     const output = execSync("git ls-files", {
       cwd: projectRoot,
       encoding: "utf-8",
@@ -199,7 +204,7 @@ function getAllTrackedFiles() {
     return output
       .split("\n")
       .filter((f) => f.trim())
-      .filter((f) => /\.(ts|tsx|mts|js|mjs|json|md)$/.test(f))
+      .filter((f) => /\.(ts|tsx|mts|js|mjs|json)$/.test(f))
       .map((f) => resolve(projectRoot, f));
   } catch {
     return [];
@@ -214,6 +219,13 @@ function main() {
   const sep = "/";
   const args = process.argv.slice(2);
   let files = [];
+  // The detector's own source contains the mojibake strings as documentation
+  // and regex examples — always skip it so the tool never flags itself.
+  const selfPath = resolve(projectRoot, "scripts", "detect-mojibake.mjs");
+
+  // Auto-discovery modes (.md excluded downstream). Explicit file args are
+  // scanned as-is so a user can point the detector at any file on demand.
+  const explicitFiles = !args.includes("--staged") && !args.includes("--all");
 
   if (args.includes("--staged")) {
     files = getStagedFiles();
@@ -223,12 +235,17 @@ function main() {
     files = args.map((f) => resolve(process.cwd(), f));
   }
 
-  // Filter to source files only (skip node_modules, .next, etc.)
+  // Filter to source files only (skip node_modules, .next, data/, and — for
+  // auto-discovery only — docs). .md is excluded from --all/--staged because
+  // markdown docs legitimately contain corrupted text as historical incident
+  // records, which reads as a false positive. Explicit args are never dropped.
   files = files.filter((f) => {
+    if (f === selfPath) return false;
     const rel = f.replace(projectRoot, "").replace(/^[/\\]/, "");
     if (rel.includes("node_modules")) return false;
     if (rel.includes(`${sep}.next${sep}`)) return false;
     if (rel.includes(`${sep}data${sep}`)) return false;
+    if (!explicitFiles && rel.endsWith(".md")) return false;
     return /\.(ts|tsx|mts|js|mjs|json|md)$/.test(f);
   });
 
