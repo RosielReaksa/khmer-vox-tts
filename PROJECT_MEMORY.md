@@ -16,10 +16,12 @@ diffusion sampling — which are stochastic, so they hit some segments and not o
   - Clipping-run detector: tracks the longest consecutive run of samples pinned
     near the 16-bit ceiling (`|sample| >= TTS_AUDIO_CLIP_THRESHOLD`, default 32000).
     A long flat-top run = crackle. New stat: `longestClippedRunSeconds`.
-  - Transient-spike detector: RMS in a fine ~5ms sliding window compared to the
-    median of its local neighbourhood (`TTS_AUDIO_TRANSIENT_MEDIAN_WINDOWS`);
-    a window louder than its neighbours by `TTS_AUDIO_TRANSIENT_SPIKE_DB` (9 dB)
-    is one spike. New stats: `transientSpikeCount`, `longestTransientBurstSeconds`.
+  - Transient-click detector: fine ~5ms windows tracking max sample-to-sample
+    JUMP (derivative), compared to the median jump of its local neighbourhood.
+    A click is a near-instantaneous discontinuity (~65534) that stays ~38x above
+    the clean-speech jump (~1700) regardless of background loudness — peak/RMS
+    comparisons fail when a click sits on loud speech, but the jump does not.
+    New stats: `transientSpikeCount`, `longestTransientBurstSeconds`.
 - `generatedAudioStatsIssue` gained three gates using the new stats:
   - reject if `longestClippedRunSeconds > TTS_AUDIO_MAX_CLIPPED_RUN_SECONDS` (0.02s)
   - reject if `transientSpikeCount > TTS_AUDIO_TRANSIENT_SPIKE_MAX` (3)
@@ -134,12 +136,23 @@ same env knobs (.env.example).
   other 18 PASS (precise per-segment localization)
 - buzz.wav -> FAIL stuck tonal (5.0s) + high-freq tone (5.0s)
 
-**Finding that shaped the fixtures:** the transient gate compares each 5ms window
-to its local median, so a pop must be a bright spike against a QUIETER background
-to trip it — an equally-loud tone masks the pop. This matches the real artifact
-(reads as a spike against surrounding speech) and confirms the 9dB threshold is
-sensible. The sustained tonal/buzz gates are correctly duration-gated (>= 2-4s),
-so they're validated on the 5s buzz.wav, not short chunks.
+**Critical calibration finding (upgraded the detector):** validating against a
+realistic synthetic multichunk file (independent chunks joined with the real
+crossfade, defects injected into specific chunks) exposed two problems with the
+original RMS-then-peak transient detector:
+1. Pops buried in LOUD speech were invisible — a 1-2 sample spike barely moves a
+   5ms window's RMS/peak when the window already holds loud speech, so the
+   peak-vs-local-median-peak ratio was only ~2.3dB (below the 9dB threshold).
+2. The fix: detect clicks via sample-to-sample JUMP (derivative) instead of
+   peak/RMS. A click is a near-instantaneous full-scale discontinuity (~65534)
+   that stays ~38x above the clean-speech jump (~1700) REGARDLESS of background
+   loudness. This catches clicks buried inside loud passages.
+
+**Threshold calibration:** measuring max jump-ratio (window vs local-median-jump)
+across real speech files showed natural speech tops out at ~17x (female-voice),
+while defects start at ~65x. The original 9dB (2.8x) false-positived on normal
+plosives; recalibrated to 28dB (~25x), safely in the gap. Verified: every real
+speech file now scores clipRun=0 + spikes=0, while all defect types still trip.
 
 **Note:** the analyser is a validation scaffold, not shipped. The real gates
 live in lib/tts-provider.ts (Phases 1-3). Both are local-only, not deployed.

@@ -1329,10 +1329,18 @@ function getWavPcm16Stats(
   let currentClippedRun = 0;
   let longestClippedRun = 0;
 
-  // --- Transient-spike detector --------------------------------------------
-  // Pops/crackles are short broadband energy spikes. We compute RMS in a fine
-  // (~5 ms) sliding window and compare each window to the median of its local
-  // neighbourhood: a window far louder than its neighbours is a spike. This is
+  // --- Transient-click detector --------------------------------------------
+  // Pops/crackles/clicks are sharp discontinuities: a near-instantaneous jump
+  // between consecutive samples. We measure each fine (~5 ms) window's maximum
+  // sample-to-sample jump and compare it to the median jump of its local
+  // neighbourhood: a window whose jump towers over its neighbours' median jump
+  // is a click.
+  //
+  // The jump (derivative) is the right discriminator because it is level-
+  // independent: a click is a full-scale discontinuity whether it lands in a
+  // loud passage (jump ~65534 vs the ~1700 clean-speech jump) or a quiet one.
+  // Peak- and RMS-based detectors both fail when the click sits on top of
+  // equally-loud speech, but the jump stays ~38x above the background. This is
   // independent of the coarser 0.25s speech-quality windows above.
   const transientWindowSeconds = readNumericEnv(
     "TTS_AUDIO_TRANSIENT_WINDOW_SECONDS",
@@ -1344,11 +1352,14 @@ function getWavPcm16Stats(
     1,
     Math.round(info.sampleRate * info.channels * transientWindowSeconds),
   );
+  // Calibrated against real speech (max natural jump-ratio ~17x) vs. defects
+  // (min ~65x): a threshold of ~28dB (~25x) sits in the gap with wide margin on
+  // both sides. The old 9dB (2.8x) false-positived on normal plosives.
   const transientSpikeDb = readNumericEnv(
     "TTS_AUDIO_TRANSIENT_SPIKE_DB",
-    9,
-    3,
-    20,
+    28,
+    12,
+    40,
   );
   const transientMedianWindow = readNumericEnv(
     "TTS_AUDIO_TRANSIENT_MEDIAN_WINDOWS",
@@ -1358,7 +1369,13 @@ function getWavPcm16Stats(
   );
   let transientWindowSumSquares = 0;
   let transientWindowSamples = 0;
+  let transientWindowPeak = 0;
+  let transientWindowJump = 0;
+  let transientPrevSample = 0;
+  let transientHasPrevSample = false;
   const transientRmsValues: number[] = [];
+  const transientPeakValues: number[] = [];
+  const transientJumpValues: number[] = [];
 
   function flushWindow(): void {
     if (windowSamples === 0) return;
@@ -1470,15 +1487,28 @@ function getWavPcm16Stats(
       currentClippedRun = 0;
     }
 
-    // Transient-spike detector: accumulate a fine-grained RMS window.
+    // Transient-click detector: accumulate a fine-grained window tracking RMS,
+    // peak, and max sample-to-sample jump. The jump is what separates a sharp
+    // click from loud speech (level-independent).
     transientWindowSumSquares += square;
     transientWindowSamples += 1;
+    if (abs > transientWindowPeak) transientWindowPeak = abs;
+    if (transientHasPrevSample) {
+      const jump = Math.abs(value - transientPrevSample);
+      if (jump > transientWindowJump) transientWindowJump = jump;
+    }
+    transientPrevSample = value;
+    transientHasPrevSample = true;
     if (transientWindowSamples >= transientSamplesPerWindow) {
       transientRmsValues.push(
         Math.sqrt(transientWindowSumSquares / transientWindowSamples),
       );
+      transientPeakValues.push(transientWindowPeak);
+      transientJumpValues.push(transientWindowJump);
       transientWindowSumSquares = 0;
       transientWindowSamples = 0;
+      transientWindowPeak = 0;
+      transientWindowJump = 0;
     }
   }
   flushWindow();
@@ -1487,22 +1517,27 @@ function getWavPcm16Stats(
     transientRmsValues.push(
       Math.sqrt(transientWindowSumSquares / transientWindowSamples),
     );
+    transientPeakValues.push(transientWindowPeak);
+    transientJumpValues.push(transientWindowJump);
   }
 
-  // Second pass: count transient spikes (windows far louder than their local
-  // median neighbourhood) and longest burst of consecutive spike windows.
+  // Second pass: count transient spikes. A click is a near-instantaneous
+  // sample-to-sample jump, so compare each window's max jump to the median jump
+  // of its local neighbourhood — the jump (derivative) stays ~38x above the
+  // background whether the click lands in loud speech or quiet, which peak/RMS
+  // comparisons cannot do.
   let transientSpikeCount = 0;
   let currentTransientBurst = 0;
   let longestTransientBurst = 0;
   const halfMedian = Math.floor(transientMedianWindow / 2);
-  for (let w = 0; w < transientRmsValues.length; w++) {
+  for (let w = 0; w < transientJumpValues.length; w++) {
     const start = Math.max(0, w - halfMedian);
-    const stop = Math.min(transientRmsValues.length, w + halfMedian + 1);
-    const neighbourhood = transientRmsValues.slice(start, stop).sort((a, b) => a - b);
-    const median = neighbourhood[Math.floor(neighbourhood.length / 2)];
+    const stop = Math.min(transientJumpValues.length, w + halfMedian + 1);
+    const neighbourhood = transientJumpValues.slice(start, stop).sort((a, b) => a - b);
+    const medianJump = neighbourhood[Math.floor(neighbourhood.length / 2)];
     if (
-      median > 0 &&
-      transientRmsValues[w] / median > Math.pow(10, transientSpikeDb / 20)
+      medianJump > 0 &&
+      transientJumpValues[w] / medianJump > Math.pow(10, transientSpikeDb / 20)
     ) {
       transientSpikeCount += 1;
       currentTransientBurst += 1;

@@ -53,7 +53,7 @@ const K = {
   CLIP_THRESHOLD: NUM("TTS_AUDIO_CLIP_THRESHOLD", 32000, 30000, 32767),
   MAX_CLIPPED_RUN_SECONDS: NUM("TTS_AUDIO_MAX_CLIPPED_RUN_SECONDS", 0.02, 0.005, 0.5),
   TRANSIENT_WINDOW_SECONDS: NUM("TTS_AUDIO_TRANSIENT_WINDOW_SECONDS", 0.005, 0.002, 0.02),
-  TRANSIENT_SPIKE_DB: NUM("TTS_AUDIO_TRANSIENT_SPIKE_DB", 9, 3, 20),
+  TRANSIENT_SPIKE_DB: NUM("TTS_AUDIO_TRANSIENT_SPIKE_DB", 28, 12, 40),
   TRANSIENT_SPIKE_MAX: NUM("TTS_AUDIO_TRANSIENT_SPIKE_MAX", 3, 0, 50),
   TRANSIENT_MEDIAN_WINDOWS: NUM("TTS_AUDIO_TRANSIENT_MEDIAN_WINDOWS", 11, 3, 41),
   MAX_TRANSIENT_BURST_SECONDS: NUM("TTS_AUDIO_MAX_TRANSIENT_BURST_SECONDS", 0.05, 0.01, 0.5),
@@ -124,8 +124,10 @@ function getStats(pcm, sampleRate, channels) {
   let curClip = 0, longestClip = 0;
   const transientWinSec = K.TRANSIENT_WINDOW_SECONDS;
   const transientPerWin = Math.max(1, Math.round(sampleRate * channels * transientWinSec));
-  let tWinSq = 0, tWinN = 0;
+  let tWinSq = 0, tWinN = 0, tWinPeak = 0, tWinJump = 0, tPrev = 0, tHasPrev = false;
   const transientRms = [];
+  const transientPeaks = [];
+  const transientJumps = [];
 
   const flushWin = () => {
     if (winN === 0) return;
@@ -183,17 +185,27 @@ function getStats(pcm, sampleRate, channels) {
       } else {
         curClip = 0;
       }
-      // transient fine window
+      // transient fine window: track max sample-to-sample jump (derivative),
+      // which separates clicks from loud speech better than peak or RMS.
       tWinSq += square; tWinN += 1;
+      if (abs > tWinPeak) tWinPeak = abs;
+      if (tHasPrev) { const j = Math.abs(value - tPrev); if (j > tWinJump) tWinJump = j; }
+      tPrev = value; tHasPrev = true;
       if (tWinN >= transientPerWin) {
         transientRms.push(Math.sqrt(tWinSq / tWinN));
-        tWinSq = 0; tWinN = 0;
+        transientPeaks.push(tWinPeak);
+        transientJumps.push(tWinJump);
+        tWinSq = 0; tWinN = 0; tWinPeak = 0; tWinJump = 0;
       }
     }
     if (winN >= samplesPerWindow) flushWin();
   }
   flushWin();
-  if (tWinN > 0) transientRms.push(Math.sqrt(tWinSq / tWinN));
+  if (tWinN > 0) {
+    transientRms.push(Math.sqrt(tWinSq / tWinN));
+    transientPeaks.push(tWinPeak);
+    transientJumps.push(tWinJump);
+  }
 
   // --- steady-tonal envelope pass (mirrors getSteadyTonalStats) ------------
   const groupWindows = Math.max(2, Math.round(K.TONAL_GROUP_SECONDS / Math.max(0.01, windowSeconds)));
@@ -216,14 +228,17 @@ function getStats(pcm, sampleRate, channels) {
   const longestTonalSec = longestTonal > 0 ? (longestTonal - 1 + groupWindows) * lowWinSec : 0;
 
   // --- transient spike pass (Phase 1) ---
+  // Jump-vs-local-median-jump: a click is a near-instantaneous sample-to-sample
+  // discontinuity (~65534) that stays ~38x above the clean-speech jump (~1700)
+  // regardless of background loudness — peak/RMS comparisons can't do this.
   const halfMed = Math.floor(K.TRANSIENT_MEDIAN_WINDOWS / 2);
   let spikeCount = 0, curBurst = 0, longestBurst = 0;
-  for (let w = 0; w < transientRms.length; w++) {
+  for (let w = 0; w < transientJumps.length; w++) {
     const s = Math.max(0, w - halfMed);
-    const e = Math.min(transientRms.length, w + halfMed + 1);
-    const nb = transientRms.slice(s, e).sort((a, b) => a - b);
-    const median = nb[Math.floor(nb.length / 2)];
-    if (median > 0 && transientRms[w] / median > Math.pow(10, K.TRANSIENT_SPIKE_DB / 20)) {
+    const e = Math.min(transientJumps.length, w + halfMed + 1);
+    const nb = transientJumps.slice(s, e).sort((a, b) => a - b);
+    const medianJump = nb[Math.floor(nb.length / 2)];
+    if (medianJump > 0 && transientJumps[w] / medianJump > Math.pow(10, K.TRANSIENT_SPIKE_DB / 20)) {
       spikeCount++; curBurst++; longestBurst = Math.max(longestBurst, curBurst);
     } else curBurst = 0;
   }
