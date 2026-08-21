@@ -1740,32 +1740,40 @@ function generatedAudioStatsIssue(stats: WavPcm16Stats): string | null {
 
   // Clipping/crackle gates (Phase 1). These are transient defects, so they are
   // not gated on overall clip duration — a crackle ruins even a short chunk.
-  const maxClippedRunSeconds = readNumericEnv(
-    "TTS_AUDIO_MAX_CLIPPED_RUN_SECONDS",
-    0.02,
-    0.005,
-    0.5,
-  );
-  if (stats.longestClippedRunSeconds > maxClippedRunSeconds) {
-    return `contains a clipped/crackle burst (${stats.longestClippedRunSeconds.toFixed(3)}s run near full scale)`;
-  }
-  const maxTransientSpikeCount = readNumericEnv(
-    "TTS_AUDIO_TRANSIENT_SPIKE_MAX",
-    3,
-    0,
-    50,
-  );
-  if (stats.transientSpikeCount > maxTransientSpikeCount) {
-    return `contains transient crackle/pop spikes (${stats.transientSpikeCount} spikes)`;
-  }
-  const maxTransientBurstSeconds = readNumericEnv(
-    "TTS_AUDIO_MAX_TRANSIENT_BURST_SECONDS",
-    0.05,
-    0.01,
-    0.5,
-  );
-  if (stats.longestTransientBurstSeconds > maxTransientBurstSeconds) {
-    return `contains a sustained crackle burst (${stats.longestTransientBurstSeconds.toFixed(3)}s)`;
+  //
+  // OFF by default. These gates were calibrated on synthetic fixtures and can
+  // false-positive on real VoxCPM2 output, triggering retry storms that make
+  // long-form generation 5-9x slower. Enable with TTS_AUDIO_CRACKLE_GATE=true
+  // only after calibrating the thresholds against real Modal output. When
+  // disabled, the pre-existing tonal/silence/noise gates above still run.
+  if (readBooleanEnv("TTS_AUDIO_CRACKLE_GATE", false)) {
+    const maxClippedRunSeconds = readNumericEnv(
+      "TTS_AUDIO_MAX_CLIPPED_RUN_SECONDS",
+      0.02,
+      0.005,
+      0.5,
+    );
+    if (stats.longestClippedRunSeconds > maxClippedRunSeconds) {
+      return `contains a clipped/crackle burst (${stats.longestClippedRunSeconds.toFixed(3)}s run near full scale)`;
+    }
+    const maxTransientSpikeCount = readNumericEnv(
+      "TTS_AUDIO_TRANSIENT_SPIKE_MAX",
+      3,
+      0,
+      50,
+    );
+    if (stats.transientSpikeCount > maxTransientSpikeCount) {
+      return `contains transient crackle/pop spikes (${stats.transientSpikeCount} spikes)`;
+    }
+    const maxTransientBurstSeconds = readNumericEnv(
+      "TTS_AUDIO_MAX_TRANSIENT_BURST_SECONDS",
+      0.05,
+      0.01,
+      0.5,
+    );
+    if (stats.longestTransientBurstSeconds > maxTransientBurstSeconds) {
+      return `contains a sustained crackle burst (${stats.longestTransientBurstSeconds.toFixed(3)}s)`;
+    }
   }
 
   return null;
