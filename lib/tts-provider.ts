@@ -2199,7 +2199,12 @@ export async function mergePublicMp3SegmentsForDelivery(
       segmentContentType,
       inferredSeconds,
     );
-    publicSegments.push(normalized.bytes);
+    // Normalize to canonical mono 24 kHz so segments from different Modal
+    // accounts (which may return different sample rates / stereo) merge
+    // without throwing "different formats". Done per-segment here because
+    // this path merges already-stored segments that bypassed synthesizeMergedAudio.
+    const canonical = await normalizeChunkToCanonical(normalized.bytes);
+    publicSegments.push(canonical);
     if (
       typeof normalized.outputSeconds === "number" &&
       Number.isFinite(normalized.outputSeconds) &&
@@ -2581,6 +2586,57 @@ function levelWavChunksToCommonLoudness(chunks: Uint8Array[]): Uint8Array[] {
     }
     return out;
   });
+}
+
+// Normalize a chunk to the canonical mono 24 kHz PCM-16 format. Independently
+// generated VoxCPM2 chunks can come back at different sample rates (e.g. one
+// Modal account returns 24 kHz, another 48 kHz) or as stereo. Without this step
+// the chunks reach concatPcm16WavBuffers with mismatched formats and the merge
+// throws "different formats and cannot be merged" — which forces the batch job
+// to retry the whole synthesis, the direct cause of 30+ minute generations.
+// Resampling here guarantees every chunk shares the canonical format so the
+// merge always succeeds. Returns the original bytes unchanged if it is already
+// canonical (the common case, so no extra ffmpeg hop for most chunks).
+async function normalizeChunkToCanonical(chunk: Uint8Array): Promise<Uint8Array> {
+  let info: Pcm16WavInfo;
+  try {
+    info = readPcm16Wav(chunk);
+  } catch {
+    return chunk;
+  }
+  const canonicalRate = readCanonicalGeneratedSampleRate();
+  if (info.sampleRate === canonicalRate && info.channels === 1) {
+    return chunk; // already canonical — no work needed
+  }
+  try {
+    const output = await runFfmpeg(
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        "pipe:0",
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        String(canonicalRate),
+        "-codec:a",
+        "pcm_s16le",
+        "-sample_fmt",
+        "s16",
+        "-f",
+        "wav",
+        "pipe:1",
+      ],
+      chunk,
+    );
+    return output.byteLength > 0 ? output : chunk;
+  } catch {
+    return chunk;
+  }
 }
 
 // Phase 2 — per-chunk boundary cleanup. Independently generated VoxCPM2
@@ -3816,13 +3872,22 @@ async function synthesizeMergedAudio(
     chunkResults.map((result) => result.audioBytes),
   );
 
+  // Normalize every chunk to the canonical mono 24 kHz format BEFORE merging.
+  // Different Modal accounts can return different sample rates/stereo; without
+  // this the merge throws "different formats" and the job retries the whole
+  // synthesis (the cause of 30+ min generations). Already-canonical chunks pass
+  // through with no extra ffmpeg hop.
+  const canonicalChunks = await Promise.all(
+    leveledChunks.map((chunk) => normalizeChunkToCanonical(chunk)),
+  );
+
   const publicSegments: Uint8Array[] = [];
   let summedSeconds = 0;
   let hasSummedSeconds = false;
 
   for (let index = 0; index < chunkResults.length; index++) {
     const result = chunkResults[index];
-    let chunkBytes = leveledChunks[index] ?? result.audioBytes;
+    let chunkBytes = canonicalChunks[index] ?? result.audioBytes;
     if (index > 0 && chunkContinuationEnabled()) {
       chunkBytes = applyWavHeadFadeIn(
         chunkBytes,
