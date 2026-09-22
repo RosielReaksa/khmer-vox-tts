@@ -12,6 +12,15 @@ import { PUBLIC_AUDIO_OUTPUT_FORMAT, isUnsupportedPublicAudioOutputFormat } from
 import { isJsonRequestError, jsonRequestErrorBody, readJsonRequest } from "@/lib/request-json";
 import { MAX_MODEL_CHARS, MAX_TEXT_CHARS, MAX_VOICE_CHARS } from "@/lib/usage-policy";
 import { DEFAULT_TTS_VOICE_PROMPT, VOICE_STYLE_IDS } from "@/lib/voice-defaults";
+import {
+  BatchJobServiceError,
+  createQueuedBatchJob,
+  estimateBatchLineUsage,
+  kickBatchWorker,
+  parseBatchLines,
+  parseBatchMetadataJson,
+} from "@/lib/batch-service";
+import { enforceApiKeyQueuedJobLimit } from "@/lib/api-key-limits";
 
 export const runtime = "nodejs";
 
@@ -92,6 +101,48 @@ export async function POST(request: Request) {
     }
     limit = usageLimit;
 
+    // For long text that will be chunked, use batch processing to avoid timeouts.
+    // Short text is processed synchronously for instant results.
+    const SYNC_MAX_CHARS = 200;
+    const isLongText = parsed.data.input.length > SYNC_MAX_CHARS;
+
+    if (isLongText) {
+      // Long text: create async batch job, return immediately
+      await enforceApiKeyQueuedJobLimit(auth.apiKey);
+      const lines = parseBatchLines(parsed.data.input).map((text) => ({ text }));
+      const estimatedCredits = estimateBatchLineUsage(lines, "tts").creditsEstimated;
+      await enforceApiKeyTokenLimit(auth.apiKey, estimatedCredits);
+
+      const batch = await createQueuedBatchJob({
+        userId: auth.userId,
+        apiKeyId: auth.apiKeyId,
+        source: "api_key",
+        mode: "tts",
+        lines,
+        voice: parsed.data.voice ?? DEFAULT_TTS_VOICE_PROMPT,
+        model: parsed.data.model,
+      });
+      kickBatchWorker(batch.job.id);
+
+      return jsonWithCors(
+        {
+          ok: true,
+          queued: true,
+          message: "Text is long and has been queued for processing. Poll the job endpoint to retrieve audio.",
+          job: {
+            id: batch.job.id,
+            status: batch.job.status,
+            total_items: batch.job.totalItems,
+            credits_estimated: batch.job.creditsEstimated,
+            created_at: batch.job.createdAt,
+          },
+          poll_url: `/v1/audio/jobs/${batch.job.id}`,
+        },
+        { status: 202, headers: limit.headers },
+      );
+    }
+
+    // Short text: process synchronously for instant results
     const result = await runGenerationForUser({
       userId: auth.userId,
       apiKeyId: auth.apiKeyId,
@@ -156,6 +207,21 @@ export async function POST(request: Request) {
           code: error.code,
           remainingTokens: error.remainingTokens,
         },
+        { status: error.status, headers: { ...corsHeaders(), ...limit?.headers } },
+      );
+    }
+    if (error instanceof BatchJobServiceError) {
+      logApiError({
+        request,
+        statusCode: error.status,
+        errorMessage: error.message,
+        errorCode: error.code,
+        source: "api_key",
+        userId: auth.userId,
+        apiKeyId: auth.apiKeyId,
+      });
+      return jsonWithCors(
+        { error: error.message, code: error.code, remainingTokens: error.remainingTokens },
         { status: error.status, headers: { ...corsHeaders(), ...limit?.headers } },
       );
     }
