@@ -1,0 +1,40 @@
+
+> khmer-vox-tts@0.1.0 lint
+> eslint
+
+
+D:\website api seller\app\app\dashboard\speech-workspace.tsx
+  226:6  warning  React Hook useEffect has a missing dependency: 'fetchSavedVoices'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+D:\website api seller\app\components\line-audio-player.tsx
+  307:5  warning  React Hook useCallback has an unnecessary dependency: 'startAt'. Either exclude it or remove the dependency array  react-hooks/exhaustive-deps
+
+D:\website api seller\data\_cf.cjs
+   1:15   error    A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+  11:148  warning  'e' is defined but never used            @typescript-eslint/no-unused-vars
+
+D:\website api seller\data\_exp.mjs
+   2:24  warning  'writeFileSync' is defined but never used   @typescript-eslint/no-unused-vars
+   4:10  warning  'join' is defined but never used            @typescript-eslint/no-unused-vars
+  16:38  warning  'nch' is assigned a value but never used    @typescript-eslint/no-unused-vars
+  30:11  warning  'isLow' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  43:39  warning  'hdf' is assigned a value but never used    @typescript-eslint/no-unused-vars
+  43:48  warning  'ch' is assigned a value but never used     @typescript-eslint/no-unused-vars
+  43:56  warning  'lh' is assigned a value but never used     @typescript-eslint/no-unused-vars
+  51:5   warning  'gr' is assigned a value but never used     @typescript-eslint/no-unused-vars
+  52:15  warning  'tg' is assigned a value but never used     @typescript-eslint/no-unused-vars
+
+D:\website api seller\data\_exp2.mjs
+  13:38  warning  'nch' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  30:5   warning  'gr' is assigned a value but never used   @typescript-eslint/no-unused-vars
+
+D:\website api seller\data\_exp3.mjs
+  11:38  warning  'nch' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  21:5   warning  'gr' is assigned a value but never used   @typescript-eslint/no-unused-vars
+
+D:\website api seller\lib\tts-provider.ts
+  2783:9  error  'segment' is never reassigned. Use 'const' instead  prefer-const
+
+✖ 18 problems (2 errors, 16 warnings)
+  1 error and 0 warnings potentially fixable with the `--fix` option.
+

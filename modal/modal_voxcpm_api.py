@@ -406,7 +406,7 @@ image = (
     .pip_install(
         "fastapi[standard]",
         "huggingface_hub",
-        "nano-vllm-voxcpm==2.0.1",
+        "nano-vllm-voxcpm==2.0.4",
         # ZipEnhancer reference-audio denoiser (opt-in). modelscope hosts the
         # iic/speech_zipenhancer_ans_multiloss_16k_base acoustic-noise-suppression
         # model. Only loaded lazily on first denoise=True request so clean-

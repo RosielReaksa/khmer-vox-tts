@@ -1,16 +1,52 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import LineAudioPlayer from "@/app/components/line-audio-player";
 import VoicePreviewCard from "@/app/components/voice-preview-card";
 import { useT } from "@/app/components/locale-provider";
 import { fetchJsonSafe } from "@/lib/edge-fetch";
 
+type GenerateQueuedResponse = {
+  ok?: boolean;
+  queued?: boolean;
+  jobId?: string;
+  error?: string;
+  job?: {
+    id: string;
+    status: string;
+    totalItems: number;
+    creditsEstimated: number;
+  };
+};
+
+type BatchJobItem = {
+  id: string;
+  itemIndex: number;
+  status: string;
+  hasAudio: boolean;
+  contentType: string | null;
+};
+
+type BatchJobStatusResponse = {
+  job?: {
+    id: string;
+    status: string;
+    totalItems: number;
+    completedItems?: number;
+    errorMessage?: string | null;
+  };
+  items?: BatchJobItem[];
+};
+
+const POLL_INTERVAL_MS = 2500;
+const MAX_POLL_ATTEMPTS = 60; // ~2.5 minutes at 2.5s intervals
+
 export default function HomePlayground() {
   const [text, setText] = useState("សូមស្វាគមន៍មកកាន់ Khmer Vox TTS។");
   const [voice, setVoice] = useState("female");
   const [busy, setBusy] = useState(false);
+  const [progressLabel, setProgressLabel] = useState("");
   const [audioUrl, setAudioUrl] = useState("");
   const [error, setError] = useState("");
   const [showModal, setShowModal] = useState(false);
@@ -18,11 +54,132 @@ export default function HomePlayground() {
   const router = useRouter();
   const t = useT();
 
+  // Refs to allow clean cancellation of in-flight polling when the user
+  // triggers a new generation.
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef = useRef(false);
+
+  const stopPolling = useCallback(() => {
+    abortRef.current = true;
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }, []);
+
+  const resetGenerationState = useCallback(() => {
+    stopPolling();
+    setAudioUrl("");
+    setError("");
+    setProgressLabel("");
+  }, [stopPolling]);
+
+  const downloadFirstAudio = useCallback(async (jobId: string, items: BatchJobItem[]) => {
+    const firstDone = items.find((item) => item.status === "success" && item.hasAudio);
+    if (!firstDone) return false;
+
+    const downloadRes = await fetch(`/api/batch/jobs/${jobId}/items/${firstDone.id}/download`);
+    if (!downloadRes.ok) return false;
+
+    const blob = await downloadRes.blob();
+    if (!blob.size) return false;
+
+    setAudioUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return URL.createObjectURL(blob);
+    });
+    return true;
+  }, []);
+
+  const pollJobUntilDone = useCallback(
+    (jobId: string, totalItems: number) =>
+      new Promise<boolean>((resolve, reject) => {
+        let attempts = 0;
+
+        const tick = async () => {
+          if (abortRef.current) {
+            reject(new Error("cancelled"));
+            return;
+          }
+          attempts += 1;
+
+          const statusResult = await fetchJsonSafe<BatchJobStatusResponse>(
+            `/api/batch/jobs/${jobId}`,
+          );
+
+          if (!statusResult.ok) {
+            // Transient network error during polling — keep trying unless
+            // we've exhausted attempts.
+            if (attempts >= MAX_POLL_ATTEMPTS) {
+              reject(new Error(t("playground.errorTimeout")));
+              return;
+            }
+            setProgressLabel(t("playground.generatingProcessing", { step: `${attempts}` }));
+            return;
+          }
+
+          const job = statusResult.data.job;
+          const items = statusResult.data.items ?? [];
+          if (!job) {
+            reject(new Error(t("playground.errorFailed")));
+            return;
+          }
+
+          const completed = items.filter((i) => i.status === "success").length;
+          const failed = items.filter((i) => i.status === "failed").length;
+          const progressStep = t("playground.generatingProcessing", {
+            step: `${completed}/${totalItems}`,
+          });
+
+          if (job.status === "completed" || job.status === "partial") {
+            if (pollTimerRef.current) {
+              clearInterval(pollTimerRef.current);
+              pollTimerRef.current = null;
+            }
+            const gotAudio = await downloadFirstAudio(jobId, items);
+            if (gotAudio || failed < totalItems) {
+              resolve(true);
+            } else {
+              reject(new Error(job.errorMessage || t("playground.errorFailed")));
+            }
+            return;
+          }
+
+          if (job.status === "failed" || job.status === "needs_review") {
+            if (pollTimerRef.current) {
+              clearInterval(pollTimerRef.current);
+              pollTimerRef.current = null;
+            }
+            reject(new Error(job.errorMessage || t("playground.errorFailed")));
+            return;
+          }
+
+          // Still queued or running.
+          setProgressLabel(progressStep);
+          if (attempts >= MAX_POLL_ATTEMPTS) {
+            if (pollTimerRef.current) {
+              clearInterval(pollTimerRef.current);
+              pollTimerRef.current = null;
+            }
+            // Don't resolve as success — the job may still be running in the
+            // background. Surface a gentle message.
+            reject(new Error(t("playground.errorTimeout")));
+          }
+        };
+
+        setProgressLabel(t("playground.generatingQueued"));
+        pollTimerRef.current = setInterval(tick, POLL_INTERVAL_MS);
+        // Run the first tick immediately so the user isn't left staring at
+        // "Queued..." for the full interval.
+        void tick();
+      }),
+    [downloadFirstAudio, t],
+  );
+
   const handleGenerate = async () => {
     if (!text.trim()) return;
+    resetGenerationState();
     setBusy(true);
-    setError("");
-    setAudioUrl("");
 
     // Check if logged in
     const meResult = await fetchJsonSafe<{ user?: unknown }>("/api/me");
@@ -41,12 +198,8 @@ export default function HomePlayground() {
       return;
     }
 
-    // Generate speech
-    const result = await fetchJsonSafe<{
-      error?: string;
-      contentType?: string;
-      audioBase64?: string;
-    }>(
+    // Generate speech — the API now returns a queued job, not direct audio.
+    const result = await fetchJsonSafe<GenerateQueuedResponse>(
       "/api/generate",
       {
         method: "POST",
@@ -66,9 +219,26 @@ export default function HomePlayground() {
       return;
     }
 
-    const url = `data:${result.data.contentType};base64,${result.data.audioBase64}`;
-    setAudioUrl(url);
-    setBusy(false);
+    const jobId = result.data.jobId;
+    const totalItems = result.data.job?.totalItems ?? 1;
+    if (!jobId) {
+      setError(t("playground.errorFailed"));
+      setBusy(false);
+      return;
+    }
+
+    try {
+      await pollJobUntilDone(jobId, totalItems);
+    } catch (pollErr: unknown) {
+      const err = pollErr as Error;
+      if (err.message !== "cancelled") {
+        setError(err.message || t("playground.errorFailed"));
+      }
+    } finally {
+      setBusy(false);
+      setProgressLabel("");
+      pollTimerRef.current = null;
+    }
   };
 
   return (
@@ -142,7 +312,7 @@ export default function HomePlayground() {
         <span className="material-symbols-outlined group-hover:animate-pulse" style={{ fontVariationSettings: "'FILL' 1" }} aria-hidden="true">
           {busy ? "hourglass_empty" : "play_circle"}
         </span>
-        {busy ? t("playground.generating") : t("playground.generate")}
+        {busy ? progressLabel || t("playground.generating") : t("playground.generate")}
       </button>
 
       {audioUrl && (

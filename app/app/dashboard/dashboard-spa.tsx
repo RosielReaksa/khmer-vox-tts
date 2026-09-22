@@ -334,8 +334,8 @@ function BillingPanel() {
           </div>
           {!paymentInfo.autoVerificationEnabled ? (
             <p className="mt-4 border-2 border-outline bg-[#ffdad6] p-4 text-xs font-bold text-[#93000a] shadow-[2px_2px_0px_0px_rgba(26,26,26,1)] leading-relaxed">
-              KHQRcc checkout is selected, but the server is missing
-              KHQRCC_PROFILE_ID or KHQRCC_SECRET_KEY.
+              Payment is currently unavailable. Please contact admin via
+              Telegram to complete your purchase.
             </p>
           ) : null}
         </article>

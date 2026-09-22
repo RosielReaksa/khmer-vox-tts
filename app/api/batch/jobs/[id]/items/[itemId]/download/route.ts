@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { PUBLIC_AUDIO_CONTENT_TYPE, PUBLIC_AUDIO_OUTPUT_FORMAT } from "@/lib/audio-api";
 import { resolveAudioBytes } from "@/lib/audio-storage";
+import { withDatabaseGuard } from "@/lib/db-guard";
 import { getUserBatchJobWithItems } from "@/lib/store";
 import { readSessionFromCookie } from "@/lib/session";
 
@@ -27,42 +28,44 @@ function batchItemFileName(index: number, externalId: string | null): string {
 }
 
 export async function GET(_request: Request, context: RouteContext) {
-  const session = await readSessionFromCookie();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  return withDatabaseGuard(async () => {
+    const session = await readSessionFromCookie();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-  const { id, itemId } = await context.params;
-  const result = await getUserBatchJobWithItems(session.userId, id);
-  if (!result) {
-    return NextResponse.json({ error: "Batch job not found." }, { status: 404 });
-  }
+    const { id, itemId } = await context.params;
+    const result = await getUserBatchJobWithItems(session.userId, id);
+    if (!result) {
+      return NextResponse.json({ error: "Batch job not found." }, { status: 404 });
+    }
 
-  const item = result.items.find((candidate) => candidate.id === itemId);
-  if (!item) {
-    return NextResponse.json({ error: "Batch job item not found." }, { status: 404 });
-  }
-  if (item.status !== "success" || (!item.audioBase64 && !item.audioObjectKey)) {
-    return NextResponse.json({ error: "Audio is not available for this line yet." }, { status: 404 });
-  }
+    const item = result.items.find((candidate) => candidate.id === itemId);
+    if (!item) {
+      return NextResponse.json({ error: "Batch job item not found." }, { status: 404 });
+    }
+    if (item.status !== "success" || (!item.audioBase64 && !item.audioObjectKey)) {
+      return NextResponse.json({ error: "Audio is not available for this line yet." }, { status: 404 });
+    }
 
-  const resolvedBytes = await resolveAudioBytes({
-    audioBase64: item.audioBase64,
-    audioObjectKey: item.audioObjectKey,
-  });
-  if (!resolvedBytes?.byteLength) {
-    return NextResponse.json({ error: "Audio file could not be loaded for this line." }, { status: 404 });
-  }
+    const resolvedBytes = await resolveAudioBytes({
+      audioBase64: item.audioBase64,
+      audioObjectKey: item.audioObjectKey,
+    });
+    if (!resolvedBytes?.byteLength) {
+      return NextResponse.json({ error: "Audio file could not be loaded for this line." }, { status: 404 });
+    }
 
-  const bytes = Buffer.from(resolvedBytes);
-  const body = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(body).set(bytes);
-  return new NextResponse(new Blob([body], { type: item.contentType ?? PUBLIC_AUDIO_CONTENT_TYPE }), {
-    status: 200,
-    headers: {
-      "Content-Type": item.contentType ?? PUBLIC_AUDIO_CONTENT_TYPE,
-      "Content-Disposition": `attachment; filename="${batchItemFileName(item.itemIndex, item.externalId)}"`,
-      "Content-Length": String(bytes.byteLength),
-    },
+    const bytes = Buffer.from(resolvedBytes);
+    const body = new ArrayBuffer(bytes.byteLength);
+    new Uint8Array(body).set(bytes);
+    return new NextResponse(new Blob([body], { type: item.contentType ?? PUBLIC_AUDIO_CONTENT_TYPE }), {
+      status: 200,
+      headers: {
+        "Content-Type": item.contentType ?? PUBLIC_AUDIO_CONTENT_TYPE,
+        "Content-Disposition": `attachment; filename="${batchItemFileName(item.itemIndex, item.externalId)}"`,
+        "Content-Length": String(bytes.byteLength),
+      },
+    });
   });
 }

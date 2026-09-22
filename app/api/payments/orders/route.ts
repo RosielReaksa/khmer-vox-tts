@@ -101,7 +101,7 @@ export async function POST(request: Request) {
     }
     if (error instanceof Error && error.message === "KHQRCC_NOT_CONFIGURED") {
       return NextResponse.json(
-        { error: "KHQRcc is not configured. Set KHQRCC_PROFILE_ID and KHQRCC_SECRET_KEY in the server environment." },
+        { error: "Payment is currently unavailable. Please contact admin via Telegram to complete your purchase." },
         { status: 400 },
       );
     }

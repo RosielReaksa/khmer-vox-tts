@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getApiAccessStatus } from "@/lib/api-access";
 import { getCurrentUser } from "@/lib/current-user";
+import { withDatabaseGuard } from "@/lib/db-guard";
 import { cachedDashboardValue, dashboardCacheKey } from "@/lib/dashboard-count-cache";
 import {
   getApiUsageStats,
@@ -13,12 +14,13 @@ import {
 } from "@/lib/store";
 
 export async function GET() {
-  const user = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  return withDatabaseGuard(async () => {
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-  const payload = await cachedDashboardValue(dashboardCacheKey(user.id, "api:data"), 10, async () => {
+    const payload = await cachedDashboardValue(dashboardCacheKey(user.id, "api:data"), 10, async () => {
     const [usage, apiKeys, apiGenerations, apiAccess, batchJobs, businessRequests, webhookTests] = await Promise.all([
       cachedDashboardValue(dashboardCacheKey(user.id, "api:usage"), 8, () => getApiUsageStats(user.id)),
       listUserApiKeys(user.id),
@@ -71,5 +73,6 @@ export async function GET() {
     };
   });
 
-  return NextResponse.json(payload);
+    return NextResponse.json(payload);
+  });
 }

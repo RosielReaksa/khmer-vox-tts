@@ -1,0 +1,10 @@
+#!/bin/bash
+echo "=== Web env (TTS_*) ==="
+kubectl -n khmer-vox get deployment khmer-vox-web -o json | python3 -c "import json,sys; d=json.load(sys.stdin); [print(f'{e[\"name\"]}={e.get(\"value\",\"\")}') for e in d['spec']['template']['spec']['containers'][0].get('env',[]) if e.get('name','').startswith('TTS_')]"
+echo ""
+echo "=== Worker env (TTS_*) ==="
+kubectl -n khmer-vox get deployment khmer-vox-worker -o json | python3 -c "import json,sys; d=json.load(sys.stdin); [print(f'{e[\"name\"]}={e.get(\"value\",\"\")}') for e in d['spec']['template']['spec']['containers'][0].get('env',[]) if e.get('name','').startswith('TTS_')]"
+echo ""
+echo "=== Current images ==="
+echo "web:    $(kubectl -n khmer-vox get deployment khmer-vox-web -o jsonpath='{.spec.template.spec.containers[0].image}')"
+echo "worker: $(kubectl -n khmer-vox get deployment khmer-vox-worker -o jsonpath='{.spec.template.spec.containers[0].image}')"

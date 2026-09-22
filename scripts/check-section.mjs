@@ -1,0 +1,10 @@
+﻿import { readFileSync } from "node:fs";
+const c = readFileSync("D:\\website api seller\\PROJECT_MEMORY.md", "utf8");
+const lines = c.split("\r\n");
+console.log("Total lines:", lines.length);
+console.log("");
+console.log("=== L1-10 (header) ===");
+for (let i = 0; i < 10; i++) console.log((i + 1) + ":", lines[i]);
+console.log("");
+console.log("=== L100-110 (transition to existing content) ===");
+for (let i = 99; i < 110; i++) console.log((i + 1) + ":", lines[i]);

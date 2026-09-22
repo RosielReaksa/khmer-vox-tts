@@ -1,0 +1,6 @@
+[mcp_servers.markitdown]
+command = "uvx"
+args = ["markitdown-mcp"]
+
+[mcp_servers.codebase_memory]
+command = 'D:\website api seller\.codex\tools\codebase-memory-mcp\codebase-memory-mcp.exe'

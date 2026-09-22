@@ -4,6 +4,7 @@ import { z } from "zod";
 import { BatchJobServiceError } from "@/lib/batch-service";
 import { DashboardJobLimitError } from "@/lib/dashboard-job-limits";
 import { createQueuedDashboardGeneration } from "@/lib/generation-queue";
+import { withDatabaseGuard } from "@/lib/db-guard";
 import { acquireUsageLimit, type UsageLimitResult } from "@/lib/rate-limit";
 import { isJsonRequestError, jsonRequestErrorBody, readJsonRequest } from "@/lib/request-json";
 import { getUsagePolicy } from "@/lib/server-usage-policy";
@@ -21,6 +22,7 @@ const generateSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  return withDatabaseGuard(async () => {
   const session = await readSessionFromCookie();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -103,4 +105,5 @@ export async function POST(request: Request) {
   } finally {
     await limit?.release();
   }
+  });
 }

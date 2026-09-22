@@ -1,0 +1,163 @@
+
+> khmer-vox-tts@0.1.0 build
+> next build && node scripts/sanitize-standalone.mjs
+
+▲ Next.js 16.2.6 (Turbopack)
+- Environments: .env
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 6.8s
+  Running TypeScript ...
+  Finished TypeScript in 10.6s ...
+  Collecting page data using 15 workers ...
+  Generating static pages using 15 workers (0/95) ...
+  Generating static pages using 15 workers (23/95) 
+  Generating static pages using 15 workers (47/95) 
+  Generating static pages using 15 workers (71/95) 
+✓ Generating static pages using 15 workers (95/95) in 714ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ƒ /
+├ ƒ /_not-found
+├ ƒ /api/admin/admin-status
+├ ƒ /api/admin/customers
+├ ƒ /api/admin/customers/[id]/business-access
+├ ƒ /api/admin/customers/[id]/keys/[keyId]/limits
+├ ƒ /api/admin/customers/[id]/revoke-keys
+├ ƒ /api/admin/customers/[id]/suspend
+├ ƒ /api/admin/customers/[id]/tokens
+├ ƒ /api/admin/customers/[id]/unsuspend
+├ ƒ /api/admin/export/customers
+├ ƒ /api/admin/export/jobs
+├ ƒ /api/admin/jobs
+├ ƒ /api/admin/jobs/[id]/items
+├ ƒ /api/admin/modal
+├ ƒ /api/admin/modal/analytics
+├ ƒ /api/admin/modal/deploy
+├ ƒ /api/admin/modal/deploy/versions
+├ ƒ /api/admin/modal/health
+├ ƒ /api/admin/overview
+├ ƒ /api/admin/payment-support
+├ ƒ /api/admin/payment-support/[id]/resolve
+├ ƒ /api/admin/payment-telegram
+├ ƒ /api/admin/payment-telegram/[id]/approve
+├ ƒ /api/admin/payment-telegram/[id]/ignore
+├ ƒ /api/admin/payment-webhooks
+├ ƒ /api/admin/payments
+├ ƒ /api/admin/payments/[id]/approve
+├ ƒ /api/admin/payments/[id]/recheck
+├ ƒ /api/admin/payments/[id]/reject
+├ ƒ /api/admin/system/test
+├ ƒ /api/auth/forgot-password
+├ ƒ /api/auth/google/callback
+├ ƒ /api/auth/google/start
+├ ƒ /api/auth/reset-password
+├ ƒ /api/auth/signin
+├ ƒ /api/auth/signout
+├ ƒ /api/auth/signup
+├ ƒ /api/batch
+├ ƒ /api/batch-clone
+├ ƒ /api/batch/jobs
+├ ƒ /api/batch/jobs/[id]
+├ ƒ /api/batch/jobs/[id]/download
+├ ƒ /api/batch/jobs/[id]/items/[itemId]/download
+├ ƒ /api/batch/jobs/[id]/merged
+├ ƒ /api/batch/jobs/[id]/merged/audio
+├ ƒ /api/batch/jobs/[id]/retry
+├ ƒ /api/business/request
+├ ƒ /api/business/webhook-test
+├ ƒ /api/dashboard/admin-status
+├ ƒ /api/dashboard/analytics
+├ ƒ /api/dashboard/api-data
+├ ƒ /api/dashboard/billing
+├ ƒ /api/dashboard/events
+├ ƒ /api/dashboard/history
+├ ƒ /api/dashboard/history/[id]/download
+├ ƒ /api/dashboard/voices
+├ ƒ /api/generate
+├ ƒ /api/generate-clone
+├ ƒ /api/health
+├ ƒ /api/internal/jobs/process
+├ ƒ /api/keys
+├ ƒ /api/keys/[id]
+├ ƒ /api/keys/[id]/revoke
+├ ƒ /api/me
+├ ƒ /api/payments/orders
+├ ƒ /api/payments/orders/[id]
+├ ƒ /api/payments/orders/[id]/cancel
+├ ƒ /api/payments/orders/[id]/proof-link
+├ ƒ /api/payments/orders/[id]/support
+├ ƒ /api/payments/orders/[id]/verify
+├ ƒ /api/payments/proof
+├ ƒ /api/prewarm
+├ ƒ /api/v1/audio/batch
+├ ƒ /api/v1/audio/batch/clone
+├ ƒ /api/v1/audio/batch/jobs/[id]
+├ ƒ /api/v1/audio/batch/jobs/[id]/download
+├ ƒ /api/v1/audio/clone
+├ ƒ /api/v1/audio/speech
+├ ƒ /api/v2/audio/clone/jobs
+├ ƒ /api/v2/audio/jobs
+├ ƒ /api/v2/audio/jobs/[id]
+├ ƒ /api/v2/audio/jobs/[id]/audio
+├ ƒ /api/webhooks/khqrcc
+├ ƒ /api/webhooks/payway
+├ ƒ /api/webhooks/telegram/payment
+├ ƒ /api/webhooks/telegram/payment-actions
+├ ƒ /app
+├ ƒ /app/admin
+├ ƒ /app/admin/activity
+├ ƒ /app/admin/audit
+├ ƒ /app/admin/business
+├ ƒ /app/admin/customers
+├ ƒ /app/admin/customers/[id]
+├ ƒ /app/admin/errors
+├ ƒ /app/admin/jobs
+├ ƒ /app/admin/modal
+├ ƒ /app/admin/payment-support
+├ ƒ /app/admin/payment-telegram
+├ ƒ /app/admin/payment-webhooks
+├ ƒ /app/admin/payments
+├ ƒ /app/admin/payway-application
+├ ƒ /app/admin/system
+├ ƒ /app/admin/usage
+├ ƒ /app/checkout
+├ ƒ /app/dashboard
+├ ƒ /app/dashboard/analytics
+├ ƒ /app/dashboard/api
+├ ƒ /app/dashboard/billing
+├ ƒ /app/dashboard/business
+├ ƒ /app/dashboard/history
+├ ƒ /app/dashboard/jobs
+├ ƒ /app/dashboard/settings
+├ ƒ /app/dashboard/voice-cloning
+├ ƒ /app/dashboard/voices
+├ ƒ /app/forgot-password
+├ ƒ /app/reset-password
+├ ƒ /app/signin
+├ ƒ /app/signup
+├ ○ /apple-icon.png
+├ ƒ /business
+├ ƒ /docs
+├ ○ /icon.svg
+├ ○ /manifest.webmanifest
+├ ○ /opengraph-image
+├ ƒ /payment-guide
+├ ƒ /payment-proof
+├ ƒ /payments
+├ ƒ /privacy
+├ ƒ /refund-policy
+├ ƒ /review
+├ ○ /robots.txt
+├ ○ /sitemap.xml
+├ ƒ /support
+└ ƒ /terms
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+BUILD_EXIT=0
