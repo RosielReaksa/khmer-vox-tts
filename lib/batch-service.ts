@@ -1050,7 +1050,7 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
   const jobAge = Date.now() - new Date(job.startedAt ?? job.createdAt).getTime();
   if (jobAge > maxAgeMs && job.status === "running") {
     const timeoutMsg = `Job timed out after ${Math.round(jobAge / 1000)}s (max ${Math.round(maxAgeMs / 1000)}s)`;
-    await failRemainingItems(job.id, timeoutMsg, "timeout");
+    await failRemainingItems(job.id, timeoutMsg, "failed");
     await updateBatchJobStatus({ jobId: job.id, status: "failed", errorMessage: timeoutMsg });
     const failed = await getBatchJobWithItems(job.id);
     return failed ?? { job, items: [] };
