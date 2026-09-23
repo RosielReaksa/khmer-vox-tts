@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { authenticateApiKeyFromRequest, authenticateApiKeyFromApiKeyString } from "@/lib/api-key-auth";
-import { ApiKeyLimitError, apiKeyUsagePolicy, enforceApiKeyTokenLimit } from "@/lib/api-key-limits";
+import { ApiKeyLimitError, apiKeyUsagePolicy, enforceApiKeyTokenLimit, enforceApiKeyQueuedJobLimit } from "@/lib/api-key-limits";
 import { logApiError } from "@/lib/api-error-log";
 import { corsHeaders, corsOptionsResponse } from "@/lib/cors";
-import { calculateGenerationUsage, GenerationServiceError, runGenerationForUser } from "@/lib/generation-service";
+import { calculateGenerationUsage, GenerationServiceError } from "@/lib/generation-service";
 import { acquireUsageLimit, type UsageLimitResult } from "@/lib/rate-limit";
 import { getUsagePolicy } from "@/lib/server-usage-policy";
 import { PUBLIC_AUDIO_OUTPUT_FORMAT, isUnsupportedPublicAudioOutputFormat } from "@/lib/audio-api";
@@ -18,9 +18,7 @@ import {
   estimateBatchLineUsage,
   kickBatchWorker,
   parseBatchLines,
-  parseBatchMetadataJson,
 } from "@/lib/batch-service";
-import { enforceApiKeyQueuedJobLimit } from "@/lib/api-key-limits";
 
 export const runtime = "nodejs";
 
@@ -33,7 +31,7 @@ function jsonWithCors(body: unknown, init: ResponseInit = {}) {
     ...init,
     headers: {
       ...corsHeaders(),
-      ...init.headers,
+      ...(init.headers || {}),
     },
   });
 }
@@ -86,7 +84,12 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    await enforceApiKeyTokenLimit(auth.apiKey, calculateGenerationUsage(parsed.data.input, "tts").creditsRequested);
+
+    // Always use batch processing for reliability (avoids 502 timeouts)
+    await enforceApiKeyQueuedJobLimit(auth.apiKey);
+    const lines = parseBatchLines(parsed.data.input).map((text) => ({ text }));
+    const estimatedCredits = estimateBatchLineUsage(lines, "tts").creditsEstimated;
+    await enforceApiKeyTokenLimit(auth.apiKey, estimatedCredits);
 
     const usageLimit = await acquireUsageLimit(
       `api:${auth.userId}:${auth.apiKeyId}:tts`,
@@ -109,70 +112,36 @@ export async function POST(request: Request) {
     }
     limit = usageLimit;
 
-    // For long text that will be chunked, use batch processing to avoid timeouts.
-    // Short text is processed synchronously for instant results.
-    const SYNC_MAX_CHARS = 200;
-    const isLongText = parsed.data.input.length > SYNC_MAX_CHARS;
-
-    if (isLongText) {
-      // Long text: create async batch job, return immediately
-      await enforceApiKeyQueuedJobLimit(auth.apiKey);
-      const lines = parseBatchLines(parsed.data.input).map((text) => ({ text }));
-      const estimatedCredits = estimateBatchLineUsage(lines, "tts").creditsEstimated;
-      await enforceApiKeyTokenLimit(auth.apiKey, estimatedCredits);
-
-      const batch = await createQueuedBatchJob({
-        userId: auth.userId,
-        apiKeyId: auth.apiKeyId,
-        source: "api_key",
-        mode: "tts",
-        lines,
-        voice: parsed.data.voice ?? DEFAULT_TTS_VOICE_PROMPT,
-        model: parsed.data.model,
-      });
-      kickBatchWorker(batch.job.id);
-
-      return jsonWithCors(
-        {
-          ok: true,
-          queued: true,
-          message: "Text is long and has been queued for processing. Poll the job endpoint to retrieve audio.",
-          job: {
-            id: batch.job.id,
-            status: batch.job.status,
-            total_items: batch.job.totalItems,
-            credits_estimated: batch.job.creditsEstimated,
-            created_at: batch.job.createdAt,
-          },
-          poll_url: `/v1/audio/jobs/${batch.job.id}`,
-        },
-        { status: 202, headers: limit.headers },
-      );
-    }
-
-    const result = await runGenerationForUser({
+    const batch = await createQueuedBatchJob({
       userId: auth.userId,
       apiKeyId: auth.apiKeyId,
       source: "api_key",
       mode: "tts",
-      text: parsed.data.input,
+      lines,
       voice: parsed.data.voice ?? DEFAULT_TTS_VOICE_PROMPT,
       model: parsed.data.model,
-      voiceStyle: parsed.data.voice_style,
     });
+    kickBatchWorker(batch.job.id);
 
-    return new NextResponse(Buffer.from(result.audioBase64, "base64"), {
-      status: 200,
-      headers: {
-        "Content-Type": result.contentType,
-        "X-Generation-Id": result.generationId,
-        "X-Credits-Charged": String(result.creditsCharged),
-        "X-Remaining-Tokens": String(result.remainingTokens),
-        "X-Output-Format": PUBLIC_AUDIO_OUTPUT_FORMAT,
-        ...corsHeaders(),
-        ...limit.headers,
+    return jsonWithCors(
+      {
+        ok: true,
+        queued: true,
+        message: "Speech generation queued. Poll the job endpoint to retrieve audio.",
+        job: {
+          id: batch.job.id,
+          status: batch.job.status,
+          total_items: batch.job.totalItems,
+          completed_items: 0,
+          credits_estimated: batch.job.creditsEstimated,
+          credits_charged: 0,
+          created_at: batch.job.createdAt,
+        },
+        poll_url: `/v1/audio/batch/jobs/${batch.job.id}`,
+        audio_url: `/v1/audio/batch/jobs/${batch.job.id}/download`,
       },
-    });
+      { status: 202, headers: limit.headers },
+    );
   } catch (error) {
     if (isJsonRequestError(error)) {
       logApiError({
@@ -209,12 +178,8 @@ export async function POST(request: Request) {
         apiKeyId: auth.apiKeyId,
       });
       return jsonWithCors(
-        {
-          error: error.message,
-          code: error.code,
-          remainingTokens: error.remainingTokens,
-        },
-        { status: error.status, headers: { ...corsHeaders(), ...limit?.headers } },
+        { error: error.message, code: error.code, remainingTokens: error.remainingTokens },
+        { status: error.status, headers: { ...corsHeaders(), ...(limit?.headers || {}) } },
       );
     }
     if (error instanceof BatchJobServiceError) {
@@ -229,7 +194,7 @@ export async function POST(request: Request) {
       });
       return jsonWithCors(
         { error: error.message, code: error.code, remainingTokens: error.remainingTokens },
-        { status: error.status, headers: { ...corsHeaders(), ...limit?.headers } },
+        { status: error.status, headers: { ...corsHeaders(), ...(limit?.headers || {}) } },
       );
     }
     logApiError({

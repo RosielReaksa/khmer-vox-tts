@@ -1044,6 +1044,18 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
     await deliverBatchJobWebhookIfNeeded(job.id);
     return current ?? loaded;
   }
+
+  // Server-side timeout: fail jobs that have been running too long
+  const maxAgeMs = Number(process.env.BATCH_JOB_MAX_AGE_MS || 180000);
+  const jobAge = Date.now() - new Date(job.startedAt ?? job.createdAt).getTime();
+  if (jobAge > maxAgeMs && job.status === "running") {
+    const timeoutMsg = `Job timed out after ${Math.round(jobAge / 1000)}s (max ${Math.round(maxAgeMs / 1000)}s)`;
+    await failRemainingItems(job.id, timeoutMsg, "timeout");
+    await updateBatchJobStatus({ jobId: job.id, status: "failed", errorMessage: timeoutMsg });
+    const failed = await getBatchJobWithItems(job.id);
+    return failed ?? { job, items: [] };
+  }
+
   if (job.status === "queued") {
     const claimed = await claimQueuedBatchJob(job.id, activeWorkerId);
     if (!claimed) {
