@@ -137,8 +137,8 @@ export async function POST(request: Request) {
           credits_charged: 0,
           created_at: batch.job.createdAt,
         },
-        poll_url: `/v1/audio/batch/jobs/${batch.job.id}`,
-        audio_url: `/v1/audio/batch/jobs/${batch.job.id}/download`,
+          poll_url: `/api/v1/audio/batch/jobs/${batch.job.id}`,
+          audio_url: `/api/v1/audio/batch/jobs/${batch.job.id}/download`,
       },
       { status: 202, headers: limit.headers },
     );
