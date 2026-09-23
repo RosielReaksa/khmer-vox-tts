@@ -56,9 +56,14 @@ git pull + npm run build + pm2 restart (web + 2 workers).
 
 **Validation:** npx tsc --noEmit clean; eslint on changed files 0 errors
 (pre-existing unrelated error in data/_cf.cjs remains); npm run build EXIT=0.
-Post-deploy: health OK; loudness of delivered audio should measure ≈ -16 LUFS
-(was ~-31 raw). If loudnorm makes generation noise audible in silence gaps,
-set TTS_OUTPUT_DENOISE_NR=6 (gentle) instead of re-enabling NR=14.
+Post-deploy verified end-to-end on the VPS (scratch/verify-audio-quality.mjs:
+559-char female preset text → batch job → ZIP download → ffmpeg measurement):
+integrated loudness **-16.00 LUFS** (was ~-31 raw), true peak **-1.63 dBTP**
+(limiter held), loudness range **2.90 LU** (consistent start-to-end), HF RMS
+>4 kHz **-46.7 dB** (no longer suppressed by afftdn). Sample kept at
+verify-output/fixed-female-559chars.wav for listening. If loudnorm makes
+generation noise audible in silence gaps, set TTS_OUTPUT_DENOISE_NR=6 (gentle)
+instead of re-enabling NR=14.
 
 **Optional follow-up (not done):** Modal INFERENCE_TIMESTEPS 8 → 16
 (modal/modal_voxcpm_api.py) is the source-side fix for generation noise;
