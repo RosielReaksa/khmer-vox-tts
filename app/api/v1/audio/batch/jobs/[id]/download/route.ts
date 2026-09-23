@@ -88,14 +88,19 @@ export async function GET(request: Request, context: RouteContext) {
   }
 
   const zip = createZip(files);
-  const body = new ArrayBuffer(zip.byteLength);
-  new Uint8Array(body).set(zip);
-  return new NextResponse(new Blob([body], { type: "application/zip" }), {
+
+  // Validate ZIP has proper PK header
+  if (zip.byteLength < 22 || zip[0] !== 0x50 || zip[1] !== 0x4b) {
+    return jsonWithCors({ error: "Failed to generate valid ZIP archive." }, { status: 500 });
+  }
+
+  return new NextResponse(new Blob([zip.buffer as ArrayBuffer], { type: "application/zip" }), {
     status: 200,
     headers: {
       "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="${result.job.id}.zip"`,
+      "Content-Disposition": `attachment; filename="audio_${result.job.id}.zip"`,
       "Content-Length": String(zip.byteLength),
+      "Cache-Control": "no-store",
       ...corsHeaders(),
     },
   });
