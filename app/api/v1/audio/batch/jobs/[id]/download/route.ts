@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { authenticateApiKeyFromRequest } from "@/lib/api-key-auth";
+import { authenticateApiKeyFromRequest, authenticateApiKeyFromApiKeyString } from "@/lib/api-key-auth";
 import { PUBLIC_AUDIO_OUTPUT_FORMAT } from "@/lib/audio-api";
 import { resolveAudioBytes } from "@/lib/audio-storage";
 import { corsHeaders, corsOptionsResponse } from "@/lib/cors";
@@ -51,7 +51,15 @@ function jsonWithCors(body: unknown, init: ResponseInit = {}) {
 }
 
 export async function GET(request: Request, context: RouteContext) {
-  const auth = await authenticateApiKeyFromRequest(request);
+  // Support API key via query param (works around Next.js header truncation bug)
+  const url = new URL(request.url);
+  const queryKey = url.searchParams.get("api_key");
+  let auth;
+  if (queryKey) {
+    auth = await authenticateApiKeyFromApiKeyString(queryKey);
+  } else {
+    auth = await authenticateApiKeyFromRequest(request);
+  }
   if (!auth.ok) {
     return jsonWithCors({ error: auth.error }, { status: auth.status });
   }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { authenticateApiKeyFromRequest } from "@/lib/api-key-auth";
+import { authenticateApiKeyFromRequest, authenticateApiKeyFromApiKeyString } from "@/lib/api-key-auth";
 import { ApiKeyLimitError, apiKeyUsagePolicy, enforceApiKeyTokenLimit } from "@/lib/api-key-limits";
 import { logApiError } from "@/lib/api-error-log";
 import { corsHeaders, corsOptionsResponse } from "@/lib/cors";
@@ -49,7 +49,11 @@ const cloneJsonSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const auth = await authenticateApiKeyFromRequest(request);
+  // Support API key via query param (works around Next.js header truncation bug)
+  const url = new URL(request.url);
+  const queryKey = url.searchParams.get("api_key");
+  let auth;
+  if (queryKey) { auth = await authenticateApiKeyFromApiKeyString(queryKey); } else { auth = await authenticateApiKeyFromRequest(request); }
   if (!auth.ok) {
     return jsonWithCors({ error: auth.error }, { status: auth.status });
   }
