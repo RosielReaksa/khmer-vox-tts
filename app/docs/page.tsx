@@ -44,25 +44,25 @@ const navItems = [
 
 const platformStats = [
   ["Base URL", baseUrl],
-  ["Authentication", "Bearer API key"],
-  ["Output", "WAV audio + async WAV/ZIP job downloads"],
+  ["Authentication", "Query param (?api_key=) or Bearer <REDACTED>"],
+  ["Output", "Async job-based: poll status, download WAV/ZIP"],
 ];
 
 const endpointCards = [
   {
-    title: "Async Speech V2",
-    path: "/api/v2/audio/jobs",
-    note: "Business-safe queued TTS: submit, poll status, download merged WAV.",
-  },
-  {
-    title: "Async Clone V2",
-    path: "/api/v2/audio/clone/jobs",
-    note: "Queued clone voice with reference audio, webhooks, and merged WAV output.",
-  },
-  {
-    title: "Speech",
+    title: "Text to Speech",
     path: "/api/v1/audio/speech",
-    note: "Fast single-call TTS for tests where speaker consistency is not required.",
+    note: "TTS for any text length. Returns job ID immediately, poll for audio. No timeout issues.",
+  },
+  {
+    title: "Batch TTS",
+    path: "/api/v1/audio/batch",
+    note: "Multiple lines in one job. Poll status, download merged WAV or ZIP.",
+  },
+  {
+    title: "Clone Voice",
+    path: "/api/v2/audio/clone/jobs",
+    note: "Async voice clone with reference audio. Returns job ID, poll for result.",
   },
 ];
 
@@ -185,7 +185,7 @@ export default function ApiDocsPage() {
                 <Step number={1} text="Create an account or sign in." />
                 <Step number={2} text="Buy Creator, Pro, or a paid token pack from Billing. Free accounts cannot create or use API keys." />
                 <Step number={3} text="Open Dashboard > API and create an API key. Daily and monthly limits are optional." />
-                <Step number={4} text="For production apps, use the V2 async job API: submit text or clone jobs, poll status, then download the merged WAV." />
+                <Step number={4} text="Call the TTS endpoint with your API key as a query parameter. Returns a job ID immediately — poll for the result." />
               </ol>
             </section>
 
@@ -239,12 +239,12 @@ export default function ApiDocsPage() {
                 code={`curl -X POST "${baseUrl}/api/v2/audio/jobs" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  --data '{\n    "input": "long script text here",\n    "voice": "female",\n    "model": "voxcpm2",\n    "webhook_url": "https://your-app.com/tts-webhook",\n    "output_format": "wav"\n  }'`}
               />
               <CodeBlock
-                title="Clone Voice job"
-                code={`curl -X POST "${baseUrl}/api/v2/audio/clone/jobs" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -F "sample=@reference.wav;type=audio/wav" \\\n  -F "input=long script text here" \\\n  -F "voice_consent=true" \\\n  -F "webhook_url=https://your-app.com/tts-webhook" \\\n  -F "output_format=wav"`}
+                title="Standard TTS job"
+                code={`curl -X POST "${baseUrl}/api/v2/audio/jobs?api_key=YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  --data '{\n    "input": "long script text here",\n    "voice": "female",\n    "model": "voxcpm2",\n    "webhook_url": "https://your-app.com/tts-webhook",\n    "output_format": "wav"\n  }'`}
               />
               <CodeBlock
                 title="Poll and download"
-                code={`curl -H "Authorization: Bearer YOUR_API_KEY" \\\n  "${baseUrl}/api/v2/audio/jobs/JOB_ID"\n\ncurl -H "Authorization: Bearer YOUR_API_KEY" \\\n  --output result.wav \\\n  "${baseUrl}/api/v2/audio/jobs/JOB_ID/audio"`}
+                code={`curl "${baseUrl}/api/v2/audio/jobs/JOB_ID?api_key=YOUR_API_KEY"\n\ncurl "${baseUrl}/api/v2/audio/jobs/JOB_ID/audio?api_key=YOUR_API_KEY" \\\n  --output result.wav`}
               />
               <FieldTable
                 rows={[
@@ -261,22 +261,63 @@ export default function ApiDocsPage() {
               method="POST"
               path="/api/v1/audio/speech"
               title="Text to Speech"
-              description="Generate speech using our built-in standard preset voices: Female (Sokha) or Male (Piseth). Token cost is 1.5 tokens per estimated output second."
+              description="Generate speech from text. Works for any text length. Returns a job ID immediately — poll for the result. No timeout issues."
             >
               <CodeBlock
-                title="cURL"
-                code={`curl -X POST "${baseUrl}/api/v1/audio/speech" \\\n  -H "Authorization: Bearer YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  --output speech.wav \\\n  --data '{\n    "model": "voxcpm2",\n    "voice": "female",  # Optional: "female" (Sokha) or "male" (Piseth)\n    "input": "soursdey nih ku chea somleng khmer",\n    "output_format": "wav"\n  }'`}
+                title="cURL (recommended: query param auth)"
+                code={`curl -X POST "${baseUrl}/api/v1/audio/speech?api_key=YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "voxcpm2",
+    "voice": "female",
+    "input": "your text here (any length)",
+    "output_format": "wav"
+  }'
+
+# Response: {"ok":true,"queued":true,"job":{"id":"..."},"poll_url":"..."}`}
+              />
+              <CodeBlock
+                title="Poll job status"
+                code={`curl "${baseUrl}/api/v1/audio/batch/jobs/JOB_ID?api_key=YOUR_API_KEY"
+
+# While processing: {"job":{"status":"running","completed_items":0}}
+# When done: {"job":{"status":"completed","credits_charged":3}}`}
+              />
+              <CodeBlock
+                title="Download audio"
+                code={`curl "${baseUrl}/api/v1/audio/batch/jobs/JOB_ID/download?api_key=YOUR_API_KEY" \
+  --output audio.zip`}
               />
               <CodeBlock
                 title="Python"
-                code={`import requests\n\nresponse = requests.post(\n    "${baseUrl}/api/v1/audio/speech",\n    headers={\n        "Authorization": "Bearer YOUR_API_KEY",\n        "Content-Type": "application/json",\n    },\n    json={\n        "model": "voxcpm2",\n        "voice": "female",  # Optional: "female" (Sokha) or "male" (Piseth)\n        "input": "soursdey nih ku chea somleng khmer",\n        "output_format": "wav",\n    },\n    timeout=600,\n)\nresponse.raise_for_status()\nopen("speech.wav", "wb").write(response.content)\nprint(response.headers.get("X-Remaining-Tokens"))`}
+                code={`import requests, time
+
+BASE = "${baseUrl}"
+KEY = "YOUR_API_KEY"
+
+# Submit job
+resp = requests.post(f"{BASE}/api/v1/audio/speech?api_key={KEY}",
+    json={"model":"voxcpm2","voice":"female","input":"your text here","output_format":"wav"})
+job_id = resp.json()["job"]["id"]
+
+# Poll until complete
+while True:
+    status = requests.get(f"{BASE}/api/v1/audio/batch/jobs/{job_id}?api_key={KEY}").json()
+    if status["job"]["status"] in ("completed","partial","failed"):
+        break
+    time.sleep(2)
+
+# Download audio
+audio = requests.get(f"{BASE}/api/v1/audio/batch/jobs/{job_id}/download?api_key={KEY}")
+open("audio.zip", "wb").write(audio.content)
+print(f"Credits charged: {status['job']['credits_charged']}")`}
               />
               <FieldTable
                 rows={[
-                  ["input", "string", `Required. 1 to ${MAX_TEXT_CHARS.toLocaleString()} characters.`],
-                  ["voice", "string", "Optional. Set to 'female' (default preset, Sokha) or 'male' (Piseth) to select standard voices."],
-                  ["model", "string", "Optional. Default comes from the deployed worker, usually voxcpm2."],
-                  ["output_format", "string", "Optional. The public API always returns WAV. The field is accepted for backward compatibility."],
+                  ["input", "string", `Required. 1 to ${MAX_TEXT_CHARS.toLocaleString()} characters. Any length works — long text is split automatically.`],
+                  ["voice", "string", "Optional. 'female' (Sokha) or 'male' (Piseth)."],
+                  ["model", "string", "Optional. Default is voxcpm2."],
+                  ["output_format", "string", "Optional. The public API always returns WAV."],
                 ]}
               />
             </EndpointSection>

@@ -79,10 +79,10 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
     }
 
     try {
-      const headers: HeadersInit = {
-        Authorization: `Bearer ${apiKey.trim()}`,
-      };
+      const headers: HeadersInit = {};
       let body: BodyInit;
+      const sep = fullUrl.includes("?") ? "&" : "?";
+      const authUrl = `${fullUrl}${sep}api_key=${encodeURIComponent(apiKey.trim())}`;
 
       if (mode === "speech") {
         headers["Content-Type"] = "application/json";
@@ -106,7 +106,7 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
         body = formData;
       }
 
-      const response = await fetch(fullUrl, {
+      const response = await fetch(authUrl, {
         method: "POST",
         headers,
         body,
@@ -119,7 +119,7 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
         const contentType = response.headers.get("content-type") || "";
         if (contentType.includes("audio/")) {
           try {
-            const rawResponse = await fetch(fullUrl, {
+            const rawResponse = await fetch(authUrl, {
               method: "POST",
               headers,
               body,
