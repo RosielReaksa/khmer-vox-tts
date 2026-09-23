@@ -120,7 +120,9 @@ export function getUpstreamEndpoints(): UpstreamEndpoint[] {
   return [];
 }
 
-export function selectUpstreamEndpoint(): UpstreamEndpoint | null {
+export function selectUpstreamEndpoint(
+  preferredUrl?: string | null,
+): UpstreamEndpoint | null {
   const pool = getUpstreamEndpoints();
   if (pool.length === 0) return null;
 
@@ -147,6 +149,18 @@ export function selectUpstreamEndpoint(): UpstreamEndpoint | null {
 
   if (withCredit.length > 0) {
     candidates = withCredit;
+  }
+
+  // Sticky endpoint: when the caller pins a preferred URL (all chunks of one
+  // synthesis share one account for consistent voice/level), return it if it
+  // is still a viable candidate. Does not advance the round-robin counter —
+  // the pin consumes no rotation slot. Falls through to round-robin when the
+  // preferred account is disabled or out of credit.
+  if (preferredUrl) {
+    const preferred = candidates.find((ep) => ep.url === preferredUrl);
+    if (preferred) {
+      return preferred;
+    }
   }
 
   const index = roundRobinCounter % candidates.length;

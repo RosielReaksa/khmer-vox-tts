@@ -72,8 +72,8 @@ function recordMetric(
     .catch(console.error);
 }
 
-export function selectEndpoint(): UpstreamEndpoint {
-  const endpoint = selectUpstreamEndpoint();
+export function selectEndpoint(preferredUrl?: string | null): UpstreamEndpoint {
+  const endpoint = selectUpstreamEndpoint(preferredUrl);
   if (!endpoint) {
     throw new TtsProviderError(
       "TTS upstream is not configured. Set TTS_UPSTREAM_POOL or TTS_UPSTREAM_URL in environment.",
@@ -208,6 +208,18 @@ async function normalizeCloneSampleForUpstream(
       DEFAULT_REFERENCE_AUDIO_FILTER,
     );
     const inputFormat = cloneSampleInputFormat(sample);
+    // 2026-09-23: reference rate raised 16 kHz -> 24 kHz (TTS_REFERENCE_SAMPLE_RATE).
+    // The reference defines the timbre the model clones; a 16 kHz reference
+    // strips everything above 8 kHz, so clones come back sounding like the
+    // speaker has a closed nose. 24 kHz matches the canonical output rate and
+    // keeps the reference payload reasonable. 16 kHz only ever matched the
+    // optional ZipEnhancer denoiser, which is disabled by default.
+    const referenceSampleRate = readNumericEnv(
+      "TTS_REFERENCE_SAMPLE_RATE",
+      24000,
+      16000,
+      48000,
+    );
     const wavBytes = await runFfmpeg(
       [
         "-hide_banner",
@@ -220,7 +232,7 @@ async function normalizeCloneSampleForUpstream(
         "-ac",
         "1",
         "-ar",
-        "16000",
+        String(referenceSampleRate),
         "-sample_fmt",
         "s16",
         "-f",
@@ -801,7 +813,13 @@ async function capLongPauses(bytes: Uint8Array): Promise<Uint8Array> {
 // default (TTS_OUTPUT_DENOISE=false) so existing behavior is unchanged until
 // opted in; tune strength with TTS_OUTPUT_DENOISE_NR (dB of reduction).
 async function reduceOutputNoise(bytes: Uint8Array): Promise<Uint8Array> {
-  if (!readBooleanEnv("TTS_OUTPUT_DENOISE", true)) {
+  // 2026-09-23: default flipped back to OFF. Commit 33eb830 ("disable
+  // destructive post-processing by default") disabled REMOVE_TONE, DE_NARROW,
+  // LOUDNORM and TEMPO but missed this one. afftdn at nr=14 dulls soft
+  // high-frequency consonants, which users hear as a "closed nose" / muffled
+  // voice. Only enable when loudnorm amplification makes generation noise
+  // audible, and then prefer a gentle TTS_OUTPUT_DENOISE_NR (e.g. 6).
+  if (!readBooleanEnv("TTS_OUTPUT_DENOISE", false)) {
     return bytes;
   }
   const noiseReduction = readNumericEnv("TTS_OUTPUT_DENOISE_NR", 14, 0.01, 97);
@@ -2561,7 +2579,10 @@ function levelWavChunksToCommonLoudness(chunks: Uint8Array[]): Uint8Array[] {
     return chunks;
   }
 
-  const maxGainDb = readNumericEnv("TTS_CHUNK_LEVEL_MAX_GAIN_DB", 3, 0, 6);
+  // 2026-09-23: cap raised 3 -> 6 dB. Independently generated chunks (possibly
+  // from different upstream accounts) drift more than 3 dB apart, and the old
+  // cap left audible loud/quiet jumps between chunks in long text.
+  const maxGainDb = readNumericEnv("TTS_CHUNK_LEVEL_MAX_GAIN_DB", 6, 0, 12);
   return chunks.map((chunk, index) => {
     const level = levels[index];
     if (!level || level <= 0) return chunk;
@@ -3286,6 +3307,10 @@ async function synthesizeSingleChunk(
     denoiseReference?: boolean;
     continuationPrompt?: ChunkContinuationPrompt;
     voiceStyle?: VoiceStylePreset;
+    // Sticky endpoint: try this upstream URL first so every chunk of one
+    // synthesis comes from the same account (consistent voice/level across
+    // the whole file). Falls back to normal round-robin on failure.
+    preferredEndpointUrl?: string;
   },
   model: string,
   responseFormat: AudioResponseFormat,
@@ -3411,8 +3436,13 @@ async function synthesizeSingleChunk(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let endpoint: UpstreamEndpoint;
+    // Sticky endpoint: on the first attempt, prefer the URL pinned by the
+    // caller (all chunks of one synthesis share one account). Later attempts
+    // (after a failure) fall through to the normal round-robin selection.
     try {
-      endpoint = selectEndpoint();
+      endpoint = selectEndpoint(
+        attempt === 1 ? params.preferredEndpointUrl : undefined,
+      );
     } catch (err) {
       throw err;
     }
@@ -3657,6 +3687,7 @@ async function synthesizeChunkWithSilenceRetry(
     denoiseReference?: boolean;
     continuationPrompt?: ChunkContinuationPrompt;
     voiceStyle?: VoiceStylePreset;
+    preferredEndpointUrl?: string;
   },
   model: string,
   responseFormat: AudioResponseFormat,
@@ -3783,9 +3814,38 @@ async function synthesizeAllChunks(
   expectedContentType: string,
   baseRetryAttempt = 0,
 ): Promise<ChunkSynthesisResult[]> {
-  const synthesizeOne = (chunkText: string, continuationPrompt?: ChunkContinuationPrompt) =>
+  // 2026-09-23: sticky endpoint. Pool accounts run different builds (different
+  // output sample rates and levels), so letting each chunk round-robin to a
+  // different account makes long text drift in voice character and loudness
+  // from chunk to chunk. Pin the whole synthesis to one account: select an
+  // endpoint up front and pass it as the preferred URL for every chunk. A
+  // chunk that fails on the pinned account still fails over to others via the
+  // normal retry loop, and the sequential path re-pins to whichever account
+  // actually served the previous chunk. Disabled with
+  // TTS_SYNTHESIS_STICKY_ENDPOINT=false.
+  const stickyEnabled = readBooleanEnv("TTS_SYNTHESIS_STICKY_ENDPOINT", true);
+  let stickyUrl: string | undefined;
+  if (stickyEnabled) {
+    try {
+      stickyUrl = selectEndpoint().url;
+    } catch {
+      // Empty pool: let the per-chunk path surface the 503 as before.
+      stickyUrl = undefined;
+    }
+  }
+
+  const synthesizeOne = (
+    chunkText: string,
+    continuationPrompt?: ChunkContinuationPrompt,
+    preferredEndpointUrl?: string,
+  ) =>
     synthesizeChunkWithSilenceRetry(
-      { ...params, text: chunkText, continuationPrompt },
+      {
+        ...params,
+        text: chunkText,
+        continuationPrompt,
+        preferredEndpointUrl,
+      },
       model,
       responseFormat,
       expectedContentType,
@@ -3794,7 +3854,7 @@ async function synthesizeAllChunks(
 
   if (!chunkContinuationEnabled() || chunks.length <= 1) {
     return mapWithConcurrency(chunks, resolveChunkConcurrency(), (chunkText) =>
-      synthesizeOne(chunkText),
+      synthesizeOne(chunkText, undefined, stickyUrl),
     );
   }
 
@@ -3802,7 +3862,10 @@ async function synthesizeAllChunks(
   let continuation: ChunkContinuationPrompt | undefined;
 
   for (let index = 0; index < chunks.length; index++) {
-    const result = await synthesizeOne(chunks[index], continuation);
+    const result = await synthesizeOne(chunks[index], continuation, stickyUrl);
+    // Re-pin to the account that actually served this chunk so a mid-file
+    // failover keeps the REMAINING chunks consistent with the new account.
+    stickyUrl = result.endpointUrl;
     results.push(result);
 
     if (index < chunks.length - 1) {

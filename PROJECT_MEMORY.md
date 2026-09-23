@@ -1,6 +1,68 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-08-19
+Last updated: 2026-09-23
+
+## Audio quality fix: muffled "closed nose" voice, quiet output, chunk level drift (2026-09-23)
+
+User reported: generated audio sounds like talking with a closed nose and is
+quieter than raw VoxCPM2; long-text generations vary loud/quiet between parts.
+Root-cause analysis found six causes; five fixed in code/config, one requires
+re-sourcing preset reference files.
+
+**Root causes & fixes (lib/tts-provider.ts, lib/tts-endpoints.ts, .env.example):**
+1. Output denoise `afftdn=nr=14:nf=-30:tn=1` ran on EVERY delivered audio —
+   commit 33eb830 (2026-08-13, "disable destructive post-processing by
+   default") disabled REMOVE_TONE/DE_NARROW/LOUDNORM/TEMPO but MISSED DENOISE
+   (flipped default-on by 82615b6 on 2026-06-25). Fixed: default back to
+   false (matches the function comment's stated intent). afftdn dulls soft
+   high-frequency consonants = the "closed nose" sound.
+2. Clone references were resampled to 16 kHz before upstream (lib/tts-provider.ts
+   normalizeCloneSampleForUpstream) — everything above 8 kHz stripped from the
+   timbre the model clones. Fixed: env-tunable TTS_REFERENCE_SAMPLE_RATE,
+   default 24000 (range 16000-48000). 16 kHz only ever matched the optional
+   ZipEnhancer denoiser, which is disabled in production.
+3. Chunk loudness leveling capped at ±3 dB (TTS_CHUNK_LEVEL_MAX_GAIN_DB),
+   too small for real inter-chunk drift. Fixed: default 6 (matches what
+   .env.example already documented).
+4. No loudness normalization since 33eb830 — raw VoxCPM2 measures ~-31 LUFS
+   (measured with ffmpeg loudnorm on a real sample; normal speech delivery is
+   -16 to -20). Fix is deployment config: TTS_OUTPUT_LOUDNORM=true on the VPS
+   (two-pass linear loudnorm, volume-only, TP -1.5 limiter, -16 LUFS target).
+5. Per-chunk round-robin across the 7-account pool — accounts run different
+   builds (code comment: "one returns 24 kHz, another 48 kHz") so voice
+   character AND level shift between chunks. Fixed: sticky endpoint per
+   synthesis — synthesizeAllChunks selects one endpoint up front and threads
+   preferredEndpointUrl through synthesizeChunkWithSilenceRetry →
+   synthesizeSingleChunk; selectUpstreamEndpoint(preferredUrl?) in
+   lib/tts-endpoints.ts returns the pinned URL when it is still a viable
+   candidate (respects disabled/credit filters, does not advance the
+   round-robin counter). Sequential continuation path re-pins to whichever
+   account actually served the previous chunk. Gate:
+   TTS_SYNTHESIS_STICKY_ENDPOINT (default true).
+6. NOT code-fixable: preset references lib/preset-voices/reference_{male,female}.wav
+   are themselves 16 kHz files (verified with ffprobe) — they cap preset voice
+   quality. Recommended: re-source at ≥24 kHz (re-record, or generate via
+   official VoxCPM2 at native rate) and replace the files.
+
+**.env.example synced:** TTS_OUTPUT_DENOISE=false (was true, with warning
+comment), TTS_OUTPUT_DE_NARROW=false (was true — a copied .env would have
+lowpassed at 5.5 kHz), added TTS_SYNTHESIS_STICKY_ENDPOINT=true and
+TTS_REFERENCE_SAMPLE_RATE=24000 docs.
+
+**VPS deployment (169.58.121.148, /var/www/khmer-vox-tts):** appended
+TTS_OUTPUT_DENOISE=false, TTS_OUTPUT_LOUDNORM=true,
+TTS_CHUNK_LEVEL_MAX_GAIN_DB=6, TTS_REFERENCE_SAMPLE_RATE=24000 to .env,
+git pull + npm run build + pm2 restart (web + 2 workers).
+
+**Validation:** npx tsc --noEmit clean; eslint on changed files 0 errors
+(pre-existing unrelated error in data/_cf.cjs remains); npm run build EXIT=0.
+Post-deploy: health OK; loudness of delivered audio should measure ≈ -16 LUFS
+(was ~-31 raw). If loudnorm makes generation noise audible in silence gaps,
+set TTS_OUTPUT_DENOISE_NR=6 (gentle) instead of re-enabling NR=14.
+
+**Optional follow-up (not done):** Modal INFERENCE_TIMESTEPS 8 → 16
+(modal/modal_voxcpm_api.py) is the source-side fix for generation noise;
+requires Modal redeploy and increases GPU cost per generation.
 
 ## Transient crackle/pop detection — Phase 1 (2026-08-19, local-only)
 
