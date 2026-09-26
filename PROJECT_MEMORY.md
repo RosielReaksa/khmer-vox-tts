@@ -1,6 +1,135 @@
 # Khmer Vox TTS Project Memory
 
-Last updated: 2026-09-23
+Last updated: 2026-09-26
+
+## OUTAGE RESOLVED: Modal upstream rate-limited (0/s) — fixed + hardened (2026-09-26, deployed)
+
+The outage below is FIXED. Root cause: production ran a single-account
+upstream pool pointing at a Modal account rate-limited to 0/s, while a
+working account (reaksaaaa4) sat unused — and prod's own token already
+worked on that healthy host (verified before touching anything).
+
+**Config fix (2026-09-26 ~10:02 UTC):** added
+`reaksaaaa4--voxcpm2-nanovllm-tts-api-api.modal.run` (reusing the existing
+TTS_UPSTREAM_TOKEN — no new secret) to the VPS pool file AND
+TTS_UPSTREAM_POOL env line; also repointed TTS_UPSTREAM_URL at it as
+fallback. Backups kept on the VPS:
+`.env.bak-2026-09-26T08-02-57`, `data/tts-upstream-pool.json.bak-2026-09-26T08-02-57`.
+After `pm2 restart all`, a real 559-char Khmer job completed end-to-end
+(202 → completed in 106s, 1.7MB WAV, HF RMS -47.4 dB natural).
+
+**Code hardening (commit 0b74424, deployed same day, prod commit = 0b74424):**
+1. `lib/tts-provider.ts` — chunk retry exhaustion now rethrows the actual
+   upstream error instead of masking it as "Upstream generated near-silent
+   audio. Please try again, or slightly rephrase…" (which was actively
+   misleading customers during the outage). Last-attempt-wins semantics.
+2. `lib/tts-endpoints.ts` — quotaPattern now matches "rate limit (0/s)", so
+   a dead Modal account gets the 30-min quota cooldown instead of 5-min.
+3. `lib/batch-service.ts` — isTransientBatchError treats "rate limit
+   (0/s)" as permanent (fails item immediately instead of burning the 300s
+   job budget through 10 retry cycles); job timeout message now appends
+   the last worker error; BATCH_EMPTY distinguishes "no text sent" from
+   "no speakable content after sanitization" with a clear message.
+4. `app/api/[...path]/route.ts` — NEW catch-all: unknown /api/* paths
+   return JSON 404 {error, code:NOT_FOUND, hint} with CORS instead of the
+   HTML not-found page (fixes /api/v1/audio/jobs/{id} HTML 404).
+5. `app/api/v1/audio/speech/route.ts` — 400 validation message names the
+   actual payload constraint (was misleading "Input max is 5,000
+   characters" for non-length schema failures); poll_url/audio_url kept
+   as documented aliases of job.status_url/download_url.
+6. Docs drift fixed: "Only mp3 is supported" → "always returns WAV";
+   console sends output_format=wav; Response Metadata section describes
+   the 202 job envelope + headers instead of raw audio bytes.
+7. Removed [AUTH DEBUG]/[DB DEBUG] logs that printed API key prefixes
+   and key hashes into production logs (lib/api-key-auth.ts,
+   lib/postgres-store.ts).
+
+**Validation:** tsc clean; eslint 0 errors (2 pre-existing unused-import
+warnings in speech route); build EXIT=0 (catch-all route registered);
+mojibake scan clean on changed files. Post-deploy live checks: health 200,
+JSON 404 on unknown path with application/json content-type, docs show
+WAV-only, 0 AUTH/DB DEBUG lines after restart, end-to-end 559-char job
+completed 91s / 1.68MB WAV / HF RMS -46.9 dB.
+
+**The two bug-report jobs explained:** both were single-item TTS jobs whose
+every chunk call 429'd on the dead account; retries + requeue flapped
+queued↔running until the 300s budget expired (455s/453s wall). The
+"near-silent" generation errors were the masked 429s (fix #1 above).
+
+## OUTAGE: Modal upstream rate-limited to 0/s — generation failing (2026-09-26, found not fixed)
+
+**Status: generation is DOWN in production. Discovered 2026-09-26 ~07:45 UTC, unfixed.**
+
+Every synthesis call to the production Modal endpoint returns:
+
+`HTTP 429 modal-http: Input rate limit (0/s) exceeded for function
+fu-ZBD2bE8sixaq5AfIHdrPGw. Please contact Modal support about needed limit
+adjustments.`
+
+A 0/s input rate limit is a Modal account/quota condition, not transient
+congestion. Reproduced directly against the endpoint from both the VPS and this
+workstation.
+
+**Evidence / timeline (VPS local time, UTC+2):**
+- Last successful generation `2026-09-25 17:35:32`. The 17:00 hour had 214
+  successes.
+- 21:00 hour: 136 generations failed. 22:00 hour: 10 more. Zero successes since.
+- `generations` rows are all `failed`; `batch_job_items` show 99 failures vs
+  2111 successes all-time, with the Sep 25 evening cluster at 10 retry attempts
+  each ("Job timed out after ~488s (max 300s)" — the 300s job timeout expires
+  while every chunk 429-retries).
+- `/root/.pm2/logs/khmer-vox-tts-web-error.log` holds 1539 "rate limit" and 1026
+  "429" lines, tail is still 429s.
+
+**Why there is no failover:** production is running a single-account pool. The
+`data/tts-upstream-pool.json` on the VPS has **1** entry
+(`reasksaxz--voxcpm2-nanovllm-tts-api-api`), `TTS_UPSTREAM_POOL` also holds
+**1** entry, and `TTS_UPSTREAM_URL` points at the same host. The multi-account
+round-robin in `lib/tts-endpoints.ts` therefore has nothing to rotate to, which
+is also why `disableEndpoint` cooldowns do not help.
+
+**Working alternative found:** the local `.env` pool entry labeled
+"Modal Account 5 (`reaksaaaa4`)" still answers **HTTP 200** (probed 2026-09-26,
+~3.6s). Production does not have this account configured. Other probed accounts
+(`reasksaxz`, `reaksabbb3`) 429 or time out.
+
+**Likely contributing code issue:** the `quotaPattern` in `lib/tts-endpoints.ts`
+matches `spend limit|billing cycle|quota|workspace billing|payment required|
+insufficient credit`, so a `rate limit (0/s)` message does NOT match it and gets
+only the 5-minute DEFAULT cooldown instead of the 30-minute QUOTA cooldown. The
+log confirms `for ~300s (default)`.
+
+**Fix path (needs user decision, no secrets in this file):** top up / contact
+Modal support for the exhausted account, and/or add the still-working account(s)
+to production's pool so round-robin failover actually has candidates.
+
+**Also noted during this check:**
+- Production has `TTS_AUDIO_CRACKLE_GATE=true`, which contradicts the explicit
+  `.env.example` guidance to leave it off (calibrated on synthetic fixtures;
+  documented risk of retry storms). No memory record of enabling it. Not proven
+  to be the outage cause — the failures are 429s, not crackle rejections.
+- The production web log prints API key prefixes and key hashes
+  (`[AUTH DEBUG] rawKey: vx_live_...`, `[DB DEBUG] Looking up key hash: ...`).
+  Worth silencing in production.
+- Docs drift: `app/docs/page.tsx:254` still says "Optional. Only mp3 is
+  supported." and `app/docs/api-test-console.tsx` still sends
+  `output_format: "mp3"` / advertises `output_format=mp3`, while
+  `lib/audio-api.ts` is WAV-only. The same docs page also still documents
+  response-body audio bytes + `X-Credits-Charged` for the v1 speech endpoint,
+  which now always returns a 202 async job.
+- Phases 1-4 (crackle detection, boundary cleanup, seam join, harness) are
+  recorded above as "local-only, not deployed" but are in fact committed
+  (ecd6cdf, 8afd8ff, d14f3fd) and present in HEAD, which equals origin/main and
+  the deployed VPS commit 9ffe141. That older status line is stale.
+- Preset references `lib/preset-voices/reference_{male,female}.wav` are still
+  16 kHz (re-confirmed), so that known quality cap is still open.
+- Read-only diagnostic helpers added (gitignored, no secrets):
+  `scratch/probe-endpoints.mjs`, `scratch/list-pool.mjs`,
+  `scratch/count-pool.mjs`.
+
+**Healthy at time of check:** site 200s on all public routes, `/api/health?deep=1`
+returns ok/postgres, `npx tsc --noEmit` clean, local HEAD == origin/main ==
+deployed commit, PM2 3 processes online ~2 days, disk 7%, load 0.00.
 
 ## Audio quality fix: muffled "closed nose" voice, quiet output, chunk level drift (2026-09-23)
 
