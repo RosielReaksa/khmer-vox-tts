@@ -3703,6 +3703,10 @@ async function synthesizeChunkWithSilenceRetry(
   let lastSilenceIssue: string | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Last attempt wins: each iteration overwrites whichever flag it hit, so
+    // the final failure mode reported is the one from the final attempt.
+    lastError = null;
+    lastSilenceIssue = null;
     try {
       const result = await synthesizeSingleChunk(
         params,
@@ -3731,6 +3735,11 @@ async function synthesizeChunkWithSilenceRetry(
       }
     } catch (error) {
       lastError = error as Error;
+      // Never mask a definitive upstream failure as an audio-quality problem.
+      // Client errors (400/401/403/422) fail identically on every retry, and
+      // upstream availability errors (429 rate limit, 5xx) tell the caller
+      // what actually broke — "near-silent audio" advice would send them
+      // rephrasing text that was never the problem.
       if (
         error instanceof TtsProviderError &&
         [400, 401, 403, 422].includes(error.status)
@@ -3748,6 +3757,17 @@ async function synthesizeChunkWithSilenceRetry(
   console.warn(
     `[TTS] Chunk rejected after ${maxAttempts} attempts: ${lastSilenceIssue ?? lastError?.message ?? "unknown silent audio failure"}.`,
   );
+  // If every attempt failed with a synthesis error (upstream down, rate
+  // limited, network), surface that error — its status code drives capacity
+  // handling in the batch worker, and its message is what the API customer
+  // sees. Only fall back to the near-silent message when attempts actually
+  // produced silent/unusable audio.
+  if (lastError && lastSilenceIssue === null) {
+    if (lastError instanceof TtsProviderError) {
+      throw lastError;
+    }
+    throw new TtsProviderError(lastError.message, 502);
+  }
   throw new TtsProviderError(nearSilentAudioMessage(), 502);
 }
 

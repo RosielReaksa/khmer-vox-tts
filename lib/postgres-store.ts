@@ -2196,12 +2196,10 @@ export async function updateApiKeyLimits(
 
 export async function findActiveApiKeyByRawKey(rawKey: string): Promise<ApiKeyRecord | null> {
   const keyHash = createHash("sha256").update(rawKey).digest("hex");
-  console.log("[DB DEBUG] Looking up key hash:", keyHash.substring(0, 20) + "...");
   const rows = await queryRows<ApiKeyRow>(
     "select * from api_keys where key_hash = $1 and revoked_at is null limit 1",
     [keyHash],
   );
-  console.log("[DB DEBUG] Found rows:", rows.length);
   return rows[0] ? mapApiKey(rows[0]) : null;
 }
 

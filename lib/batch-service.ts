@@ -284,6 +284,21 @@ async function validateBatchRequest(params: {
 }> {
   const lines = normalizeBatchLines(params.lines);
   if (lines.length === 0) {
+    // Distinguish "sent nothing" from "sent something with no speakable text".
+    // Text sanitization strips URLs, emoji, markdown, symbols and sound cues;
+    // if everything was stripped, the length message would mislead the caller.
+    const hadRawLines =
+      params.lines.length > 0 &&
+      params.lines.some(
+        (line) => typeof line === "string" ? line.trim().length > 0 : String(line.text ?? "").trim().length > 0,
+      );
+    if (hadRawLines) {
+      throw new BatchJobServiceError(
+        "Input contains no speakable text after cleanup. Text consisting only of URLs, emoji, symbols, or stage directions cannot be spoken.",
+        400,
+        "BATCH_EMPTY",
+      );
+    }
     throw new BatchJobServiceError("At least one text line is required.", 400, "BATCH_EMPTY");
   }
   const maxItems = params.source === "dashboard" ? MAX_DASHBOARD_BATCH_ITEMS : MAX_BATCH_ITEMS;
@@ -653,6 +668,9 @@ function isTransientBatchError(error: unknown): boolean {
   if (msg.includes("permission")) return false;
   if (msg.includes("invalid") && msg.includes("api key")) return false;
   if (msg.includes("billing") || msg.includes("spend limit")) return false;
+  // Modal account-level rate cap (0/s) resets at the next billing cycle, not
+  // in seconds — retrying within a job only burns the timeout budget.
+  if (msg.includes("rate limit") && msg.includes("(0/s)")) return false;
   // Transient errors — worth retrying
   if (msg.includes("timeout") || msg.includes("timed out")) return true;
   if (msg.includes("empty") || msg.includes("no audio")) return true;
@@ -1049,7 +1067,13 @@ export async function processBatchJob(jobId: string, options?: { workerId?: stri
   const maxAgeMs = Number(process.env.BATCH_JOB_MAX_AGE_MS || 180000);
   const jobAge = Date.now() - new Date(job.startedAt ?? job.createdAt).getTime();
   if (jobAge > maxAgeMs && job.status === "running") {
-    const timeoutMsg = `Job timed out after ${Math.round(jobAge / 1000)}s (max ${Math.round(maxAgeMs / 1000)}s)`;
+    // Attach the most recent worker error so the API customer sees WHY the
+    // job burned its budget (e.g. "Upstream rate limited") instead of a bare
+    // timeout that looks like a text/content problem.
+    const recentError = job.lastWorkerError?.trim();
+    const timeoutMsg = recentError
+      ? `Job timed out after ${Math.round(jobAge / 1000)}s (max ${Math.round(maxAgeMs / 1000)}s). Last error: ${recentError.slice(0, 160)}`
+      : `Job timed out after ${Math.round(jobAge / 1000)}s (max ${Math.round(maxAgeMs / 1000)}s)`;
     await failRemainingItems(job.id, timeoutMsg, "failed");
     await updateBatchJobStatus({ jobId: job.id, status: "failed", errorMessage: timeoutMsg });
     const failed = await getBatchJobWithItems(job.id);

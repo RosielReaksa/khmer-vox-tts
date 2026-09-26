@@ -21,7 +21,7 @@ const DEFAULT_DISABLE_DURATION_MS = 5 * 60 * 1000;
 // burning the per-pod rate limit on requests that will all 429.
 const QUOTA_DISABLE_DURATION_MS = 30 * 60 * 1000;
 let roundRobinCounter = 0;
-const quotaPattern = /(spend\s*limit|billing\s*cycle|quota|workspace\s*billing|payment\s*required|insufficient\s*credit)/i;
+const quotaPattern = /(spend\s*limit|billing\s*cycle|quota|workspace\s*billing|payment\s*required|insufficient\s*credit|rate\s*limit\s*\(\s*0\s*\/\s*s\s*\))/i;
 
 function parsePoolItems(value: unknown): UpstreamEndpoint[] {
   if (!Array.isArray(value)) return [];

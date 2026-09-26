@@ -65,7 +65,10 @@ export async function POST(request: Request) {
     const parsed = speechSchema.safeParse(body);
     if (!parsed.success) {
       return jsonWithCors(
-        { error: `Invalid request payload. Input max is ${MAX_TEXT_CHARS.toLocaleString()} characters.` },
+        {
+          error: `Invalid request payload. 'input' is required as a string of 1-${MAX_TEXT_CHARS.toLocaleString()} characters.`,
+          code: "INVALID_PAYLOAD",
+        },
         { status: 400 },
       );
     }
@@ -137,8 +140,10 @@ export async function POST(request: Request) {
           credits_charged: 0,
           created_at: batch.job.createdAt,
         },
-          poll_url: `/api/v1/audio/batch/jobs/${batch.job.id}`,
-          audio_url: `/api/v1/audio/batch/jobs/${batch.job.id}/download`,
+        // Convenience aliases of job.status_url / job.download_url from the
+        // status payload; both forms are stable API surface.
+        poll_url: `/api/v1/audio/batch/jobs/${batch.job.id}`,
+        audio_url: `/api/v1/audio/batch/jobs/${batch.job.id}/download`,
       },
       { status: 202, headers: limit.headers },
     );

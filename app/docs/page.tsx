@@ -130,8 +130,9 @@ export default function ApiDocsPage() {
                   <p className="font-body text-sm leading-relaxed text-on-surface-variant border-l-4 border-outline pl-4 mb-6">
                     Khmer Vox TTS exposes audio endpoints backed by VoxCPM. For production apps and business
                     customers, use clone voice with a reference audio sample because normal VoxCPM speech can
-                    change speaker between generations. Single calls return WAV audio bytes; batch calls create
-                    queued jobs that can be polled or downloaded as ZIP files containing WAV files.
+                    change speaker between generations. Every speech and clone submission creates a queued job
+                    and returns a job ID immediately — poll the job, then download the result as WAV audio or a
+                    ZIP of per-line WAV files.
                   </p>
                   <div className="flex flex-wrap gap-3">
                     <Link href="#test-console" className="px-5 py-3 bg-primary text-on-primary border-2 border-outline font-headline font-bold uppercase text-xs shadow-[4px_4px_0px_0px_rgba(26,26,26,1)] hover:bg-[#0055ff] transition-colors active:translate-x-0.5 active:translate-y-0.5 active:shadow-none">
@@ -251,7 +252,7 @@ export default function ApiDocsPage() {
                   ["input", "string or array", "Required. Long strings are automatically split into safe worker segments."],
                   ["items", "JSON array", "Clone endpoint also accepts items for segment metadata and external IDs."],
                   ["webhook_url", "string", "Optional. Completion callback includes status_url, audio_url, zip_url, and per-item status."],
-                  ["output_format", "string", "Optional. Only mp3 is supported."],
+                  ["output_format", "string", "Optional. The public API always returns WAV."],
                 ]}
               />
             </EndpointSection>
@@ -369,10 +370,10 @@ print(f"Credits charged: {status['job']['credits_charged']}")`}
             <section id="responses" className="scroll-mt-24 border-4 border-outline bg-white p-6 shadow-[6px_6px_0px_0px_rgba(26,26,26,1)] text-left">
               <h2 className="text-3xl font-headline font-black uppercase text-primary border-b-2 border-outline pb-4 mb-6">Response Metadata</h2>
               <p className="font-body text-sm text-on-surface-variant leading-relaxed mb-6">
-                All successful speech and clone endpoints return the raw WAV audio bytes directly in the response body. Additional usage metadata is provided via HTTP headers.
+                Job submission endpoints (speech, batch, clone jobs) return a JSON job envelope with HTTP 202 — including the job <code>id</code>, <code>poll_url</code>, and <code>audio_url</code> — never audio bytes. Audio downloads are WAV (PCM-16, mono, 24 kHz) with <code>Content-Type: audio/wav</code>. Usage metadata is available in the job status JSON (<code>credits_charged</code>, <code>output_seconds</code>) and in the download response headers below.
               </p>
               <div className="grid gap-4">
-                <InfoCard title="Content-Type" value="audio/wav" />
+                <InfoCard title="Content-Type" value="audio/wav (download endpoints only)" />
                 <InfoCard title="X-Remaining-Tokens" value="Available prepaid token balance left on the user's account after deducting for this request." />
                 <InfoCard title="X-Credits-Charged" value="Prepaid tokens deducted for the generation duration." />
                 <InfoCard title="X-Generation-Duration-Seconds" value="The exact duration of the generated audio in seconds (used to calculate X-Credits-Charged)." />

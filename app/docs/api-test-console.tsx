@@ -90,7 +90,7 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
           model: "voxcpm2",
           voice,
           input,
-          output_format: "mp3",
+          output_format: "wav",
         });
       } else {
         const formData = new FormData();
@@ -323,7 +323,7 @@ export function ApiTestConsole({ baseUrl }: ApiTestConsoleProps) {
               with
               <code> sample</code>, <code> input</code>, <code> model</code>,
               <code> voice_consent=true</code>, and{" "}
-              <code> output_format=mp3</code>.
+              <code> output_format=wav</code>.
             </p>
           </div>
         ) : null}

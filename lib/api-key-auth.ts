@@ -41,7 +41,6 @@ export async function authenticateApiKeyFromRequest(request: Request): Promise<
   }
 
   const key = await findActiveApiKeyByRawKey(rawKey);
-  console.log("[AUTH DEBUG] rawKey:", rawKey.substring(0, 20) + "...", "key found:", !!key);
   if (!key) {
     return authFailure(request, 403, "Invalid bearer token.", "INVALID_BEARER_TOKEN");
   }
